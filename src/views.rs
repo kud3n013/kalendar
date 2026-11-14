@@ -20,6 +20,17 @@ struct Item {
     past: bool,
 }
 
+/// Where one day's stretch of a frame was painted.
+#[allow(dead_code)]
+struct FrameBox {
+    id: u64,
+    day: NaiveDate,
+    rect: Rect,
+    /// the name label, double-clicked to edit the frame
+    label: Rect,
+    color: Color32,
+}
+
 /// Draws one calendar block. Plain events are filled with their colour and
 /// carry dark text; task sessions are dark with a coloured bar and a box to
 /// tick. `hover` is 0..1 and brightens the block.
@@ -425,6 +436,37 @@ impl App {
         for i in 0..=n {
             let x = x0 + i as f32 * col_w;
             painter.line_segment([pos2(x, top), pos2(x, rect.bottom())], Stroke::new(1.0, self.pal.border));
+        }
+
+        // frames: tinted bands under the events; painting only, so clicks
+        // and drags still reach the grid
+        let mut frame_boxes: Vec<FrameBox> = vec![];
+        for (di, day) in days.iter().enumerate() {
+            for o in self.data.frames_on(*day) {
+                let Some(f) = self.data.frame(o.frame) else { continue };
+                let s = (f.start_min.max(gs)).min(ge);
+                let e = (f.end_min.min(ge)).max(gs);
+                if e <= s {
+                    continue;
+                }
+                let col_l = x0 + di as f32 * col_w;
+                let r = Rect::from_min_max(pos2(col_l + 2.0, y_of(s)), pos2(col_l + col_w - 2.0, y_of(e)));
+                let color = rgb(self.data.frame_color(f));
+                let tint = if self.pal.dark { 0.16 } else { 0.10 };
+                fill_squircle(&painter, r, RADIUS, mix(self.pal.bg, color, tint));
+                let stripe = Rect::from_min_max(r.left_top() + vec2(2.0, 3.0), pos2(r.left() + 5.0, r.bottom() - 3.0));
+                if stripe.height() > 0.0 {
+                    painter.rect_filled(stripe, 1.5, color);
+                }
+                let label = painter.with_clip_rect(r.intersect(painter.clip_rect())).text(
+                    r.left_top() + vec2(10.0, 3.0),
+                    Align2::LEFT_TOP,
+                    &f.name,
+                    FontId::proportional(11.0),
+                    self.pal.muted,
+                );
+                frame_boxes.push(FrameBox { id: f.id, day: *day, rect: r, label, color });
+            }
         }
 
         let mut items: Vec<Item> = vec![];

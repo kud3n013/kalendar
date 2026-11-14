@@ -819,6 +819,20 @@ impl Data {
         task(&mut d, "Read chapter 4", Some(5), 5, Some(75), 3, "");
         task(&mut d, "Tidy up the notes", None, 0, None, 0, "");
         task(&mut d, "Renew library card", None, 9, Some(15), 2, "admin");
+        let quick = FrameFilter { max_min: Some(30), ..Default::default() };
+        for (name, cal, h, filter) in [("Deep work", 1, 9, FrameFilter::default()), ("Quick wins", 3, 16, quick)] {
+            let id = d.new_id();
+            d.frames.push(Frame {
+                id,
+                name: name.into(),
+                calendar: cal,
+                start_min: h * 60,
+                end_min: (h + if filter.is_empty() { 2 } else { 1 }) * 60,
+                from: ws,
+                filter,
+                ..Default::default()
+            });
+        }
         let tid = task(&mut d, "Review the budget", Some(2), 1, Some(45), 1, "");
         let id = d.new_id();
         let dow = (today - ws).num_days();
@@ -1241,6 +1255,7 @@ mod tests {
     fn plan_without_frames_is_unchanged() {
         let now = ymd(11, 18).and_hms_opt(8, 0, 0).unwrap();
         let mut d = Data::sample(now.date());
+        d.frames.clear();
         for (title, mins) in [("Big job", 240), ("Huge job", 400), ("Too big", 2000)] {
             let id = d.new_id();
             d.tasks.push(Task { id, title: title.into(), duration_min: Some(mins), due: Some(ymd(11, 30)), ..Default::default() });

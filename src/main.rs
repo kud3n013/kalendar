@@ -448,6 +448,16 @@ impl App {
         if std::env::var("KALENDAR_PANEL_RIGHT").is_ok() {
             app.data.prefs.sidebar_side = PanelSide::Right;
         }
+        if app.shot.is_some() {
+            match std::env::var("KALENDAR_THEME").as_deref() {
+                Ok("light") => app.data.prefs.theme = Theme::Light,
+                Ok("dark") => app.data.prefs.theme = Theme::Dark,
+                _ => {}
+            }
+            if let Some(m) = std::env::var("KALENDAR_SLOT").ok().and_then(|v| v.parse().ok()) {
+                app.data.prefs.slot_min = m;
+            }
+        }
         if std::env::var("KALENDAR_SHOW_NEWTASK").is_ok() {
             app.new_task_open = true;
             app.new_task_focus = true;
