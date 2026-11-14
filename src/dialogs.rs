@@ -7,6 +7,28 @@ use crate::{mix, rgb, App, Cmd, COMMANDS};
 use chrono::{Duration, Local, NaiveDate, Timelike};
 use eframe::egui::{self, pos2, Align, Align2, FontId, Id, Layout, Margin, RichText, Stroke};
 
+/// Where a window of about `size` goes beside the block `r`: to its right,
+/// else its left, else below, else above, kept on screen. Once the window
+/// has been drawn its measured size is used instead of the guess.
+pub fn place_beside(ctx: &egui::Context, id: Id, r: egui::Rect, size: egui::Vec2) -> egui::Pos2 {
+    let size = ctx.memory(|m| m.area_rect(id)).map(|a| a.size()).unwrap_or(size);
+    let (w, h, gap) = (size.x, size.y, 10.0);
+    let screen = ctx.screen_rect().shrink(8.0);
+    let pos = if r.right() + gap + w <= screen.right() {
+        pos2(r.right() + gap, r.top())
+    } else if r.left() - gap - w >= screen.left() {
+        pos2(r.left() - gap - w, r.top())
+    } else if r.bottom() + gap + h <= screen.bottom() {
+        pos2(r.center().x - w / 2.0, r.bottom() + gap)
+    } else {
+        pos2(r.center().x - w / 2.0, r.top() - gap - h)
+    };
+    pos2(
+        pos.x.clamp(screen.left(), (screen.right() - w).max(screen.left())),
+        pos.y.clamp(screen.top(), (screen.bottom() - h).max(screen.top())),
+    )
+}
+
 impl App {
     pub fn ui_dialogs(&mut self, ctx: &egui::Context) {
         self.dlg_create(ctx);
@@ -26,20 +48,8 @@ impl App {
         let (mut save, mut cancel) = (false, false);
         let muted = self.pal.muted;
         let p = self.data.prefs.clone();
-        // beside the block: right of it, else left, else below, else above
-        let (w, h, gap) = (280.0, 240.0, 10.0);
-        let screen = ctx.screen_rect().shrink(8.0);
-        let r = c.anchor_rect;
-        let pos = if r.right() + gap + w <= screen.right() {
-            pos2(r.right() + gap, r.top())
-        } else if r.left() - gap - w >= screen.left() {
-            pos2(r.left() - gap - w, r.top())
-        } else if r.bottom() + gap + h <= screen.bottom() {
-            pos2(r.center().x - w / 2.0, r.bottom() + gap)
-        } else {
-            pos2(r.center().x - w / 2.0, r.top() - gap - h)
-        };
-        let pos = pos2(pos.x.clamp(screen.left(), screen.right() - w), pos.y.clamp(screen.top(), screen.bottom() - h));
+        let w = 280.0;
+        let pos = place_beside(ctx, Id::new("create_popup"), c.anchor_rect, egui::vec2(w, 240.0));
         egui::Window::new("create")
             .id(Id::new("create_popup"))
             .title_bar(false)
@@ -186,12 +196,14 @@ impl App {
         } else {
             "Event"
         };
-        egui::Window::new(title)
-            .id(Id::new("event_editor"))
-            .collapsible(false)
-            .resizable(false)
-            .anchor(Align2::RIGHT_TOP, [-16.0, 64.0])
-            .show(ctx, |ui| {
+        let id = Id::new("event_editor");
+        let mut win = egui::Window::new(title).id(id).collapsible(false).resizable(false);
+        win = match ed.anchor_rect {
+            // the width includes the window's frame around the 330 of content
+            Some(r) => win.fixed_pos(place_beside(ctx, id, r, egui::vec2(346.0, 400.0))),
+            None => win.anchor(Align2::RIGHT_TOP, [-16.0, 64.0]),
+        };
+        win.show(ctx, |ui| {
                 ui.set_width(330.0);
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut ed.ev.title)
@@ -527,14 +539,15 @@ impl App {
                             first = false;
                         }
                     }
-                    for (cmd, label, keys, _) in COMMANDS.iter().filter(|c| c.1.to_lowercase().contains(&ql)) {
+                    for (cmd, label, _, _) in COMMANDS.iter().filter(|c| c.1.to_lowercase().contains(&ql)) {
                         if matches!(cmd, Cmd::CommandBar | Cmd::Search) {
                             continue;
                         }
+                        let keys = &self.bind_text(*cmd);
                         ui.horizontal(|ui| {
                             let clicked = ui.selectable_label(false, *label).clicked();
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                ui.label(RichText::new(*keys).color(muted).monospace().size(11.0));
+                                ui.label(RichText::new(keys).color(muted).monospace().size(11.0));
                             });
                             if clicked || (enter && first) {
                                 run = Some(*cmd);

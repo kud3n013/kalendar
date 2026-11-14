@@ -134,6 +134,8 @@ pub struct Prefs {
     pub due_on_calendar: bool,
     /// pixels per hour chosen by zooming; None follows the time resolution
     pub hour_height_px: Option<f32>,
+    /// shortcut overrides: command id -> keys, e.g. "plan" -> "Ctrl+Shift+P"
+    pub keybinds: std::collections::HashMap<String, String>,
 }
 
 impl Default for Prefs {
@@ -166,6 +168,7 @@ impl Default for Prefs {
             show_due_soon: true,
             due_on_calendar: true,
             hour_height_px: None,
+            keybinds: Default::default(),
         }
     }
 }
@@ -412,45 +415,74 @@ pub struct Data {
     pub calendars: Vec<Calendar>,
     #[serde(default)]
     pub lists: Vec<TaskList>,
-    #[serde(default)]
+    /// settings live in config.json; this stays readable for old data files
+    #[serde(default, skip_serializing)]
     pub prefs: Prefs,
     pub next_id: u64,
 }
 
-/// Where the data is kept. A folder named
-/// "<program>.home" beside the program is used as the home folder when it
-/// exists, so the data can travel with the program.
+/// A folder named "<program>.home" beside the program is used as the home
+/// folder when it exists, so everything can travel with the program.
+fn portable_home() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let mut home = exe.into_os_string();
+    home.push(".home");
+    let home = PathBuf::from(home);
+    home.is_dir().then_some(home)
+}
+
+/// Where the calendar and task data is kept:
+/// $XDG_DATA_HOME/kalendar/data.json, usually ~/.local/share/kalendar/.
 pub fn data_path() -> PathBuf {
-    if let Ok(exe) = std::env::current_exe() {
-        let mut home = exe.clone().into_os_string();
-        home.push(".home");
-        let home = PathBuf::from(home);
-        if home.is_dir() {
-            return home.join(".local/share").join("kalendar").join("data.json");
-        }
-    }
-    let base = std::env::var_os("XDG_DATA_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-        .unwrap_or_else(|| PathBuf::from("."));
+    let base = portable_home().map(|h| h.join(".local/share")).unwrap_or_else(|| {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+            .unwrap_or_else(|| PathBuf::from("."))
+    });
     base.join("kalendar").join("data.json")
+}
+
+/// Where the settings are kept:
+/// $XDG_CONFIG_HOME/kalendar/config.json, usually ~/.config/kalendar/.
+pub fn config_path() -> PathBuf {
+    let base = portable_home().map(|h| h.join(".config")).unwrap_or_else(|| {
+        std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+            .unwrap_or_else(|| PathBuf::from("."))
+    });
+    base.join("kalendar").join("config.json")
+}
+
+fn write_json(p: PathBuf, s: String) {
+    if let Some(dir) = p.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(p, s);
 }
 
 impl Data {
     pub fn load_or_sample(today: NaiveDate) -> Data {
-        std::fs::read_to_string(data_path())
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_else(|| Data::sample(today))
+        let stored: Option<Data> = std::fs::read_to_string(data_path()).ok().and_then(|s| serde_json::from_str(&s).ok());
+        let had_data = stored.is_some();
+        let mut data = stored.unwrap_or_else(|| Data::sample(today));
+        // settings come from their own file; an older data.json carries
+        // them inside, and they are moved out to config.json right away
+        match std::fs::read_to_string(config_path()).ok().and_then(|s| serde_json::from_str(&s).ok()) {
+            Some(p) => data.prefs = p,
+            None if had_data && !config_path().exists() => data.save(),
+            None => {}
+        }
+        data
     }
 
     pub fn save(&self) {
-        let p = data_path();
-        if let Some(dir) = p.parent() {
-            let _ = std::fs::create_dir_all(dir);
-        }
         if let Ok(s) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::write(p, s);
+            write_json(data_path(), s);
+        }
+        if let Ok(s) = serde_json::to_string_pretty(&self.prefs) {
+            write_json(config_path(), s);
         }
     }
 
@@ -836,4 +868,37 @@ impl Data {
 pub fn opening_scroll_min(now: NaiveDateTime) -> i64 {
     let e = (now.hour() as i64 * 60 + now.minute() as i64 - SCROLL_BACK_MIN).max(0);
     e - e % SCROLL_ROUND_MIN
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn old_data_file_moves_settings_to_config() {
+        let dir = std::env::temp_dir().join(format!("kalendar-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::env::set_var("XDG_DATA_HOME", dir.join("data"));
+        std::env::set_var("XDG_CONFIG_HOME", dir.join("config"));
+        let today = NaiveDate::from_ymd_opt(2026, 11, 14).unwrap();
+
+        // an older data.json, with the settings inside it
+        let mut old = Data::sample(today);
+        old.prefs.sidebar_side = PanelSide::Right;
+        old.prefs.keybinds.insert("settings".into(), "Ctrl+P".into());
+        let mut v = serde_json::to_value(&old).unwrap();
+        v["prefs"] = serde_json::to_value(&old.prefs).unwrap();
+        write_json(data_path(), v.to_string());
+
+        let d = Data::load_or_sample(today);
+        assert_eq!(d.prefs.sidebar_side, PanelSide::Right);
+        assert!(config_path().exists());
+        let data_text = std::fs::read_to_string(data_path()).unwrap();
+        assert!(!data_text.contains("\"prefs\""), "settings left in data.json");
+
+        // and they come back from config.json alone
+        let again = Data::load_or_sample(today);
+        assert_eq!(again.prefs.keybinds.get("settings").map(|s| s.as_str()), Some("Ctrl+P"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

@@ -221,7 +221,7 @@ impl App {
         if !open {
             let (anchor, dx) = if right { (Align2::RIGHT_TOP, -10.0) } else { (Align2::LEFT_TOP, 10.0) };
             egui::Area::new(Id::new("panel_handle")).anchor(anchor, [dx, 10.0]).order(egui::Order::Foreground).show(ctx, |ui| {
-                if icon_btn(ui, icons::MENU, 17.0, "Show the task panel (Space)", c).clicked() {
+                if icon_btn(ui, icons::MENU, 17.0, &self.tip("Show the task panel", Cmd::ToggleTasks), c).clicked() {
                     self.run(ctx, Cmd::ToggleTasks);
                 }
             });
@@ -235,16 +235,16 @@ impl App {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             let mut tools = |ui: &mut egui::Ui, app: &mut App| {
-                if icon_btn(ui, icons::SETTINGS, 16.0, "Preferences (P)", c).clicked() {
+                if icon_btn(ui, icons::SETTINGS, 16.0, &app.tip("Settings", Cmd::Prefs), c).clicked() {
                     app.open_settings(crate::settings::Page::General);
                 }
-                if icon_btn(ui, icons::HELP, 16.0, "Shortcuts (.)", c).clicked() {
+                if icon_btn(ui, icons::HELP, 16.0, &app.tip("Shortcuts", Cmd::Shortcuts), c).clicked() {
                     app.open_settings(crate::settings::Page::Shortcuts);
                 }
-                if icon_btn(ui, icons::TERMINAL, 15.0, "Command bar (Ctrl+K)", c).clicked() {
+                if icon_btn(ui, icons::TERMINAL, 15.0, &app.tip("Command bar", Cmd::CommandBar), c).clicked() {
                     app.run(ctx, Cmd::CommandBar);
                 }
-                if icon_btn(ui, icons::SEARCH, 15.0, "Search (Ctrl+F)", c).clicked() {
+                if icon_btn(ui, icons::SEARCH, 15.0, &app.tip("Search", Cmd::Search), c).clicked() {
                     app.run(ctx, Cmd::Search);
                 }
                 if icon_btn(ui, icons::SHUFFLE, 15.0, "Plan my tasks: fit open tasks into free working time", c).clicked() {
@@ -278,19 +278,19 @@ impl App {
                 // drawn right to left when flipped
                 let order: [(&str, f32, &str, Cmd); 3] = if flipped {
                     [
-                        (icons::CHEVRON_RIGHT, 17.0, "Next (Right)", Cmd::Next),
-                        (icons::CHEVRON_LEFT, 17.0, "Previous (Left)", Cmd::Prev),
-                        (icons::REFRESH, 15.0, "Refresh (R)", Cmd::Refresh),
+                        (icons::CHEVRON_RIGHT, 17.0, "Next", Cmd::Next),
+                        (icons::CHEVRON_LEFT, 17.0, "Previous", Cmd::Prev),
+                        (icons::REFRESH, 15.0, "Refresh", Cmd::Refresh),
                     ]
                 } else {
                     [
-                        (icons::REFRESH, 15.0, "Refresh (R)", Cmd::Refresh),
-                        (icons::CHEVRON_LEFT, 17.0, "Previous (Left)", Cmd::Prev),
-                        (icons::CHEVRON_RIGHT, 17.0, "Next (Right)", Cmd::Next),
+                        (icons::REFRESH, 15.0, "Refresh", Cmd::Refresh),
+                        (icons::CHEVRON_LEFT, 17.0, "Previous", Cmd::Prev),
+                        (icons::CHEVRON_RIGHT, 17.0, "Next", Cmd::Next),
                     ]
                 };
                 for (glyph, size, tip, cmd) in order {
-                    if icon_btn(ui, glyph, size, tip, c).clicked() {
+                    if icon_btn(ui, glyph, size, &app.tip(tip, cmd), c).clicked() {
                         app.run(ctx, cmd);
                     }
                 }
@@ -298,12 +298,12 @@ impl App {
             if right {
                 nav(ui, self, false);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if icon_btn(ui, icons::MENU, 17.0, "Hide the task panel (Space)", c).clicked() {
+                    if icon_btn(ui, icons::MENU, 17.0, &self.tip("Hide the task panel", Cmd::ToggleTasks), c).clicked() {
                         self.run(ctx, Cmd::ToggleTasks);
                     }
                 });
             } else {
-                if icon_btn(ui, icons::MENU, 17.0, "Hide the task panel (Space)", c).clicked() {
+                if icon_btn(ui, icons::MENU, 17.0, &self.tip("Hide the task panel", Cmd::ToggleTasks), c).clicked() {
                     self.run(ctx, Cmd::ToggleTasks);
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| nav(ui, self, true));
@@ -312,7 +312,7 @@ impl App {
         // today, go to a date, calendars, the view — and undo while it applies
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            if icon_btn(ui, icons::CALENDAR_CHECK, 16.0, "Today (T)", c).clicked() {
+            if icon_btn(ui, icons::CALENDAR_CHECK, 16.0, &self.tip("Today", Cmd::Today), c).clicked() {
                 self.run(ctx, Cmd::Today);
             }
             if icon_btn(ui, icons::CALENDAR_DAYS, 16.0, "Go to a date", c).clicked() {
@@ -378,7 +378,7 @@ impl App {
                 if a > 0.0 {
                     ui.scope(|ui| {
                         ui.set_opacity(a);
-                        if icon_btn(ui, icons::UNDO, 16.0, "Undo (Ctrl+Z)", c).clicked() {
+                        if icon_btn(ui, icons::UNDO, 16.0, &self.tip("Undo", Cmd::Undo), c).clicked() {
                             self.do_undo(ctx);
                         }
                     });

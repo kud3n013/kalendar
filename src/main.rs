@@ -126,6 +126,9 @@ pub struct EventEdit {
     pub ev: Event,
     pub is_new: bool,
     pub focus: bool,
+    /// the block the editor was opened from, in screen points; the window
+    /// sits beside it, and without one it keeps its usual corner
+    pub anchor_rect: Option<egui::Rect>,
 }
 
 /// The small window that follows a block drawn on the calendar: it makes
@@ -220,10 +223,119 @@ pub const COMMANDS: &[(Cmd, &str, &str, &str)] = &[
     (Cmd::ToggleTheme, "Toggle dark/light themes", "\\", "General"),
     (Cmd::FinerGrid, "Increase calendar time resolution", "]", "General"),
     (Cmd::CoarserGrid, "Reduce calendar time resolution", "[", "General"),
-    (Cmd::Prefs, "Open general preferences", "P", "General"),
+    (Cmd::Prefs, "Open settings", "Ctrl+,", "General"),
     (Cmd::Shortcuts, "List available shortcuts", ".", "General"),
     (Cmd::Quit, "Quit", "Ctrl+Q", "General"),
 ];
+
+impl Cmd {
+    /// A stable name each command's shortcut override is stored under.
+    pub fn id(&self) -> &'static str {
+        match self {
+            Cmd::Today => "today",
+            Cmd::Next => "next",
+            Cmd::Prev => "prev",
+            Cmd::DayFwd => "day-forward",
+            Cmd::DayBack => "day-back",
+            Cmd::ViewDay => "view-day",
+            Cmd::ViewWeek => "view-week",
+            Cmd::ViewMonth => "view-month",
+            Cmd::ViewAgenda => "view-agenda",
+            Cmd::ViewTwoWeeks => "view-two-weeks",
+            Cmd::NewEvent => "new-event",
+            Cmd::NewTask => "new-task",
+            Cmd::Edit => "edit",
+            Cmd::Delete => "delete",
+            Cmd::Copy => "copy",
+            Cmd::Paste => "paste",
+            Cmd::Undo => "undo",
+            Cmd::Plan => "plan",
+            Cmd::Reschedule => "reschedule",
+            Cmd::FollowUp => "follow-up",
+            Cmd::Split => "split",
+            Cmd::ToggleTasks => "toggle-tasks",
+            Cmd::ToggleTheme => "toggle-theme",
+            Cmd::FinerGrid => "finer-grid",
+            Cmd::CoarserGrid => "coarser-grid",
+            Cmd::Search => "search",
+            Cmd::CommandBar => "command-bar",
+            Cmd::Prefs => "settings",
+            Cmd::Shortcuts => "shortcuts",
+            Cmd::Refresh => "refresh",
+            Cmd::Quit => "quit",
+        }
+    }
+}
+
+/// One key with its modifiers.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct KeyBind {
+    pub ctrl: bool,
+    pub shift: bool,
+    pub key: Key,
+}
+
+fn key_from_name(s: &str) -> Option<Key> {
+    Some(match s {
+        "Left" => Key::ArrowLeft,
+        "Right" => Key::ArrowRight,
+        "Up" => Key::ArrowUp,
+        "Down" => Key::ArrowDown,
+        "Del" => Key::Delete,
+        "," => Key::Comma,
+        "." => Key::Period,
+        "\\" => Key::Backslash,
+        "[" => Key::OpenBracket,
+        "]" => Key::CloseBracket,
+        other => Key::from_name(other)?,
+    })
+}
+
+/// The short name a key is written as in shortcut texts.
+pub fn key_label(k: Key) -> &'static str {
+    match k {
+        Key::ArrowLeft => "Left",
+        Key::ArrowRight => "Right",
+        Key::ArrowUp => "Up",
+        Key::ArrowDown => "Down",
+        Key::Delete => "Del",
+        Key::Comma => ",",
+        Key::Period => ".",
+        Key::Backslash => "\\",
+        Key::OpenBracket => "[",
+        Key::CloseBracket => "]",
+        other => other.name(),
+    }
+}
+
+/// Writes a key combination the way `parse_bind` reads it.
+pub fn bind_label(b: &KeyBind) -> String {
+    let mut s = String::new();
+    if b.ctrl {
+        s += "Ctrl+";
+    }
+    if b.shift {
+        s += "Shift+";
+    }
+    s + key_label(b.key)
+}
+
+/// Reads a shortcut text such as "Ctrl+Shift+K" or "Del / Backspace".
+pub fn parse_bind(s: &str) -> Vec<KeyBind> {
+    s.split(" / ")
+        .filter_map(|alt| {
+            let (mut ctrl, mut shift, mut key) = (false, false, None);
+            for part in alt.trim().split('+') {
+                match part {
+                    "Ctrl" | "Cmd" => ctrl = true,
+                    "Shift" => shift = true,
+                    p => key = key_from_name(p),
+                }
+            }
+            key.map(|key| KeyBind { ctrl, shift, key })
+        })
+        .collect()
+}
 
 pub struct App {
     pub data: Data,
@@ -270,6 +382,8 @@ pub struct App {
     pub collapsed: std::collections::HashSet<String>,
     pub scroll_to: Option<f32>,
     pub clipboard: Option<Event>,
+    /// the command whose new shortcut is being typed in settings
+    pub recording: Option<Cmd>,
     pub shot: Option<PathBuf>,
     pub frames: u32,
     pub pal: Palette,
@@ -325,6 +439,7 @@ impl App {
             collapsed: ["done".to_string()].into_iter().collect(),
             scroll_to: Some(scroll.max(0.0)),
             clipboard: None,
+            recording: None,
             shot,
             frames: 0,
             pal: Palette::new(true),
@@ -465,18 +580,44 @@ impl App {
             },
             is_new: true,
             focus: true,
+            anchor_rect: None,
         });
         self.selected = None;
     }
 
     pub fn edit_event(&mut self, id: u64) {
+        self.edit_event_at(id, None);
+    }
+
+    /// Opens the editor for an event; with a block rect it sits beside it.
+    /// Subscribed events open to be read; saving them is refused.
+    pub fn edit_event_at(&mut self, id: u64, anchor_rect: Option<egui::Rect>) {
         if let Some(e) = self.data.event(id) {
-            if e.remote {
-                // subscribed events open to be read; saving is refused
-            }
-            self.editor = Some(EventEdit { ev: e.clone(), is_new: false, focus: false });
+            self.editor = Some(EventEdit { ev: e.clone(), is_new: false, focus: false, anchor_rect });
+            self.create = None;
             self.selected = Some(id);
         }
+    }
+
+    /// The keys bound to a command: the user's own if set, else the default.
+    pub fn binds(&self, cmd: Cmd) -> Vec<KeyBind> {
+        parse_bind(&self.bind_text(cmd))
+    }
+
+    /// A tooltip naming a command and, when it has one, its shortcut.
+    pub fn tip(&self, name: &str, cmd: Cmd) -> String {
+        match self.bind_text(cmd) {
+            k if k.is_empty() => name.to_string(),
+            k => format!("{name} ({k})"),
+        }
+    }
+
+    /// The shortcut text for a command, as shown to the user.
+    pub fn bind_text(&self, cmd: Cmd) -> String {
+        if let Some(s) = self.data.prefs.keybinds.get(cmd.id()) {
+            return s.clone();
+        }
+        COMMANDS.iter().find(|c| c.0 == cmd).map(|c| c.2.to_string()).unwrap_or_default()
     }
 
     pub fn edit_task(&mut self, id: u64) {
@@ -932,20 +1073,27 @@ impl App {
             || self.command_bar.is_some()
             || self.create.is_some()
             || self.new_task_open;
+        if self.recording.is_some() {
+            return;
+        }
         let (cmd_mod, shift) = ctx.input(|i| (i.modifiers.command, i.modifiers.shift));
         let pressed = |k: Key| ctx.input(|i| i.key_pressed(k));
-        // always available
-        if cmd_mod && pressed(Key::K) {
-            return self.run(ctx, Cmd::CommandBar);
-        }
-        if cmd_mod && pressed(Key::F) {
-            return self.run(ctx, Cmd::Search);
-        }
-        if cmd_mod && pressed(Key::T) {
-            return self.run(ctx, Cmd::NewTask);
-        }
-        if cmd_mod && pressed(Key::Q) {
-            return self.run(ctx, Cmd::Quit);
+        let hit = |b: &KeyBind| b.ctrl == cmd_mod && b.shift == shift && pressed(b.key);
+        let bound: Vec<(Cmd, Vec<KeyBind>)> = COMMANDS.iter().map(|c| (c.0, self.binds(c.0))).collect();
+        let fired = |global: bool| {
+            bound.iter().find_map(|(c, bs)| {
+                // Ctrl combos keep working while a window or text field is open
+                bs.iter().any(|b| b.ctrl == global && hit(b)).then_some(*c)
+            })
+        };
+        let busy = dialogs || ctx.wants_keyboard_input();
+        if let Some(c) = fired(true) {
+            // a few commands work from anywhere; the rest would fight with
+            // text fields (undo, copy) and wait until nothing is open
+            let anywhere = matches!(c, Cmd::CommandBar | Cmd::Search | Cmd::NewTask | Cmd::Prefs | Cmd::Quit);
+            if anywhere || !busy {
+                return self.run(ctx, c);
+            }
         }
         if pressed(Key::Escape) {
             if self.command_bar.take().is_some() {
@@ -960,55 +1108,16 @@ impl App {
             }
             return;
         }
-        if dialogs || ctx.wants_keyboard_input() {
+        if busy {
             return;
         }
-        let copy = ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Copy)));
-        let paste = ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Paste(_))));
-        if copy || (cmd_mod && pressed(Key::C)) {
+        // egui turns Ctrl+C into a Copy event rather than a key press
+        let copy_event = ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Copy)));
+        if copy_event && self.binds(Cmd::Copy).iter().any(|b| b.ctrl && b.key == Key::C) {
             return self.run(ctx, Cmd::Copy);
         }
-        let _ = paste; // Ctrl+V is deliberately unbound; pasting is done by right-click
-        if cmd_mod && pressed(Key::Z) {
-            return self.run(ctx, Cmd::Undo);
-        }
-        if cmd_mod {
-            return;
-        }
-        if shift {
-            for (k, c) in [(Key::R, Cmd::Reschedule), (Key::F, Cmd::FollowUp), (Key::S, Cmd::Split)] {
-                if pressed(k) {
-                    return self.run(ctx, c);
-                }
-            }
-        }
-        if pressed(Key::T) {
-            return self.run(ctx, Cmd::Today);
-        }
-        let map: &[(Key, Cmd)] = &[
-            (Key::D, Cmd::ViewDay),
-            (Key::W, Cmd::ViewWeek),
-            (Key::M, Cmd::ViewMonth),
-            (Key::A, Cmd::ViewAgenda),
-            (Key::X, Cmd::ViewTwoWeeks),
-            (Key::C, Cmd::NewEvent),
-            (Key::E, Cmd::Edit),
-            (Key::R, Cmd::Refresh),
-            (Key::P, Cmd::Prefs),
-            (Key::Period, Cmd::Shortcuts),
-            (Key::Delete, Cmd::Delete),
-            (Key::Backspace, Cmd::Delete),
-            (Key::Space, Cmd::ToggleTasks),
-            (Key::Backslash, Cmd::ToggleTheme),
-            (Key::CloseBracket, Cmd::FinerGrid),
-            (Key::OpenBracket, Cmd::CoarserGrid),
-            (Key::ArrowRight, if shift { Cmd::DayFwd } else { Cmd::Next }),
-            (Key::ArrowLeft, if shift { Cmd::DayBack } else { Cmd::Prev }),
-        ];
-        for (k, c) in map {
-            if pressed(*k) {
-                return self.run(ctx, *c);
-            }
+        if let Some(c) = fired(false) {
+            self.run(ctx, c);
         }
     }
 
@@ -1240,5 +1349,38 @@ fn main() {
     if let Err(e) = res {
         eprintln!("could not open the window: {e}");
         std::process::exit(127);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_default_shortcut_reads_back() {
+        for (cmd, _, keys, _) in COMMANDS {
+            if keys.is_empty() || *cmd == Cmd::Paste {
+                continue;
+            }
+            let binds = parse_bind(keys);
+            assert_eq!(binds.len(), keys.split(" / ").count(), "{keys}");
+            let again: Vec<String> = binds.iter().map(bind_label).collect();
+            assert_eq!(parse_bind(&again.join(" / ")), binds, "{keys}");
+        }
+    }
+
+    #[test]
+    fn settings_shortcut_is_ctrl_comma() {
+        assert_eq!(parse_bind("Ctrl+,"), vec![KeyBind { ctrl: true, shift: false, key: Key::Comma }]);
+        assert_eq!(parse_bind("Shift+Left")[0].key, Key::ArrowLeft);
+    }
+
+    #[test]
+    fn command_ids_are_unique() {
+        let mut ids: Vec<&str> = COMMANDS.iter().map(|c| c.0.id()).collect();
+        ids.sort();
+        let n = ids.len();
+        ids.dedup();
+        assert_eq!(ids.len(), n);
     }
 }

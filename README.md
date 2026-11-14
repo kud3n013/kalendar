@@ -26,7 +26,8 @@ JSON data file, no account.
   (`https://` or `webcal://`), refreshed automatically.
 - **Comfort**: command bar (Ctrl+K), search, undo with a grace toast,
   light/dark themes, a task panel that can sit on the left or the right,
-  and a full keyboard shortcut set (press `.`).
+  and a full keyboard shortcut set (press `.`). Every shortcut can be
+  changed in Settings → Shortcuts; `Ctrl+,` opens settings.
 
 ## Build and run
 
@@ -41,9 +42,15 @@ cargo build --release
 
 ## Data and privacy
 
-All data lives in a single local file,
-`$XDG_DATA_HOME/kalendar/data.json` (usually
-`~/.local/share/kalendar/data.json`). Nothing is sent anywhere; the only
+Kalendar follows the XDG base directories:
+
+| What | Where |
+| --- | --- |
+| Events, tasks, calendars | `$XDG_DATA_HOME/kalendar/data.json` (usually `~/.local/share/kalendar/data.json`) |
+| Settings and shortcuts | `$XDG_CONFIG_HOME/kalendar/config.json` (usually `~/.config/kalendar/config.json`) |
+
+Older versions kept settings inside `data.json`; they are read from there
+once and then saved to `config.json`. Nothing is sent anywhere; the only
 network access is fetching the `.ics` feeds you subscribe to.
 
 Note that subscription links are stored in that file in plain text. Some
@@ -51,7 +58,7 @@ providers (for example Proton Calendar) embed the access key in the link
 itself, so treat the data file as private.
 
 A portable mode is supported: if a folder named `kalendar.home` exists next
-to the binary, data is kept inside it instead.
+to the binary, data and settings are kept inside it instead.
 
 ## License
 

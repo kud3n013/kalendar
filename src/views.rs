@@ -357,8 +357,8 @@ impl App {
         }
         if hresp.double_clicked() {
             if let Some(pos) = hresp.interact_pointer_pos() {
-                if let Some((id, _)) = chips.iter().find(|(_, r)| r.contains(pos)) {
-                    self.edit_event(*id);
+                if let Some((id, r)) = chips.iter().find(|(_, r)| r.contains(pos)) {
+                    self.edit_event_at(*id, Some(*r));
                 }
             }
         }
@@ -639,6 +639,17 @@ impl App {
         }
 
         let hit_info = |pos: Pos2| hit(pos).map(|it| (it.id, it.task, it.rect));
+        // test aid for pictures: open the editor on the Nth visible block, as
+        // a double-click would (KALENDAR_SHOW_EDIT=N; only in picture mode)
+        if self.shot.is_some() && self.frames == 30 {
+            if let Some(n) = std::env::var("KALENDAR_SHOW_EDIT").ok().and_then(|v| v.parse::<usize>().ok()) {
+                let mut real: Vec<_> = items.iter().filter(|it| !it.draft).map(|it| (it.id, it.rect)).collect();
+                real.sort_by(|a, b| a.1.left().total_cmp(&b.1.left()).then(a.1.top().total_cmp(&b.1.top())));
+                if let Some((id, r)) = real.get(n.min(real.len().saturating_sub(1))).copied() {
+                    self.edit_event_at(id, Some(r));
+                }
+            }
+        }
         if resp.clicked() {
             if let Some(pos) = resp.interact_pointer_pos() {
                 if let Some((id, task, r)) = hit_info(pos) {
@@ -667,8 +678,8 @@ impl App {
             }
         }
         if resp.double_clicked() {
-            if let Some((id, _, _)) = resp.interact_pointer_pos().and_then(hit_info) {
-                self.edit_event(id);
+            if let Some((id, _, r)) = resp.interact_pointer_pos().and_then(hit_info) {
+                self.edit_event_at(id, Some(r));
             }
         }
         if resp.secondary_clicked() {
@@ -972,6 +983,7 @@ impl App {
         }
         let cell_at = |pos: Pos2| cells.iter().find(|(r, _)| r.contains(pos)).map(|(_, d)| *d);
         let hit_at = |pos: Pos2| hits.iter().rev().find(|(r, _)| r.contains(pos)).map(|(_, h)| *h);
+        let hit_rect = |pos: Pos2| hits.iter().rev().find(|(r, _)| r.contains(pos)).map(|(r, h)| (*r, *h));
         if resp.clicked() {
             if let Some(pos) = resp.interact_pointer_pos() {
                 match hit_at(pos) {
@@ -993,8 +1005,8 @@ impl App {
             }
         }
         if resp.double_clicked() {
-            if let Some(Hit::Ev(id)) = resp.interact_pointer_pos().and_then(hit_at) {
-                self.edit_event(id);
+            if let Some((r, Hit::Ev(id))) = resp.interact_pointer_pos().and_then(hit_rect) {
+                self.edit_event_at(id, Some(r));
             }
         }
         if let Some(tid) = self.drag_task {
@@ -1066,7 +1078,7 @@ impl App {
                                 self.selected = Some(e.id);
                             }
                             if r.double_clicked() {
-                                self.edit_event(e.id);
+                                self.edit_event_at(e.id, Some(r.rect));
                             }
                         });
                     }

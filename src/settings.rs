@@ -2,7 +2,8 @@
 
 use crate::icons;
 use crate::model::*;
-use crate::{ics, mix, rgb, App, COMMANDS};
+use crate::{bind_label, ics, mix, parse_bind, rgb, App, Cmd, KeyBind, COMMANDS};
+use eframe::egui::Key;
 use eframe::egui::{self, vec2, Align, Color32, FontId, Layout, Margin, RichText, Sense, Stroke};
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -91,6 +92,9 @@ impl App {
 
     /// Shows the settings in a window of their own while they are open.
     pub fn ui_settings_window(&mut self, ctx: &egui::Context) {
+        if !self.show_prefs || self.settings_page != Page::Shortcuts {
+            self.recording = None;
+        }
         if !self.show_prefs {
             return;
         }
@@ -111,7 +115,7 @@ impl App {
             }
             egui::CentralPanel::default().frame(egui::Frame::new().fill(self.pal.bg)).show(ctx, |ui| self.settings_body(ui));
             let (close, esc) = ctx.input(|i| (i.viewport().close_requested(), i.key_pressed(egui::Key::Escape)));
-            if close || (esc && !ctx.wants_keyboard_input()) {
+            if close || (esc && !ctx.wants_keyboard_input() && self.recording.is_none()) {
                 self.show_prefs = false;
             }
         });
@@ -515,51 +519,143 @@ impl App {
         }
     }
 
+    /// Takes the next key combination typed while a shortcut is being
+    /// recorded; Escape cancels.
+    fn record_key(&mut self, ctx: &egui::Context) {
+        let Some(cmd) = self.recording else { return };
+        let got = ctx.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Key { key, pressed: true, modifiers, .. } => Some((modifiers.command, modifiers.shift, *key)),
+                // egui reports these combinations as clipboard events
+                egui::Event::Copy => Some((true, false, Key::C)),
+                egui::Event::Cut => Some((true, false, Key::X)),
+                egui::Event::Paste(_) => Some((true, false, Key::V)),
+                _ => None,
+            })
+        });
+        let Some((ctrl, shift, key)) = got else { return };
+        ctx.input_mut(|i| i.events.clear());
+        self.recording = None;
+        if key == Key::Escape {
+            return;
+        }
+        let bind = KeyBind { ctrl, shift, key };
+        self.data.prefs.keybinds.insert(cmd.id().to_string(), bind_label(&bind));
+    }
+
     fn page_shortcuts(&mut self, ui: &mut egui::Ui) {
-        let (muted, text, side) = (self.pal.muted, self.pal.text, self.pal.side);
-        let key_row = |ui: &mut egui::Ui, label: &str, keys: &str| {
+        let ctx = ui.ctx().clone();
+        self.record_key(&ctx);
+        let (muted, text, side, accent) = (self.pal.muted, self.pal.text, self.pal.side, self.pal.accent);
+        let chip = |ui: &mut egui::Ui, k: &str, fill: Color32, color: Color32| {
+            egui::Frame::new().fill(fill).corner_radius(RADIUS as u8).inner_margin(Margin::symmetric(9, 5)).show(ui, |ui| {
+                ui.label(RichText::new(k).size(15.0).color(color));
+            });
+        };
+        // drawn right to left: last alternative first, last key first
+        let chips = |ui: &mut egui::Ui, keys: &str| {
+            let alts: Vec<&str> = keys.split(" / ").collect();
+            for (ai, alt) in alts.iter().enumerate().rev() {
+                let parts: Vec<&str> = if alt.contains(" then ") { alt.split(" then ").collect() } else { alt.split('+').collect() };
+                for k in parts.iter().rev() {
+                    chip(ui, k, mix(side, text, 0.14), text);
+                }
+                if ai > 0 {
+                    ui.label(RichText::new("or").size(15.0).color(muted));
+                }
+            }
+        };
+        let fixed_row = |ui: &mut egui::Ui, label: &str, keys: &str| {
             ui.allocate_ui_with_layout(vec2(ui.available_width(), 44.0), Layout::left_to_right(Align::Center), |ui| {
                 ui.label(RichText::new(label).size(17.0).color(mix(muted, text, 0.6)));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.spacing_mut().item_spacing.x = 6.0;
-                    // drawn right to left: last alternative first, last key first
-                    let alts: Vec<&str> = keys.split(" / ").collect();
-                    for (ai, alt) in alts.iter().enumerate().rev() {
-                        let parts: Vec<&str> = if alt.contains(" then ") { alt.split(" then ").collect() } else { alt.split('+').collect() };
-                        for k in parts.iter().rev() {
-                            egui::Frame::new().fill(mix(side, text, 0.14)).corner_radius(5).inner_margin(Margin::symmetric(9, 5)).show(ui, |ui| {
-                                ui.label(RichText::new(*k).size(15.0).color(text));
-                            });
-                        }
-                        if ai > 0 {
-                            ui.label(RichText::new("or").size(15.0).color(muted));
-                        }
-                    }
+                    chips(ui, keys);
                 });
             });
         };
+        let section_head = |ui: &mut egui::Ui, sec: &str, first: bool| {
+            if !first {
+                ui.add_space(22.0);
+            }
+            ui.label(RichText::new(sec).font(bold(20.0)));
+            ui.add_space(6.0);
+            let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+            ui.painter().rect_filled(r, 0.0, muted);
+            ui.add_space(10.0);
+        };
+        ui.label(RichText::new("Click a shortcut to change it, then press the new keys. Esc cancels.").size(15.0).color(muted));
+        ui.add_space(10.0);
+        // every command's keys, to warn when two share one
+        let all: Vec<(Cmd, &str, Vec<KeyBind>)> = COMMANDS.iter().map(|c| (c.0, c.1, self.binds(c.0))).collect();
         let mut section = "";
-        for (_, label, keys, sec) in COMMANDS {
-            if keys.is_empty() {
+        for (cmd, label, default, sec) in COMMANDS {
+            if *cmd == Cmd::Paste {
+                // pasting is done with the mouse
                 continue;
             }
             if *sec != section {
-                if !section.is_empty() {
-                    ui.add_space(22.0);
-                }
+                section_head(ui, sec, section.is_empty());
                 section = sec;
-                ui.label(RichText::new(*sec).font(bold(20.0)));
-                ui.add_space(6.0);
-                let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
-                ui.painter().rect_filled(r, 0.0, muted);
-                ui.add_space(10.0);
             }
-            key_row(ui, label, keys);
+            let keys = self.bind_text(*cmd);
+            let custom = self.data.prefs.keybinds.contains_key(cmd.id());
+            let mine = parse_bind(&keys);
+            let clash: Vec<&str> =
+                all.iter().filter(|(c, _, bs)| c != cmd && bs.iter().any(|b| mine.contains(b))).map(|(_, l, _)| *l).collect();
+            let recording = self.recording == Some(*cmd);
+            let (mut start, mut reset, mut clear) = (false, false, false);
+            ui.allocate_ui_with_layout(vec2(ui.available_width(), 44.0), Layout::left_to_right(Align::Center), |ui| {
+                ui.label(RichText::new(*label).size(17.0).color(mix(muted, text, 0.6)));
+                if !clash.is_empty() {
+                    ui.label(RichText::new(icons::INFO).size(14.0).color(RED)).on_hover_text(format!("Also used by: {}", clash.join(", ")));
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.spacing_mut().item_spacing.x = 6.0;
+                    // reset and clear sit to the right of the keys
+                    if custom {
+                        let r = ui.add(egui::Button::new(RichText::new(icons::UNDO).size(14.0).color(muted)).frame(false));
+                        reset = r.on_hover_text(format!("Back to the default ({})", if default.is_empty() { "none" } else { default })).clicked();
+                    }
+                    if !keys.is_empty() {
+                        let r = ui.add(egui::Button::new(RichText::new(icons::X).size(14.0).color(muted)).frame(false));
+                        clear = r.on_hover_text("Remove this shortcut").clicked();
+                    }
+                    let inner = ui.scope(|ui| {
+                        if recording {
+                            chip(ui, "Press keys…", mix(side, accent, 0.35), text);
+                        } else if keys.is_empty() {
+                            chip(ui, "Not set", mix(side, text, 0.06), muted);
+                        } else {
+                            chips(ui, &keys);
+                        }
+                    });
+                    let r = ui.interact(inner.response.rect, ui.id().with(("bind", cmd.id())), Sense::click());
+                    if r.hovered() {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
+                    start = r.on_hover_text("Click, then press the new keys").clicked();
+                });
+            });
+            if start {
+                self.recording = if recording { None } else { Some(*cmd) };
+            }
+            if reset {
+                self.data.prefs.keybinds.remove(cmd.id());
+            }
+            if clear {
+                self.data.prefs.keybinds.insert(cmd.id().to_string(), String::new());
+            }
         }
-        key_row(ui, "Discard the creation of an event", "Esc");
-        key_row(ui, "Save changes", "Ctrl+Enter");
-        key_row(ui, "Zoom the hours", "Ctrl+Wheel");
-        key_row(ui, "Move sideways by days", "Shift+Wheel");
+        section_head(ui, "Fixed", false);
+        fixed_row(ui, "Paste here", "Right-click");
+        fixed_row(ui, "Discard the creation of an event", "Esc");
+        fixed_row(ui, "Save changes", "Ctrl+Enter");
+        fixed_row(ui, "Zoom the hours", "Ctrl+Wheel");
+        fixed_row(ui, "Move sideways by days", "Shift+Wheel");
+        if self.recording.is_some() {
+            ctx.request_repaint();
+        }
     }
 
     fn page_info(&mut self, ui: &mut egui::Ui) {
@@ -570,8 +666,11 @@ impl App {
         ui.label(RichText::new("Your calendars and tasks are kept on this computer, in:").size(15.0).color(muted));
         ui.label(RichText::new(data_path().display().to_string()).size(15.0).monospace());
         ui.add_space(8.0);
+        ui.label(RichText::new("Your settings and shortcuts are kept in:").size(15.0).color(muted));
+        ui.label(RichText::new(config_path().display().to_string()).size(15.0).monospace());
+        ui.add_space(8.0);
         ui.label(
-            RichText::new("Links of subscribed calendars are stored in that file as plain text. A Proton Calendar link contains the keys that give access to that calendar, so keep the file private.")
+            RichText::new("Links of subscribed calendars are stored in data.json as plain text. A Proton Calendar link contains the keys that give access to that calendar, so keep that file private.")
                 .size(15.0)
                 .color(muted),
         );
