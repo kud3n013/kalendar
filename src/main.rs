@@ -852,7 +852,7 @@ impl App {
         self.snapshot();
         self.data.events.retain(|x| x.id != id);
         let from = Self::now().max(e.end);
-        match self.data.next_free_slot(from, e.minutes()) {
+        match self.data.next_free_slot(from, e.minutes(), e.task_id.and_then(|t| self.data.task(t))) {
             Some(start) => {
                 let mut moved = e.clone();
                 moved.start = start;
@@ -877,7 +877,7 @@ impl App {
             return;
         }
         let from = Self::now().max(e.end);
-        match self.data.next_free_slot(from, e.minutes()) {
+        match self.data.next_free_slot(from, e.minutes(), e.task_id.and_then(|t| self.data.task(t))) {
             Some(start) => {
                 self.snapshot();
                 let mut next = e.clone();
@@ -906,7 +906,7 @@ impl App {
         if let Some(x) = self.data.event_mut(id) {
             x.end = at;
         }
-        match self.data.next_free_slot(e.end.max(at), rest) {
+        match self.data.next_free_slot(e.end.max(at), rest, e.task_id.and_then(|t| self.data.task(t))) {
             Some(start) => {
                 let mut next = e.clone();
                 next.id = self.data.new_id();

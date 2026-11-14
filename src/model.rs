@@ -128,6 +128,10 @@ pub struct Prefs {
     pub default_task_min: i64,
     pub split_long_tasks: bool,
     pub plan_without_due: bool,
+    /// the planner puts tasks into matching frames first
+    pub use_frames: bool,
+    /// tasks no frame fits go into free working time; else they are left
+    pub plan_outside_frames: bool,
     pub show_due_today: bool,
     pub show_due_tomorrow: bool,
     pub show_due_soon: bool,
@@ -163,6 +167,8 @@ impl Default for Prefs {
             default_task_min: 60,
             split_long_tasks: true,
             plan_without_due: true,
+            use_frames: true,
+            plan_outside_frames: true,
             show_due_today: true,
             show_due_tomorrow: true,
             show_due_soon: true,
@@ -902,22 +908,62 @@ impl Data {
         gaps
     }
 
-    /// Fits open, unscheduled tasks into free working time over the next
-    /// days. Returns (sessions made, tasks left behind).
-    /// First free working-time gap of `mins` minutes at or after `from`,
-    /// looking up to PLAN_MAX_SPAN_DAYS days ahead.
-    pub fn next_free_slot(&self, from: NaiveDateTime, mins: i64) -> Option<NaiveDateTime> {
-        let m = from.hour() as i64 * 60 + from.minute() as i64;
-        let from = from.date().and_hms_opt(0, 0, 0).unwrap() + Duration::minutes((m + 14) / 15 * 15);
-        for d in 0..PLAN_MAX_SPAN_DAYS {
-            for (s, e) in self.free_gaps(from.date() + Duration::days(d), from) {
-                if (e - s).num_minutes() >= mins {
-                    return Some(s);
+    /// Frames are in use: switched on and at least one of them enabled.
+    fn frames_active(&self) -> bool {
+        self.prefs.use_frames && self.frames.iter().any(|f| f.enabled)
+    }
+
+    /// Where a task may go over `days` days from `day0`, at or after `from`:
+    /// free time inside matching frames, and free working time outside the
+    /// exclusive frames it does not match (empty when that is not allowed).
+    /// Without a task, plain free working time.
+    fn task_windows(&self, t: Option<&Task>, day0: NaiveDate, from: NaiveDateTime, days: i64) -> (Vec<Window>, Vec<Window>) {
+        let task_cal = self.task_calendar();
+        let frames = self.frames_active() && t.is_some();
+        let (mut inside, mut outside) = (vec![], vec![]);
+        for d in 0..days {
+            let day = day0 + Duration::days(d);
+            if t.and_then(|t| t.earliest).is_some_and(|e| day < e) {
+                continue;
+            }
+            let mut cuts = vec![];
+            if let Some(t) = t.filter(|_| frames) {
+                for o in self.frames_on(day) {
+                    let Some(f) = self.frame(o.frame) else { continue };
+                    if f.matches(t, self.prefs.default_task_min) {
+                        for (s, e) in self.free_gaps_in(o.start.max(from), o.end) {
+                            inside.push(Window { start: s, end: e, calendar: f.calendar, spec: f.filter.specificity() });
+                        }
+                    } else if f.exclusive {
+                        cuts.push((o.start, o.end));
+                    }
+                }
+            }
+            if !frames || self.prefs.plan_outside_frames {
+                for (s, e) in subtract(self.free_gaps(day, from), &cuts) {
+                    outside.push(Window { start: s, end: e, calendar: task_cal, spec: 0 });
                 }
             }
         }
-        None
+        // earliest first; where two frames start together the more specific wins
+        inside.sort_by_key(|w| (w.start, std::cmp::Reverse(w.spec), w.end));
+        (inside, outside)
     }
+
+    /// First place `mins` minutes long at or after `from`, looking up to
+    /// PLAN_MAX_SPAN_DAYS days ahead. With a task, its frames come first.
+    pub fn next_free_slot(&self, from: NaiveDateTime, mins: i64, task: Option<&Task>) -> Option<NaiveDateTime> {
+        let m = from.hour() as i64 * 60 + from.minute() as i64;
+        let from = from.date().and_hms_opt(0, 0, 0).unwrap() + Duration::minutes((m + 14) / 15 * 15);
+        let (inside, outside) = self.task_windows(task, from.date(), from, PLAN_MAX_SPAN_DAYS);
+        [inside, outside]
+            .iter()
+            .find_map(|ws| ws.iter().find(|w| (w.end - w.start).num_minutes() >= mins).map(|w| w.start))
+    }
+
+    /// Fits open, unscheduled tasks into matching frames, else into free
+    /// working time, over the next days. Returns (sessions made, tasks left
+    /// behind).
 
     pub fn plan_tasks(&mut self, now: NaiveDateTime) -> (usize, usize) {
         // sessions of flexible tasks that have not started may be moved
@@ -939,84 +985,25 @@ impl Data {
                 if t.priority == 0 { 10 } else { t.priority },
             )
         });
-        let task_cal = self.task_calendar();
         let (mut made, mut left) = (0, 0);
         for t in todo {
-            let mut need = t.duration_min.unwrap_or(self.prefs.default_task_min);
+            let need = t.duration_min.unwrap_or(self.prefs.default_task_min);
             let can_split = self.prefs.split_long_tasks && need >= PLAN_CHUNK_FROM;
-            let mut placed: Vec<(NaiveDateTime, NaiveDateTime)> = vec![];
-            'days: for d in 0..PLAN_SPAN_DAYS {
-                let day = now.date() + Duration::days(d);
-                if t.earliest.map(|e| day < e).unwrap_or(false) {
-                    continue;
-                }
-                for (s, e) in self.free_gaps(day, from) {
-                    let room = (e - s).num_minutes();
-                    if room >= need {
-                        placed.push((s, s + Duration::minutes(need)));
-                        need = 0;
-                        break 'days;
-                    }
-                }
-            }
-            if need > 0 && can_split {
-                let saved = self.events.len();
-                'days2: for d in 0..PLAN_SPAN_DAYS {
-                    let day = now.date() + Duration::days(d);
-                    if t.earliest.map(|e| day < e).unwrap_or(false) {
-                        continue;
-                    }
-                if t.earliest.map(|e| day < e).unwrap_or(false) {
-                    continue;
-                }
-                    for (s, e) in self.free_gaps(day, from) {
-                        let room = (e - s).num_minutes();
-                        let take = room.min(need);
-                        if take < PLAN_MIN_CHUNK || (need - take != 0 && need - take < PLAN_MIN_CHUNK) {
-                            continue;
-                        }
-                        placed.push((s, s + Duration::minutes(take)));
-                        // hold the place so later gaps are computed right
-                        self.events.push(Event {
-                            id: 0,
-                            title: String::new(),
-                            start: s,
-                            end: s + Duration::minutes(take),
-                            all_day: false,
-                            calendar: 0,
-                            notes: String::new(),
-                            task_id: None,
-                        color: None,
-                        ..Default::default()
-                        });
-                        need -= take;
-                        if need == 0 {
-                            break 'days2;
-                        }
-                    }
-                }
-                self.events.truncate(saved);
-                if need > 0 {
-                    placed.clear();
-                }
-            }
-            if need > 0 || placed.is_empty() {
+            let (inside, outside) = self.task_windows(Some(&t), now.date(), from, PLAN_SPAN_DAYS);
+            let Some(placed) = fit(&inside, need, can_split).or_else(|| fit(&outside, need, can_split)) else {
                 left += 1;
                 continue;
-            }
-            for (s, e) in placed {
+            };
+            for (s, e, cal) in placed {
                 let id = self.new_id();
                 self.events.push(Event {
                     id,
                     title: t.title.clone(),
                     start: s,
                     end: e,
-                    all_day: false,
-                    calendar: task_cal,
-                    notes: String::new(),
+                    calendar: cal,
                     task_id: Some(t.id),
-                color: None,
-                ..Default::default()
+                    ..Default::default()
                 });
                 made += 1;
                 if self.prefs.auto_due {
@@ -1030,6 +1017,72 @@ impl Data {
         }
         (made, left)
     }
+}
+
+/// A stretch of time a task may be placed in, and the calendar it goes to.
+#[derive(Clone, Copy, Debug)]
+struct Window {
+    start: NaiveDateTime,
+    end: NaiveDateTime,
+    calendar: usize,
+    /// how specific the frame's filter is; 0 outside frames
+    spec: usize,
+}
+
+type Span = (NaiveDateTime, NaiveDateTime);
+
+/// `gaps` with the `cuts` taken out.
+fn subtract(gaps: Vec<Span>, cuts: &[Span]) -> Vec<Span> {
+    let mut out = gaps;
+    for &(cs, ce) in cuts {
+        out = out
+            .into_iter()
+            .flat_map(|(s, e)| {
+                if ce <= s || cs >= e {
+                    return vec![(s, e)];
+                }
+                let mut v = vec![];
+                if cs > s {
+                    v.push((s, cs));
+                }
+                if ce < e {
+                    v.push((ce, e));
+                }
+                v
+            })
+            .collect();
+    }
+    out
+}
+
+/// Places `need` minutes in the windows: the first one with room for all of
+/// it, else (when splitting is allowed) chunks of at least PLAN_MIN_CHUNK
+/// across the windows in order, never leaving a smaller remainder.
+fn fit(windows: &[Window], need: i64, can_split: bool) -> Option<Vec<(NaiveDateTime, NaiveDateTime, usize)>> {
+    if let Some(w) = windows.iter().find(|w| (w.end - w.start).num_minutes() >= need) {
+        return Some(vec![(w.start, w.start + Duration::minutes(need), w.calendar)]);
+    }
+    if !can_split {
+        return None;
+    }
+    let mut left = need;
+    let mut placed: Vec<(NaiveDateTime, NaiveDateTime, usize)> = vec![];
+    for w in windows {
+        // windows of overlapping frames may share time already taken
+        let taken: Vec<Span> = placed.iter().map(|p| (p.0, p.1)).collect();
+        for (s, e) in subtract(vec![(w.start, w.end)], &taken) {
+            let take = (e - s).num_minutes().min(left);
+            if take < PLAN_MIN_CHUNK || (left - take != 0 && left - take < PLAN_MIN_CHUNK) {
+                continue;
+            }
+            placed.push((s, s + Duration::minutes(take), w.calendar));
+            left -= take;
+            if left == 0 {
+                return Some(placed);
+            }
+        }
+    }
+    None
 }
 
 /// Minutes from midnight the grid opens at: 90 minutes before now, rounded
@@ -1212,6 +1265,136 @@ mod tests {
             "Wed 16:45 18:00 Huge job c3",
         ];
         assert_eq!(sessions(&d), want);
+    }
+
+    fn add_task(d: &mut Data, title: &str, mins: i64, tags: &[&str]) -> u64 {
+        let id = d.new_id();
+        d.tasks.push(Task {
+            id,
+            title: title.into(),
+            duration_min: Some(mins),
+            tags: tags.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        });
+        id
+    }
+
+    fn deep_frame(id: u64, cal: usize, start_h: i64, end_h: i64) -> Frame {
+        let mut f = frame(id, cal);
+        f.start_min = start_h * 60;
+        f.end_min = end_h * 60;
+        f.filter.tags = vec!["deep".into()];
+        f
+    }
+
+    fn monday_8() -> NaiveDateTime {
+        ymd(11, 16).and_hms_opt(8, 0, 0).unwrap()
+    }
+
+    #[test]
+    fn matching_task_goes_into_its_frame() {
+        let mut d = empty();
+        d.frames.push(deep_frame(1, 1, 14, 16));
+        add_task(&mut d, "Write", 60, &["Deep"]);
+        assert_eq!(d.plan_tasks(monday_8()), (1, 0));
+        assert_eq!(sessions(&d), ["Mon 14:00 15:00 Write c1"]);
+    }
+
+    #[test]
+    fn other_tasks_keep_out_of_exclusive_frames() {
+        let mut d = empty();
+        d.frames.push(deep_frame(1, 1, 8, 12));
+        add_task(&mut d, "Email", 60, &[]);
+        d.plan_tasks(monday_8());
+        assert_eq!(sessions(&d), ["Mon 12:00 13:00 Email c3"]);
+
+        let mut d = empty();
+        let mut f = deep_frame(1, 1, 8, 12);
+        f.exclusive = false;
+        d.frames.push(f);
+        add_task(&mut d, "Email", 60, &[]);
+        d.plan_tasks(monday_8());
+        assert_eq!(sessions(&d), ["Mon 08:00 09:00 Email c3"]);
+    }
+
+    #[test]
+    fn no_frame_fits_and_leave_unplanned() {
+        let mut d = empty();
+        d.prefs.plan_outside_frames = false;
+        d.frames.push(deep_frame(1, 1, 8, 12));
+        add_task(&mut d, "Email", 60, &[]);
+        add_task(&mut d, "Write", 60, &["deep"]);
+        assert_eq!(d.plan_tasks(monday_8()), (1, 1));
+        assert_eq!(sessions(&d), ["Mon 08:00 09:00 Write c1"]);
+
+        // switching frames off plans as before ("Write" now has a due date)
+        d.events.clear();
+        d.prefs.use_frames = false;
+        assert_eq!(d.plan_tasks(monday_8()), (2, 0));
+        assert_eq!(sessions(&d), ["Mon 08:00 09:00 Write c3", "Mon 09:00 10:00 Email c3"]);
+    }
+
+    #[test]
+    fn long_task_splits_across_frames() {
+        let mut d = empty();
+        let mut a = deep_frame(1, 1, 9, 11);
+        a.filter = FrameFilter::default();
+        let mut b = deep_frame(2, 1, 14, 16);
+        b.filter = FrameFilter::default();
+        d.frames = vec![a, b];
+        add_task(&mut d, "Thesis", 180, &[]);
+        assert_eq!(d.plan_tasks(monday_8()), (2, 0));
+        assert_eq!(sessions(&d), ["Mon 09:00 11:00 Thesis c1", "Mon 14:00 15:00 Thesis c1"]);
+    }
+
+    #[test]
+    fn earliest_day_holds_in_frames() {
+        let mut d = empty();
+        d.frames.push(deep_frame(1, 1, 9, 11));
+        let id = add_task(&mut d, "Write", 60, &["deep"]);
+        d.task_mut(id).unwrap().earliest = Some(ymd(11, 18));
+        d.plan_tasks(monday_8());
+        assert_eq!(sessions(&d), ["Wed 09:00 10:00 Write c1"]);
+    }
+
+    #[test]
+    fn events_take_room_from_frames() {
+        let mut d = empty();
+        d.frames.push(deep_frame(1, 1, 9, 11));
+        d.events.push(Event {
+            id: 99,
+            title: "Call".into(),
+            start: ymd(11, 16).and_hms_opt(9, 0, 0).unwrap(),
+            end: ymd(11, 16).and_hms_opt(10, 30, 0).unwrap(),
+            ..Default::default()
+        });
+        add_task(&mut d, "Write", 60, &["deep"]);
+        add_task(&mut d, "Sketch", 30, &["deep"]);
+        assert_eq!(d.plan_tasks(monday_8()), (2, 0));
+        assert_eq!(sessions(&d), ["Mon 10:30 11:00 Sketch c1", "Tue 09:00 10:00 Write c1"]);
+    }
+
+    #[test]
+    fn more_specific_frame_wins_a_tie() {
+        let mut d = empty();
+        let mut any = deep_frame(1, 0, 9, 11);
+        any.filter = FrameFilter::default();
+        let deep = deep_frame(2, 1, 9, 11);
+        d.frames = vec![any, deep];
+        add_task(&mut d, "Write", 60, &["deep"]);
+        d.plan_tasks(monday_8());
+        assert_eq!(sessions(&d), ["Mon 09:00 10:00 Write c1"]);
+    }
+
+    #[test]
+    fn next_free_slot_prefers_frames() {
+        let mut d = empty();
+        d.frames.push(deep_frame(1, 1, 14, 16));
+        let id = add_task(&mut d, "Write", 60, &["deep"]);
+        let t = d.task(id).cloned();
+        let at = |h| Some(ymd(11, 16).and_hms_opt(h, 0, 0).unwrap());
+        assert_eq!(d.next_free_slot(monday_8(), 60, t.as_ref()), at(14));
+        assert_eq!(d.next_free_slot(monday_8(), 60, None), at(8));
     }
 
     #[test]
