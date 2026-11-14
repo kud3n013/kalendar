@@ -301,8 +301,53 @@ Graph does not use RRULE. `patternedRecurrence = { pattern, range }`.
 - **Registration:** none.
 - **Incremental sync:** ctag/etag works; RFC 6578 sync-collection support on iCloud is likely, but unverified.
 - **Quirks (unverified):**
-  - Reminders (VTODO) moved to a non-CalDAV backend for upgraded accounts, so do not promise iCloud task sync.
   - iCloud emits VTIMEZONE blocks with Apple/Olson TZIDs, which are fine for chrono-tz.
+- **Reminders:** not reachable from kalendar; see §4.3.1.
+
+#### 4.3.1 Apple Reminders (checked 2026-11-14)
+
+**Conclusion:** kalendar on Linux cannot sync Apple Reminders. iCloud **events** over CalDAV are unaffected.
+Only VTODO lists that never went through the Reminders upgrade, or were created over CalDAV by another client,
+remain reachable. Apple's Reminders app does not show those lists.
+
+What the sources say:
+
+- **Apple support, "Update the Reminders app in iOS 13 or later"** (https://support.apple.com/en-us/102457,
+  page dated June 2026):
+  - After the update, reminders "aren't compatible with earlier versions of iOS and macOS".
+  - The update "affects existing reminders in your primary iCloud account only". Reminders in "CalDAV and
+    Exchange accounts, aren't changed".
+  - The only non-Apple-device access Apple lists is iCloud.com in a browser. It also says iCloud reminders
+    don't show in Outlook via iCloud for Windows.
+  - The page does not mention CalDAV access to upgraded lists at all.
+- **EventKit**, the only official Reminders API (https://developer.apple.com/documentation/eventkit,
+  read via its JSON form `…/tutorials/data/documentation/eventkit.json`):
+  - Abstract: "Create, view, and edit calendar and reminder events."
+  - Platforms: iOS, iPadOS, Mac Catalyst, macOS, visionOS and watchOS only. There is no Linux, Windows or web
+    version.
+- **CloudKit JS / CloudKit Web Services** (https://developer.apple.com/documentation/cloudkitjs):
+  - Abstract: access "to your CloudKit app's containers and databases", meaning the developer's own app.
+  - Nothing documents access to Apple's Reminders store.
+- **BusyMac FAQ, "Where Did My Reminders Go After Upgrade?"**
+  (https://www.busymac.com/docs/faqs/112990-reminders-in-ios-13-and-macos-catalina-drops-support-for-caldav/,
+  last updated 28 July 2024). This is **secondary**: a third-party CalDAV client vendor.
+  - The upgrade moves to-do-only calendars "off of CalDAV" into a separate Reminders store.
+  - Those calendars then disappear from third-party CalDAV clients "on all other platforms".
+  - iCloud's CalDAV server still syncs VTODO calendars between CalDAV clients. These are a separate store,
+    though, and the upgraded Reminders app does not show them.
+  - BusyCal's own Reminders support is native to Mac and iOS, consistent with EventKit.
+- **Unofficial access:** the only other routes are undocumented iCloud web endpoints used by iCloud.com. They are
+  reverse-engineered and fragile, and out of scope for this project.
+
+What kalendar can offer instead:
+
+- iCloud calendars (events) via CalDAV, as in Phase 2.
+- CalDAV task sync (Phase 6) with servers that keep VTODO on CalDAV: Nextcloud, Fastmail, Radicale and
+  Baïkal. Fastmail and Nextcloud were not re-verified in this pass.
+- **Setup hint for the settings page:** iPhone/Mac users who want shared tasks can add one of those CalDAV accounts
+  to Apple Reminders on their device, under Settings › Reminders › Accounts. Those lists are then on CalDAV and
+  visible to kalendar. Apple's page confirms that reminders in CalDAV accounts aren't changed by the upgrade.
+  The exact settings path is unverified.
 
 ### 4.4 Proton Calendar
 
@@ -629,7 +674,7 @@ pre-registering a port.
    initially make recurring remote events read-only.
 7. **Polling cost and battery.** Incremental tokens make polls cheap. Still, avoid running sync while the window
    is hidden or minimised, and back off on errors.
-8. **iCloud details** (canonical host, sync-collection support, VTODO availability) come from community knowledge,
+8. **iCloud details** (canonical host and sync-collection support) come from community knowledge,
    not Apple documentation. Verify them against a real account before advertising them.
 9. **EWS retirement date and the absence of Outlook CalDAV** are unverified. Neither changes the recommendation
    (Graph), but the docs/README should not state dates without a source.
