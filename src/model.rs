@@ -48,6 +48,8 @@ pub const WORK_END_MIN: i64 = 18 * 60; // to 18:00, Monday to Friday
 pub const DUE_SOON_DAYS: i64 = 7; // "Due soon" looks this many days ahead
 pub const ZOOM_STEP: f32 = 1.1; // one wheel notch while zooming
 pub const SYNC_EVERY_S: f64 = 900.0; // subscribed and synced calendars refresh every 15 minutes
+pub const PUSH_AFTER_S: f64 = 2.0; // a change made here is sent to its server this much later
+pub const NEXTCLOUD_WAIT_S: u64 = 300; // how long a browser sign-in is waited for
 pub const SYNC_ON_FOCUS_S: f64 = 60.0; // coming back to the window refreshes, at most this often
 pub const NEW_EVENT_MIN: i64 = 60; // new events are one hour long
 pub const NEW_EVENT_NOON_H: i64 = 12; // on a later day they start at 12:00
@@ -276,6 +278,17 @@ pub struct Account {
     pub home: Option<String>,
     pub last_sync: Option<String>,
     pub error: Option<String>,
+    /// signed in through Nextcloud's own page; its app password can be
+    /// taken back on signing out
+    pub nextcloud: bool,
+}
+
+/// An event deleted here that the server still has.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq)]
+pub struct PendingDelete {
+    pub calendar: u64,
+    pub href: String,
+    pub etag: Option<String>,
 }
 
 impl Account {
@@ -291,9 +304,17 @@ impl Calendar {
     pub fn is_local(&self) -> bool {
         self.url.is_none() && self.account.is_none()
     }
+    /// A synced calendar whose server takes changes.
+    pub fn is_synced_writable(&self) -> bool {
+        self.account.is_some() && !self.read_only
+    }
+    /// Events can be made and changed in it.
+    pub fn writable(&self) -> bool {
+        self.is_local() || self.is_synced_writable()
+    }
 }
 
-#[derive(Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default, Debug)]
 pub struct Event {
     pub id: u64,
     pub title: String,
@@ -330,6 +351,17 @@ pub struct Event {
 }
 
 impl Event {
+    /// Forgets where the event lives on a server: it becomes a new event
+    /// of one's own.
+    pub fn detach(&mut self) {
+        self.remote = false;
+        self.dirty = false;
+        (self.uid, self.recurrence_id, self.href, self.etag, self.raw) = (None, None, None, None, None);
+    }
+    /// The parts a server keeps are the same in both.
+    pub fn same_content(&self, o: &Event) -> bool {
+        self.title == o.title && self.start == o.start && self.end == o.end && self.all_day == o.all_day && self.notes == o.notes
+    }
     pub fn minutes(&self) -> i64 {
         (self.end - self.start).num_minutes()
     }
@@ -643,6 +675,9 @@ pub struct Data {
     pub frames: Vec<Frame>,
     #[serde(default)]
     pub accounts: Vec<Account>,
+    /// deletions waiting to be sent to a server
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub outbox: Vec<PendingDelete>,
     /// settings live in config.json; this stays readable for old data files
     #[serde(default, skip_serializing)]
     pub prefs: Prefs,
@@ -780,6 +815,28 @@ impl Data {
     pub fn calendar(&self, id: u64) -> Option<&Calendar> {
         self.calendars.iter().find(|c| c.id == id)
     }
+    /// Why an event cannot be changed here, if it cannot.
+    pub fn locked(&self, e: &Event) -> Option<&'static str> {
+        let c = self.calendar(e.calendar)?;
+        if c.url.is_some() {
+            Some("This event comes from a subscribed calendar and can't be changed here")
+        } else if c.account.is_some() && c.read_only {
+            Some("This calendar is read-only on its server, so the event can't be changed here")
+        } else if e.remote && e.recurrence_id.is_some() {
+            Some("Repeating events from an account can't be changed here yet")
+        } else {
+            None
+        }
+    }
+    /// The calendar an event of one's own can go to when its own cannot
+    /// take it.
+    pub fn writable_or_own(&self, cal: u64) -> u64 {
+        if self.calendar(cal).is_some_and(|c| c.writable()) {
+            cal
+        } else {
+            self.first_own_calendar()
+        }
+    }
     pub fn calendar_mut(&mut self, id: u64) -> Option<&mut Calendar> {
         self.calendars.iter_mut().find(|c| c.id == id)
     }
@@ -826,6 +883,11 @@ impl Data {
                 }
             };
             let e = &mut self.events[i];
+            if e.dirty {
+                // changed here and not sent yet: the edit is not written
+                // over; sending it settles which copy wins
+                continue;
+            }
             e.title = f.title;
             e.start = f.start;
             e.end = f.end;
@@ -835,7 +897,6 @@ impl Data {
             e.recurrence_id = f.recurrence_id;
             e.href = f.href;
             e.etag = f.etag;
-            e.dirty = false;
         }
     }
     /// Takes in what a pull brought back and remembers where it stopped.
@@ -898,6 +959,7 @@ impl Data {
     }
     /// Removes a calendar with its events and frames.
     pub fn remove_calendar(&mut self, cal: u64) {
+        self.outbox.retain(|d| d.calendar != cal);
         self.events.retain(|e| e.calendar != cal);
         self.frames.retain(|f| f.calendar != cal);
         self.calendars.retain(|c| c.id != cal);
@@ -977,6 +1039,7 @@ impl Data {
             ],
             frames: vec![],
             accounts: vec![],
+            outbox: vec![],
             prefs: Prefs::default(),
             next_id: 10,
         };

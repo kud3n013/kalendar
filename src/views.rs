@@ -594,7 +594,7 @@ impl App {
 
         if resp.drag_started_by(PointerButton::Primary) {
             if let Some(o) = ui.input(|i| i.pointer.press_origin()) {
-                if let Some(it) = hit(o).filter(|it| !self.data.event(it.id).map(|e| e.remote).unwrap_or(false)) {
+                if let Some(it) = hit(o).filter(|it| !self.data.event(it.id).is_some_and(|e| self.data.locked(e).is_some())) {
                     let id = it.id;
                     let resize = o.y > it.rect.bottom() - 6.0;
                     self.snapshot();
@@ -836,7 +836,7 @@ impl App {
         };
         let red = Color32::from_rgb(0xeb, 0x62, 0x62);
         let muted = self.pal.muted;
-        if ev.remote {
+        if self.data.locked(&ev).is_some() {
             // a subscribed event can only be copied
             ui.set_min_width(260.0);
             let cal = self.data.calendar(ev.calendar).map(|c| c.name.clone()).unwrap_or_default();

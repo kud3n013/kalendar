@@ -28,6 +28,12 @@ pub enum SyncDone {
     Link { cal: u64, res: Result<String, String> },
     /// a private link was put into the keyring
     LinkKept { cal: u64, res: Result<(), String> },
+    /// changes made here were sent to the server
+    Pushed { cal: u64, results: Vec<sync::PushResult> },
+    /// Nextcloud's sign-in page is open in the browser
+    NextcloudOpened { login: String },
+    /// the person signed in on Nextcloud's page, or it failed
+    NextcloudDone { res: Result<sync::nextcloud::Granted, sync::SyncError> },
 }
 
 pub struct Palette {
@@ -426,6 +432,14 @@ pub struct App {
     pub acct_user: String,
     pub acct_pass: String,
     pub acct_error: Option<String>,
+    /// synced events as the server last knew them, to tell what was
+    /// changed here since
+    pub shadow: std::collections::HashMap<u64, Event>,
+    /// something was changed here that a server should hear of, and when
+    pub outbox_changed: Option<f64>,
+    /// a Nextcloud sign-in is waiting for the browser: its page, and the
+    /// switch that calls it off
+    pub nextcloud_wait: Option<(String, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
     pub side_scroll: f32,
     pub sort_by: usize,
     pub filter_tag: Option<String>,
@@ -455,6 +469,7 @@ impl App {
                 home: Some("https://cloud.example.org/dav/calendars/sam/".into()),
                 last_sync: Some("Nov 11, 10:28".into()),
                 error: None,
+                nextcloud: false,
             });
             for (i, (name, color, visible)) in [("Home", EVENT_COLORS[6].0, true), ("Team", EVENT_COLORS[2].0, true), ("Holidays", EVENT_COLORS[12].0, false)].into_iter().enumerate() {
                 data.calendars.push(Calendar {
@@ -517,6 +532,9 @@ impl App {
             acct_user: String::new(),
             acct_pass: String::new(),
             acct_error: None,
+            shadow: Default::default(),
+            outbox_changed: None,
+            nextcloud_wait: None,
             side_scroll: 0.0,
             sort_by: 0,
             filter_tag: None,
@@ -581,6 +599,7 @@ impl App {
     }
 
     pub fn commit(&mut self) {
+        self.note_edits();
         if self.shot.is_none() {
             self.data.save();
         }
@@ -795,11 +814,69 @@ impl App {
 
     /// True (with a message) when the event belongs to a subscribed calendar.
     pub fn refuse_remote(&mut self, ctx: &egui::Context, id: u64) -> bool {
-        if self.data.event(id).map(|e| e.remote).unwrap_or(false) {
-            self.say(ctx, "This event comes from a subscribed calendar and can't be changed here", false);
+        if let Some(why) = self.data.event(id).and_then(|e| self.data.locked(e)) {
+            self.say(ctx, why, false);
             return true;
         }
         false
+    }
+
+    /// Remembers synced events as they are now; what differs from this
+    /// later was changed here.
+    pub fn reshadow(&mut self) {
+        let writable: std::collections::HashSet<u64> = self.data.calendars.iter().filter(|c| c.is_synced_writable()).map(|c| c.id).collect();
+        self.shadow = self.data.events.iter().filter(|e| writable.contains(&e.calendar)).map(|e| (e.id, e.clone())).collect();
+    }
+
+    /// Finds what was changed here in calendars that sync both ways, and
+    /// marks it to be sent: changed and new events are flagged, deleted
+    /// ones are noted in the outbox. Runs on every save.
+    fn note_edits(&mut self) {
+        let writable: std::collections::HashSet<u64> = self.data.calendars.iter().filter(|c| c.is_synced_writable()).map(|c| c.id).collect();
+        if writable.is_empty() && self.shadow.is_empty() {
+            return;
+        }
+        let mut touched = false;
+        let mut here = std::collections::HashSet::new();
+        for e in &mut self.data.events {
+            here.insert(e.id);
+            let old = self.shadow.get(&e.id);
+            if let Some(o) = old.filter(|o| o.calendar != e.calendar) {
+                // moved to another calendar: gone from the old one, new in this
+                if let Some(href) = &o.href {
+                    self.data.outbox.push(PendingDelete { calendar: o.calendar, href: href.clone(), etag: o.etag.clone() });
+                    touched = true;
+                }
+                e.detach();
+            } else if old.is_none() && (e.remote || e.href.is_some()) && writable.contains(&e.calendar) {
+                // a copy of a synced event, or one brought back by undo
+                e.detach();
+            }
+            if !writable.contains(&e.calendar) {
+                continue;
+            }
+            let same = old.is_some_and(|o| o.calendar == e.calendar && o.same_content(e));
+            if !same && !e.dirty {
+                e.dirty = true;
+            }
+            touched |= !same;
+        }
+        for (id, o) in &self.shadow {
+            if here.contains(id) {
+                continue;
+            }
+            if let Some(href) = o.href.clone().filter(|h| !self.data.outbox.iter().any(|d| &d.href == h)) {
+                // a calendar that went away takes its events without a word to the server
+                if writable.contains(&o.calendar) {
+                    self.data.outbox.push(PendingDelete { calendar: o.calendar, href, etag: o.etag.clone() });
+                    touched = true;
+                }
+            }
+        }
+        self.reshadow();
+        if touched {
+            self.outbox_changed = Some(f64::NAN);
+        }
     }
 
     /// Starts subscribing to the link typed in preferences.
@@ -902,9 +979,20 @@ impl App {
     /// Signs out: the calendars go, and the password leaves the keyring.
     pub fn remove_account(&mut self, id: u64) {
         self.snapshot();
+        let gone = self.data.account(id).cloned();
         self.data.remove_account(id);
+        let allow_file = self.data.prefs.plaintext_secrets;
         if self.shot.is_none() {
-            std::thread::spawn(move || secrets::delete(&secrets::account_key(id)));
+            std::thread::spawn(move || {
+                let key = secrets::account_key(id);
+                // a Nextcloud app password is taken back at the server too
+                if let Some(a) = gone.filter(|a| a.nextcloud) {
+                    if let Ok(pass) = secrets::get(&key, allow_file) {
+                        sync::nextcloud::revoke(&a.server, &a.username, &pass);
+                    }
+                }
+                secrets::delete(&key);
+            });
         }
         self.commit();
     }
@@ -953,12 +1041,19 @@ impl App {
         if self.shot.is_some() {
             return;
         }
-        let mut jobs: Vec<(u64, sync::RemoteCalendar, Option<String>)> = vec![];
+        let mut jobs: Vec<(u64, sync::RemoteCalendar, Option<String>, Vec<sync::PushJob>)> = vec![];
         for c in self.data.calendars.iter().filter(|c| c.account == Some(account) && c.visible) {
             let Some(id) = c.remote_id.clone() else { continue };
-            if self.syncing.insert(c.id) {
-                jobs.push((c.id, sync::RemoteCalendar { id, ctag: c.ctag.clone(), ..Default::default() }, c.sync_state.clone()));
+            if !self.syncing.insert(c.id) {
+                continue;
             }
+            // what was changed here goes out first
+            let mut out: Vec<sync::PushJob> = vec![];
+            if c.is_synced_writable() {
+                out.extend(self.data.events.iter().filter(|e| e.calendar == c.id && e.dirty).cloned().map(sync::PushJob::Save));
+                out.extend(self.data.outbox.iter().filter(|d| d.calendar == c.id).map(|d| sync::PushJob::Delete { href: d.href.clone(), etag: d.etag.clone() }));
+            }
+            jobs.push((c.id, sync::RemoteCalendar { id, ctag: c.ctag.clone(), ..Default::default() }, c.sync_state.clone(), out));
         }
         if jobs.is_empty() {
             return;
@@ -967,7 +1062,15 @@ impl App {
         self.in_background(ctx, move |send| {
             let pass = secrets::get(&secrets::account_key(account), allow_file);
             let mut dav = pass.as_ref().ok().map(|p| CalDav::new(&a.server, &a.username, p, a.home.clone()));
-            for (cal, remote, state) in jobs {
+            for (cal, remote, mut state, out) in jobs {
+                if let (Some(dav), false) = (&mut dav, out.is_empty()) {
+                    let results = sync::push(dav, &remote, &out, chrono::Utc::now().naive_utc());
+                    // after a conflict the server's copy is read afresh
+                    if results.iter().any(|r| matches!(r, sync::PushResult::Conflict { .. } | sync::PushResult::DeleteConflict { .. })) {
+                        state = None;
+                    }
+                    send(SyncDone::Pushed { cal, results });
+                }
                 let res = match (&mut dav, &pass) {
                     (Some(dav), _) => dav.pull(&remote, state.as_deref(), now),
                     (None, Err(e)) => Err(sync::SyncError::Other(e.clone())),
@@ -1081,6 +1184,30 @@ impl App {
                         }
                     }
                 }
+                SyncDone::Pushed { cal, results } => self.take_push_results(ctx, cal, results),
+                SyncDone::NextcloudOpened { login } => {
+                    if let Some(w) = &mut self.nextcloud_wait {
+                        w.0 = login;
+                    }
+                }
+                SyncDone::NextcloudDone { res } => {
+                    if self.nextcloud_wait.take().is_none() {
+                        continue; // called off meanwhile
+                    }
+                    match res {
+                        Ok(g) => {
+                            let (server, user) = (g.caldav(), g.username.clone());
+                            if self.data.accounts.iter().any(|a| a.server == server && a.username == user) {
+                                self.acct_error = Some("This account is already connected.".into());
+                            } else {
+                                let id = self.data.new_id();
+                                self.data.accounts.push(Account { id, server, username: user, nextcloud: true, ..Default::default() });
+                                self.sync_account(ctx, id, Some(g.app_password));
+                            }
+                        }
+                        Err(e) => self.acct_error = Some(e.text()),
+                    }
+                }
                 SyncDone::Link { cal, res } => {
                     let Some(c) = self.data.calendar_mut(cal) else { continue };
                     match res {
@@ -1098,7 +1225,23 @@ impl App {
                     }
                 }
             }
+            // what a server sent is not a change made here
+            self.reshadow();
             self.commit();
+        }
+        // a change made here goes out a moment later, so a burst of edits
+        // travels together
+        if let Some(at) = self.outbox_changed {
+            if at.is_nan() {
+                self.outbox_changed = Some(time + PUSH_AFTER_S);
+                ctx.request_repaint_after(std::time::Duration::from_secs_f64(PUSH_AFTER_S + 0.1));
+            } else if time >= at {
+                self.outbox_changed = None;
+                let accounts: Vec<u64> = self.data.accounts.iter().map(|a| a.id).collect();
+                for a in accounts {
+                    self.pull_account(ctx, a);
+                }
+            }
         }
         // on start, every 15 minutes, and when the window is come back to;
         // never while it is minimised
@@ -1106,12 +1249,104 @@ impl App {
         let came_back = focused && !self.was_focused && time - self.last_auto_sync > SYNC_ON_FOCUS_S;
         self.was_focused = focused;
         if !self.synced_on_start {
+            self.reshadow();
             self.keep_private_links(ctx);
         }
         if (!self.synced_on_start || time - self.last_auto_sync > SYNC_EVERY_S || came_back) && !minimized {
             self.synced_on_start = true;
             self.last_auto_sync = time;
             self.sync_due(ctx, time);
+        }
+    }
+
+    /// Takes in how the changes sent to a server fared.
+    fn take_push_results(&mut self, ctx: &egui::Context, cal: u64, results: Vec<sync::PushResult>) {
+        use sync::PushResult::*;
+        let mut conflicts = 0;
+        let mut failed: Option<String> = None;
+        for r in results {
+            match r {
+                Saved { sent, uid, href, etag } => {
+                    let Some(e) = self.data.event_mut(sent.id).filter(|e| e.calendar == cal) else { continue };
+                    // changed again while it was on its way: it goes out once more
+                    e.dirty = !e.same_content(&sent);
+                    e.remote = true;
+                    (e.uid, e.href, e.etag) = (Some(uid), Some(href), etag);
+                }
+                Conflict { event } => {
+                    // the server's copy wins and comes in with the pull that
+                    // follows; the edit made here is kept beside it
+                    let own = self.data.first_own_calendar();
+                    let Some(e) = self.data.event_mut(event) else { continue };
+                    e.dirty = false;
+                    let mut copy = e.clone();
+                    copy.detach();
+                    copy.calendar = own;
+                    copy.id = self.data.new_id();
+                    self.data.events.push(copy);
+                    conflicts += 1;
+                }
+                Deleted { href } => self.data.outbox.retain(|d| d.href != href),
+                DeleteConflict { href } => {
+                    // changed on the server since: it stays, and comes back
+                    self.data.outbox.retain(|d| d.href != href);
+                    conflicts += 1;
+                }
+                Failed { error } => failed = Some(error.text()),
+            }
+        }
+        let own = self.data.calendar(self.data.first_own_calendar()).map(|c| c.name.clone()).unwrap_or_default();
+        if conflicts > 0 {
+            self.say(ctx, format!("Conflict: the event was changed on the server, whose copy was kept. Your edit was saved as a copy in {own}."), false);
+        } else if let Some(e) = &failed {
+            self.say(ctx, format!("A change could not be sent and will be tried again. {e}"), false);
+        }
+        if let Some(c) = self.data.calendar_mut(cal) {
+            c.error = failed;
+        }
+    }
+
+    /// Signs in to a Nextcloud server through its own page in the
+    /// browser. The page is opened, and the server is asked every two
+    /// seconds whether the person is through, for up to five minutes.
+    pub fn connect_nextcloud(&mut self, ctx: &egui::Context) {
+        let server = self.acct_server.trim().to_string();
+        if server.is_empty() {
+            self.acct_error = Some("Fill in the server address first.".into());
+            return;
+        }
+        if self.shot.is_some() || self.nextcloud_wait.is_some() {
+            return;
+        }
+        self.acct_error = None;
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.nextcloud_wait = Some((String::new(), stop.clone()));
+        self.in_background(ctx, move |send| {
+            use std::sync::atomic::Ordering;
+            let res = sync::nextcloud::start(&server).and_then(|pending| {
+                let _ = std::process::Command::new("xdg-open").arg(&pending.login).spawn();
+                send(SyncDone::NextcloudOpened { login: pending.login.clone() });
+                let began = std::time::Instant::now();
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                    if stop.load(Ordering::Relaxed) {
+                        return Err(sync::SyncError::Other("Sign-in was called off.".into()));
+                    }
+                    if began.elapsed().as_secs() > NEXTCLOUD_WAIT_S {
+                        return Err(sync::SyncError::Other("Nobody signed in within five minutes. Try again.".into()));
+                    }
+                    if let Some(g) = sync::nextcloud::poll(&pending)? {
+                        return Ok(g);
+                    }
+                }
+            });
+            send(SyncDone::NextcloudDone { res });
+        });
+    }
+
+    pub fn cancel_nextcloud(&mut self) {
+        if let Some((_, stop)) = self.nextcloud_wait.take() {
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -1134,7 +1369,8 @@ impl App {
             self.data.remove_calendar(id);
         }
         for r in list {
-            if self.data.calendars.iter().any(|c| c.account == Some(account) && c.remote_id.as_ref() == Some(&r.id)) {
+            if let Some(c) = self.data.calendars.iter_mut().find(|c| c.account == Some(account) && c.remote_id.as_ref() == Some(&r.id)) {
+                c.read_only = r.read_only;
                 continue;
             }
             let n = self.data.calendars.len();
@@ -1146,8 +1382,7 @@ impl App {
                 visible: true,
                 account: Some(account),
                 remote_id: Some(r.id.clone()),
-                // writing to the server is not there yet
-                read_only: true,
+                read_only: r.read_only,
                 ..Default::default()
             });
         }
@@ -1247,11 +1482,9 @@ impl App {
         self.snapshot();
         let mut e = src.clone();
         e.id = self.data.new_id();
-        if e.remote {
-            // a copy of a subscribed event becomes one's own
-            e.remote = false;
-            e.calendar = self.data.first_own_calendar();
-        }
+        // a copy of a synced or subscribed event is a new event of one's own
+        e.detach();
+        e.calendar = self.data.writable_or_own(e.calendar);
         let len = src.end - src.start;
         let day_shift = Duration::days((at.date() - src.start.date()).num_days());
         let keep_clock = src.all_day || onto_all_day == Some(true);
@@ -1873,6 +2106,149 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An app with one account whose first calendar takes changes and
+    /// holds one synced event (id 500).
+    fn synced_app() -> App {
+        let mut app = App::new(Some(PathBuf::from("unused.png")));
+        app.data.events.clear();
+        app.data.accounts.push(Account { id: 900, home: Some("https://x.example/dav/".into()), ..Default::default() });
+        app.data.calendars.push(Calendar { id: 901, name: "Synced".into(), visible: true, account: Some(900), remote_id: Some("https://x.example/dav/c/".into()), ..Default::default() });
+        app.data.calendars.push(Calendar { id: 902, name: "Locked".into(), visible: true, account: Some(900), read_only: true, ..Default::default() });
+        let start = App::now();
+        app.data.events.push(Event {
+            id: 500,
+            title: "Synced".into(),
+            start,
+            end: start + Duration::hours(1),
+            calendar: 901,
+            remote: true,
+            uid: Some("u1".into()),
+            href: Some("https://x.example/dav/c/u1.ics".into()),
+            etag: Some("\"1\"".into()),
+            ..Default::default()
+        });
+        app.reshadow();
+        app
+    }
+
+    #[test]
+    fn edits_in_a_synced_calendar_are_marked_to_send() {
+        let mut app = synced_app();
+        app.commit();
+        assert!(!app.data.event(500).unwrap().dirty, "nothing changed yet");
+        assert!(app.outbox_changed.is_none());
+
+        // a change
+        app.data.event_mut(500).unwrap().title = "Renamed".into();
+        app.commit();
+        assert!(app.data.event(500).unwrap().dirty);
+        assert!(app.outbox_changed.is_some());
+
+        // a new event, and one in a local calendar
+        let own = app.data.first_own_calendar();
+        app.data.events.push(Event { id: 501, title: "New".into(), calendar: 901, ..Default::default() });
+        app.data.events.push(Event { id: 502, title: "Own".into(), calendar: own, ..Default::default() });
+        app.commit();
+        assert!(app.data.event(501).unwrap().dirty && !app.data.event(502).unwrap().dirty);
+
+        // a copy of a synced event is a new event, not a second name for the old one
+        let mut copy = app.data.event(500).unwrap().clone();
+        copy.id = 503;
+        app.data.events.push(copy);
+        app.commit();
+        let c = app.data.event(503).unwrap();
+        assert!(c.dirty && c.href.is_none() && c.uid.is_none() && !c.remote);
+
+        // what a server sends is not an edit
+        app.data.event_mut(500).unwrap().dirty = false;
+        app.data.event_mut(500).unwrap().title = "From the server".into();
+        app.reshadow();
+        app.commit();
+        assert!(!app.data.event(500).unwrap().dirty);
+
+        // a deletion is noted with the version it was read at
+        app.data.events.retain(|e| e.id != 500);
+        app.commit();
+        assert_eq!(app.data.outbox, vec![PendingDelete { calendar: 901, href: "https://x.example/dav/c/u1.ics".into(), etag: Some("\"1\"".into()) }]);
+        app.commit();
+        assert_eq!(app.data.outbox.len(), 1, "noted once");
+    }
+
+    #[test]
+    fn moving_an_event_out_of_a_synced_calendar_deletes_it_there() {
+        let mut app = synced_app();
+        let own = app.data.first_own_calendar();
+        app.data.event_mut(500).unwrap().calendar = own;
+        app.commit();
+        let e = app.data.event(500).unwrap();
+        assert!(!e.dirty && !e.remote && e.href.is_none());
+        assert_eq!(app.data.outbox.len(), 1);
+        // and back in: it is a new event for the server
+        app.data.event_mut(500).unwrap().calendar = 901;
+        app.commit();
+        let e = app.data.event(500).unwrap();
+        assert!(e.dirty && e.href.is_none());
+    }
+
+    #[test]
+    fn locked_events() {
+        let mut app = synced_app();
+        assert!(app.data.locked(app.data.event(500).unwrap()).is_none());
+        app.data.event_mut(500).unwrap().recurrence_id = Some("20261116T080000Z".into());
+        assert!(app.data.locked(app.data.event(500).unwrap()).is_some(), "an occurrence of a repeating event");
+        app.data.event_mut(500).unwrap().recurrence_id = None;
+        app.data.event_mut(500).unwrap().calendar = 902;
+        assert!(app.data.locked(app.data.event(500).unwrap()).is_some(), "a calendar the server does not let one write");
+        assert_eq!(app.data.writable_or_own(902), app.data.first_own_calendar());
+        assert_eq!(app.data.writable_or_own(901), 901);
+    }
+
+    #[test]
+    fn push_results_are_taken_in() {
+        let ctx = egui::Context::default();
+        let mut app = synced_app();
+        // saved: the server's name and version are kept, and the flag goes
+        app.data.events.push(Event { id: 501, title: "New".into(), calendar: 901, ..Default::default() });
+        app.commit();
+        let sent = app.data.event(501).unwrap().clone();
+        app.take_push_results(&ctx, 901, vec![sync::PushResult::Saved { sent: sent.clone(), uid: "n".into(), href: "h".into(), etag: Some("e".into()) }]);
+        let e = app.data.event(501).unwrap();
+        assert!(!e.dirty && e.remote && e.href.as_deref() == Some("h") && e.etag.as_deref() == Some("e"));
+        // changed again while on its way: it stays marked
+        app.data.event_mut(501).unwrap().title = "Newer".into();
+        app.take_push_results(&ctx, 901, vec![sync::PushResult::Saved { sent, uid: "n".into(), href: "h".into(), etag: Some("e2".into()) }]);
+        assert!(app.data.event(501).unwrap().dirty);
+
+        // a conflict: the edit is kept as a copy in one's own calendar
+        app.data.event_mut(500).unwrap().title = "My edit".into();
+        app.commit();
+        let before = app.data.events.len();
+        app.take_push_results(&ctx, 901, vec![sync::PushResult::Conflict { event: 500 }]);
+        assert_eq!(app.data.events.len(), before + 1);
+        let copy = app.data.events.last().unwrap();
+        assert_eq!((copy.title.as_str(), copy.calendar, copy.href.is_none()), ("My edit", app.data.first_own_calendar(), true));
+        assert!(!app.data.event(500).unwrap().dirty, "the server's copy may now come in");
+        assert!(app.toast.as_ref().is_some_and(|t| t.text.contains("Conflict")));
+        // the server's copy then replaces the original
+        let mut f = ics::FeedEvent { title: "Server's".into(), start: App::now(), end: App::now(), all_day: false, notes: String::new(), uid: "u1".into(), recurrence_id: None, href: Some("https://x.example/dav/c/u1.ics".into()), etag: Some("\"2\"".into()) };
+        app.data.apply_delta(901, vec![f.clone()], &[]);
+        assert_eq!(app.data.event(500).unwrap().title, "Server's");
+        // but an edit not yet sent is not written over by a pull
+        app.data.event_mut(500).unwrap().title = "Mine again".into();
+        app.data.event_mut(500).unwrap().dirty = true;
+        f.title = "Server's, later".into();
+        app.data.apply_delta(901, vec![f], &[]);
+        assert_eq!(app.data.event(500).unwrap().title, "Mine again");
+
+        // deletions leave the outbox either way
+        app.data.outbox = vec![PendingDelete { calendar: 901, href: "a".into(), etag: None }, PendingDelete { calendar: 901, href: "b".into(), etag: None }];
+        app.take_push_results(&ctx, 901, vec![sync::PushResult::Deleted { href: "a".into() }, sync::PushResult::DeleteConflict { href: "b".into() }]);
+        assert!(app.data.outbox.is_empty());
+        // a failure keeps the event marked and shows on the calendar
+        app.take_push_results(&ctx, 901, vec![sync::PushResult::Failed { error: sync::SyncError::RateLimited }]);
+        assert!(app.data.calendar(901).unwrap().error.is_some() && app.data.event(500).unwrap().dirty);
+    }
 
     #[test]
     fn every_default_shortcut_reads_back() {

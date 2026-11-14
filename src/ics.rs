@@ -671,8 +671,6 @@ fn own_lines(lines: &[String]) -> Vec<(usize, &String)> {
 }
 
 /// Reads the changeable parts and the UID of an event as a server sent it.
-// used from the CalDAV write path, which comes next
-#[allow(dead_code)]
 pub fn read_event(raw: &str) -> Option<(String, EventFields)> {
     let lines = unfold(raw);
     let (b, e) = main_event(&lines)?;
@@ -711,8 +709,6 @@ pub fn read_event(raw: &str) -> Option<(String, EventFields)> {
 /// it, only the title, times, notes, place and repeat rule are changed,
 /// and only where they differ: alarms, guests and everything this program
 /// does not know stay as they were. `stamp` is the time now, in UTC.
-// used from the CalDAV write path, which comes next
-#[allow(dead_code)]
 pub fn write_event(raw: Option<&str>, uid: &str, f: &EventFields, stamp: NaiveDateTime) -> String {
     let fresh = || -> Vec<String> {
         ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//kalendar//EN", "BEGIN:VEVENT", &format!("UID:{uid}"), "END:VEVENT", "END:VCALENDAR"]

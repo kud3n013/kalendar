@@ -91,7 +91,7 @@ impl App {
                 ui.add_space(2.0);
                 // one calendar, picked with a box per calendar
                 ui.label(RichText::new("Calendar").size(12.0).color(muted));
-                for cal in self.data.calendars.iter().filter(|cal| cal.is_local()) {
+                for cal in self.data.calendars.iter().filter(|cal| cal.writable()) {
                     let mut on = c.ev.calendar == cal.id;
                     if ui.checkbox(&mut on, RichText::new(format!("{} {}", icons::CIRCLE, cal.name)).color(rgb(cal.color))).changed() && on {
                         c.ev.calendar = cal.id;
@@ -574,7 +574,7 @@ impl App {
                     ui.label(RichText::new("Calendar").color(muted));
                     let name = self.data.calendar(ed.ev.calendar).map(|c| c.name.clone()).unwrap_or_default();
                     egui::ComboBox::from_id_salt("cal").selected_text(name).show_ui(ui, |ui| {
-                        for c in self.data.calendars.iter().filter(|c| c.is_local()) {
+                        for c in self.data.calendars.iter().filter(|c| c.writable()) {
                             ui.selectable_value(&mut ed.ev.calendar, c.id, RichText::new(format!("{} {}", icons::CIRCLE, c.name)).color(rgb(c.color)));
                         }
                     });
@@ -600,8 +600,8 @@ impl App {
                     save = true;
                 }
             });
-        if save && ed.ev.remote {
-            self.say(ctx, "This event comes from a subscribed calendar and can't be changed here", false);
+        if let Some(why) = self.data.locked(&ed.ev).filter(|_| save) {
+            self.say(ctx, why, false);
         } else if save {
             let mut ev = ed.ev.clone();
             if ev.all_day {

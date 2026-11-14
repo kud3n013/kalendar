@@ -665,7 +665,7 @@ impl App {
                     });
                 });
                 ui.add(egui::TextEdit::singleline(&mut c.name).font(FontId::proportional(16.0)).desired_width((ui.available_width() - 330.0).clamp(110.0, 280.0)).id_salt(("calname", cid)));
-                let what = if synced { "from an account, read-only".to_string() } else if subscribed { "subscribed, read-only".to_string() } else { format!("{} events", counts[i]) };
+                let what = if synced && c.read_only { "from an account, read-only".to_string() } else if synced { format!("from an account, {} events", counts[i]) } else if subscribed { "subscribed, read-only".to_string() } else { format!("{} events", counts[i]) };
                 ui.label(RichText::new(what).size(13.0).color(muted));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if self.confirm_remove == Some(cid) {
@@ -837,7 +837,7 @@ impl App {
         heading(ui, "Accounts");
         ui.add(
             egui::Label::new(
-                RichText::new("Sign in to a calendar server that speaks CalDAV, such as Nextcloud, Fastmail, Radicale or Baïkal. All its calendars come in and stay up to date. For now they are read-only here.")
+                RichText::new("Sign in to a calendar server that speaks CalDAV, such as Nextcloud, Fastmail, Radicale or Baïkal. All its calendars come in and stay in step both ways: what you change here is sent to the server. Repeating events can't be changed here yet.")
                     .size(15.0)
                     .color(muted),
             )
@@ -877,11 +877,32 @@ impl App {
                 if (ui.add_enabled(!connecting, b).clicked() || enter) && !connecting {
                     self.connect_account(ctx);
                 }
+                let waiting = self.nextcloud_wait.is_some();
+                let nc = egui::Button::new(RichText::new("Sign in with Nextcloud…").size(15.0)).corner_radius(8);
+                if ui.add_enabled(!connecting && !waiting, nc).on_hover_text("Only the server address is needed. Nextcloud's own sign-in page opens in your browser and hands kalendar an app password.").clicked() {
+                    self.connect_nextcloud(ctx);
+                }
                 if connecting {
                     ui.spinner();
                     ui.label(RichText::new("Connecting…").size(15.0).color(muted));
                 }
             });
+            if let Some((login, _)) = self.nextcloud_wait.clone() {
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(RichText::new("Waiting for you to sign in on the page that opened in your browser…").size(14.0).color(muted));
+                    if ui.add(egui::Button::new(RichText::new("Cancel").size(14.0)).corner_radius(7)).clicked() {
+                        self.cancel_nextcloud();
+                    }
+                });
+                if !login.is_empty() {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label(RichText::new("If no page opened, open this one:").size(13.0).color(muted));
+                        ui.hyperlink_to(RichText::new(&login).size(13.0), &login);
+                    });
+                }
+            }
             if let Some(e) = &self.acct_error {
                 ui.add_space(4.0);
                 ui.add(egui::Label::new(RichText::new(e).size(14.0).color(RED)).wrap());
@@ -945,6 +966,9 @@ impl App {
                     let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
                     ui.painter().circle_filled(r.center(), 6.0, rgb(c.color));
                     ui.label(RichText::new(&c.name).size(15.0));
+                    if c.read_only {
+                        ui.label(RichText::new("read-only").size(13.0).color(muted));
+                    }
                     if let Some(e) = &c.error {
                         ui.label(RichText::new("could not sync").size(13.0).color(RED)).on_hover_text(e);
                     }

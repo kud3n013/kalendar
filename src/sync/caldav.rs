@@ -1,6 +1,6 @@
 //! CalDAV: finding a person's calendars on a server and reading them.
 
-use super::{Delta, Provider, RemoteCalendar, SyncError};
+use super::{Delta, Guard, Provider, RemoteCalendar, SyncError};
 use crate::ics::{self, FeedEvent};
 use crate::model::RemoteKey;
 use chrono::{Duration, NaiveDate, NaiveDateTime};
@@ -26,6 +26,7 @@ struct Reply {
     body: String,
     /// where the answer came from, after redirects
     url: String,
+    etag: Option<String>,
 }
 
 const NS: &str = r#"xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:cs="http://calendarserver.org/ns/" xmlns:ic="http://apple.com/ns/ical/""#;
@@ -137,6 +138,12 @@ impl CalDav {
     /// One request; redirects are followed here so that the method and
     /// body are kept and the password never goes to another site.
     fn send(&self, method: &str, url: &str, depth: Option<&str>, body: &str) -> Result<Reply, SyncError> {
+        self.send_with(method, url, depth, body, None)
+    }
+
+    /// `guard` is a condition header: the write only goes through while
+    /// it holds on the server.
+    fn send_with(&self, method: &str, url: &str, depth: Option<&str>, body: &str, guard: Option<(&str, &str)>) -> Result<Reply, SyncError> {
         let agent: ureq::Agent = ureq::Agent::config_builder()
             .timeout_global(Some(std::time::Duration::from_secs(30)))
             .http_status_as_error(false)
@@ -158,6 +165,9 @@ impl CalDav {
             if let Some(d) = depth {
                 req = req.header("Depth", d);
             }
+            if let Some((name, value)) = guard {
+                req = req.header(name, value);
+            }
             if !body.is_empty() {
                 req = req.header("Content-Type", if body.starts_with("BEGIN:") { "text/calendar; charset=utf-8" } else { "application/xml; charset=utf-8" });
             }
@@ -170,23 +180,32 @@ impl CalDav {
                     continue;
                 }
             }
+            let etag = resp.headers().get("etag").and_then(|v| v.to_str().ok()).map(str::to_string);
             let body = resp.body_mut().with_config().limit(64 * 1024 * 1024).read_to_string().unwrap_or_default();
-            return Ok(Reply { status, body, url });
+            return Ok(Reply { status, body, url, etag });
         }
         Err(SyncError::Network("too many redirects".into()))
     }
 
     /// A request whose failure is an error.
     fn ask(&self, method: &str, url: &str, depth: Option<&str>, body: &str) -> Result<Reply, SyncError> {
-        let r = self.send(method, url, depth, body)?;
+        Self::checked(self.send(method, url, depth, body)?)
+    }
+
+    fn checked(r: Reply) -> Result<Reply, SyncError> {
         match r.status {
             200..=299 => Ok(r),
             401 | 403 => Err(SyncError::Auth),
             412 => Err(SyncError::Conflict),
             429 | 503 => Err(SyncError::RateLimited),
-            404 => Err(SyncError::Other("Nothing was found at this address.".into())),
+            404 | 410 => Err(SyncError::Gone),
             code => Err(SyncError::Other(format!("The server answered with error {code}."))),
         }
+    }
+
+    /// Nextcloud's call to make it forget the app password in use.
+    pub fn revoke_app_password(&self, url: &str) {
+        let _ = self.send_with("DELETE", url, None, "", Some(("OCS-APIRequest", "true")));
     }
 
     /// The collection holding the person's calendars: asked of the address
@@ -356,6 +375,24 @@ impl Provider for CalDav {
         Ok(out)
     }
 
+    fn get(&mut self, href: &str) -> Result<(String, Option<String>), SyncError> {
+        let r = self.ask("GET", href, None, "")?;
+        Ok((r.body, r.etag))
+    }
+
+    fn put(&mut self, _cal: &RemoteCalendar, href: &str, ics: &str, guard: &Guard) -> Result<Option<String>, SyncError> {
+        let header = match guard {
+            Guard::New => Some(("If-None-Match", "*")),
+            Guard::Match(etag) => Some(("If-Match", etag.as_str())),
+            Guard::Any => None,
+        };
+        Ok(Self::checked(self.send_with("PUT", href, None, ics, header)?)?.etag)
+    }
+
+    fn delete(&mut self, _cal: &RemoteCalendar, href: &str, etag: Option<&str>) -> Result<(), SyncError> {
+        Self::checked(self.send_with("DELETE", href, None, "", etag.map(|t| ("If-Match", t)))?).map(|_| ())
+    }
+
     /// `state` is "day of the last full read|sync token".
     fn pull(&mut self, cal: &RemoteCalendar, state: Option<&str>, now: NaiveDateTime) -> Result<Delta, SyncError> {
         let known = state.and_then(|s| s.split_once('|')).and_then(|(day, token)| {
@@ -501,6 +538,47 @@ mod tests {
         // and so does a state that has grown old
         let d5 = dav.pull(&cal, Some(&format!("2026-09-01|{}", state.split_once('|').unwrap().1)), now).expect("pull after a month");
         assert!(d5.full);
+
+        // --- writing ---
+        use crate::model::Event;
+        use crate::sync::{push, PushJob, PushResult};
+        let stamp = now;
+        let at = |h: u32| NaiveDate::from_ymd_opt(2026, 11, 17).unwrap().and_hms_opt(h, 0, 0).unwrap();
+        // a new event
+        let mine = Event { id: 5, title: "Mine; with, signs".into(), start: at(9), end: at(10), notes: "Where: Room 4\nBring notes".into(), ..Default::default() };
+        let r = push(&mut dav, &cal, &[PushJob::Save(mine.clone())], stamp);
+        let PushResult::Saved { uid, href, etag, .. } = r[0].clone() else { panic!("not saved: {r:?}") };
+        assert!(href.starts_with(&cal_url) && etag.is_some());
+        let (raw, _) = dav.get(&href).expect("get");
+        let (uid2, f) = ics::read_event(&raw).unwrap();
+        assert_eq!((uid2, f.summary.as_str(), f.location.as_str(), f.description.as_str(), f.start), (uid.clone(), "Mine; with, signs", "Room 4", "Bring notes", at(9)));
+        // creating it again must not overwrite: the address is taken
+        assert_eq!(dav.put(&cal, &href, &raw, &Guard::New).unwrap_err(), SyncError::Conflict);
+
+        // a change, with the version it was read at
+        let mut changed = Event { href: Some(href.clone()), etag: etag.clone(), uid: Some(uid.clone()), remote: true, title: "Mine, moved".into(), start: at(11), end: at(12), ..mine.clone() };
+        let r = push(&mut dav, &cal, &[PushJob::Save(changed.clone())], stamp);
+        let PushResult::Saved { etag: etag2, .. } = r[0].clone() else { panic!("not saved: {r:?}") };
+        assert_ne!(etag2, etag);
+        let (raw2, _) = dav.get(&href).unwrap();
+        assert!(raw2.contains("SEQUENCE:1"), "{raw2}");
+        assert_eq!(ics::read_event(&raw2).unwrap().1.start, at(11));
+
+        // a change made with an old version is a conflict, and the server's copy stays
+        changed.title = "Mine, from a stale copy".into();
+        let r = push(&mut dav, &cal, &[PushJob::Save(changed.clone())], stamp);
+        assert!(matches!(r[0], PushResult::Conflict { event: 5 }), "{r:?}");
+        assert_eq!(ics::read_event(&dav.get(&href).unwrap().0).unwrap().1.summary, "Mine, moved");
+
+        // deleting with an old version is refused too; with the right one it goes
+        let r = push(&mut dav, &cal, &[PushJob::Delete { href: href.clone(), etag: etag.clone() }], stamp);
+        assert!(matches!(r[0], PushResult::DeleteConflict { .. }), "{r:?}");
+        let r = push(&mut dav, &cal, &[PushJob::Delete { href: href.clone(), etag: etag2.clone() }], stamp);
+        assert!(matches!(r[0], PushResult::Deleted { .. }), "{r:?}");
+        assert_eq!(dav.get(&href).unwrap_err(), SyncError::Gone);
+        // deleting what is gone is fine; changing it is a conflict
+        let r = push(&mut dav, &cal, &[PushJob::Delete { href: href.clone(), etag: etag2 }, PushJob::Save(changed)], stamp);
+        assert!(matches!(r[0], PushResult::Deleted { .. }) && matches!(r[1], PushResult::Conflict { .. }), "{r:?}");
 
         dav.ask("DELETE", &cal_url, None, "").expect("clean up");
     }
