@@ -47,7 +47,8 @@ pub const WORK_START_MIN: i64 = 8 * 60; // working hours 08:00
 pub const WORK_END_MIN: i64 = 18 * 60; // to 18:00, Monday to Friday
 pub const DUE_SOON_DAYS: i64 = 7; // "Due soon" looks this many days ahead
 pub const ZOOM_STEP: f32 = 1.1; // one wheel notch while zooming
-pub const SYNC_EVERY_S: f64 = 900.0; // subscribed calendars refresh every 15 minutes
+pub const SYNC_EVERY_S: f64 = 900.0; // subscribed and synced calendars refresh every 15 minutes
+pub const SYNC_ON_FOCUS_S: f64 = 60.0; // coming back to the window refreshes, at most this often
 pub const NEW_EVENT_MIN: i64 = 60; // new events are one hour long
 pub const NEW_EVENT_NOON_H: i64 = 12; // on a later day they start at 12:00
 pub const RADIUS: f32 = 8.0; // the one corner radius used across the UI
@@ -138,6 +139,8 @@ pub struct Prefs {
     pub due_on_calendar: bool,
     /// pixels per hour chosen by zooming; None follows the time resolution
     pub hour_height_px: Option<f32>,
+    /// passwords may go into a file when no keyring is running
+    pub plaintext_secrets: bool,
     /// shortcut overrides: command id -> keys, e.g. "plan" -> "Ctrl+Shift+P"
     pub keybinds: std::collections::HashMap<String, String>,
 }
@@ -174,6 +177,7 @@ impl Default for Prefs {
             show_due_soon: true,
             due_on_calendar: true,
             hour_height_px: None,
+            plaintext_secrets: false,
             keybinds: Default::default(),
         }
     }
@@ -250,6 +254,36 @@ pub struct Calendar {
     /// its events cannot be changed here
     #[serde(default)]
     pub read_only: bool,
+    /// its link is private and kept in the keyring; data.json holds
+    /// `SECRET_URL` in its place
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub url_secret: bool,
+}
+
+/// What data.json holds for a link that is kept in the keyring.
+pub const SECRET_URL: &str = "keyring:";
+
+/// A calendar server the person signed in to. Its password is in the
+/// keyring, under the account's id.
+#[derive(Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct Account {
+    pub id: u64,
+    /// the address as typed
+    pub server: String,
+    pub username: String,
+    /// where the calendars were found
+    pub home: Option<String>,
+    pub last_sync: Option<String>,
+    pub error: Option<String>,
+}
+
+impl Account {
+    /// "name @ server" for lists.
+    pub fn label(&self) -> String {
+        let host = self.server.split("://").last().unwrap_or("").split('/').next().unwrap_or("");
+        format!("{} @ {}", self.username, host)
+    }
 }
 
 impl Calendar {
@@ -607,6 +641,8 @@ pub struct Data {
     pub lists: Vec<TaskList>,
     #[serde(default)]
     pub frames: Vec<Frame>,
+    #[serde(default)]
+    pub accounts: Vec<Account>,
     /// settings live in config.json; this stays readable for old data files
     #[serde(default, skip_serializing)]
     pub prefs: Prefs,
@@ -670,7 +706,12 @@ impl Data {
     }
 
     pub fn save(&self) {
-        if let Ok(s) = serde_json::to_string_pretty(self) {
+        // private links stay in the keyring
+        let mut out = self.clone();
+        for c in out.calendars.iter_mut().filter(|c| c.url_secret) {
+            c.url = Some(SECRET_URL.into());
+        }
+        if let Ok(s) = serde_json::to_string_pretty(&out) {
             write_json(data_path(), s);
         }
         if let Ok(s) = serde_json::to_string_pretty(&self.prefs) {
@@ -797,6 +838,41 @@ impl Data {
             e.dirty = false;
         }
     }
+    /// Takes in what a pull brought back and remembers where it stopped.
+    pub fn apply(&mut self, cal: u64, d: crate::sync::Delta) {
+        if d.full {
+            self.apply_full(cal, d.upserts);
+        } else {
+            if !d.changed.is_empty() {
+                // of a changed address, only what it still holds stays
+                let keep: std::collections::HashSet<(Option<&str>, &str, Option<&str>)> =
+                    d.upserts.iter().map(|f| (f.href.as_deref(), f.uid.as_str(), f.recurrence_id.as_deref())).collect();
+                self.events.retain(|e| {
+                    let changed = e.remote && e.calendar == cal && e.href.as_ref().is_some_and(|h| d.changed.contains(h));
+                    !changed || keep.contains(&(e.href.as_deref(), e.uid.as_deref().unwrap_or(""), e.recurrence_id.as_deref()))
+                });
+            }
+            self.apply_delta(cal, d.upserts, &d.deletes);
+        }
+        if let Some(c) = self.calendar_mut(cal) {
+            c.sync_state = d.state;
+            c.ctag = d.ctag;
+        }
+    }
+    /// Removes an account with its calendars.
+    pub fn remove_account(&mut self, id: u64) {
+        let cals: Vec<u64> = self.calendars.iter().filter(|c| c.account == Some(id)).map(|c| c.id).collect();
+        for c in cals {
+            self.remove_calendar(c);
+        }
+        self.accounts.retain(|a| a.id != id);
+    }
+    pub fn account(&self, id: u64) -> Option<&Account> {
+        self.accounts.iter().find(|a| a.id == id)
+    }
+    pub fn account_mut(&mut self, id: u64) -> Option<&mut Account> {
+        self.accounts.iter_mut().find(|a| a.id == id)
+    }
     /// Makes a calendar hold exactly the events of a freshly fetched feed.
     pub fn apply_full(&mut self, cal: u64, feed: Vec<crate::ics::FeedEvent>) {
         use std::collections::HashMap;
@@ -900,6 +976,7 @@ impl Data {
                 Calendar { id: 4, name: "Tasks".into(), color: [0x38, 0xc2, 0xc7], visible: true, ..Default::default() },
             ],
             frames: vec![],
+            accounts: vec![],
             prefs: Prefs::default(),
             next_id: 10,
         };
@@ -1664,6 +1741,21 @@ mod tests {
         d.apply_delta(2, vec![feed_event("n", None, "N2", 13)], &[RemoteKey::Uid("r".into(), Some("2".into()))]);
         assert_eq!(d.events.len(), 2);
         assert!(d.events.iter().any(|e| e.title == "N2"));
+        // a changed address keeps only what it still holds
+        let at = |uid: &str, rid: &str, href: &str| {
+            let mut f = feed_event(uid, Some(rid), "S", 9);
+            f.href = Some(href.into());
+            f
+        };
+        let mut s = empty();
+        s.apply(3, crate::sync::Delta { upserts: vec![at("s", "1", "/a.ics"), at("s", "2", "/a.ics"), at("t", "1", "/b.ics")], full: true, state: Some("x".into()), ..Default::default() });
+        let kept = s.events.iter().find(|e| e.recurrence_id.as_deref() == Some("2")).unwrap().id;
+        s.apply(3, crate::sync::Delta { upserts: vec![at("s", "2", "/a.ics")], changed: vec!["/a.ics".into()], state: Some("y".into()), ..Default::default() });
+        assert_eq!(s.events.len(), 2, "the occurrence taken out of the series goes");
+        assert!(s.event(kept).is_some());
+        assert_eq!(s.calendar(3).unwrap().sync_state.as_deref(), Some("y"));
+        s.apply(3, crate::sync::Delta { deletes: vec![RemoteKey::Href("/b.ics".into())], ..Default::default() });
+        assert_eq!(s.events.len(), 1);
         // another calendar's events are never touched
         d.apply_full(1, vec![]);
         assert_eq!(d.events.len(), 2);

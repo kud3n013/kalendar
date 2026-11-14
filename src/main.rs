@@ -4,7 +4,9 @@ mod ics;
 mod icons;
 mod model;
 mod panel;
+mod secrets;
 mod settings;
+mod sync;
 mod tz;
 mod dialogs;
 mod views;
@@ -13,6 +15,20 @@ use chrono::{Datelike, Duration, Local, Months, NaiveDate, NaiveDateTime, Timeli
 use eframe::egui::{self, Color32, Key};
 use model::*;
 use std::path::PathBuf;
+use sync::caldav::CalDav;
+use sync::Provider;
+
+/// What a background thread hands back to the window.
+pub enum SyncDone {
+    /// a calendar's events were read
+    Pulled { cal: u64, res: Result<sync::Delta, sync::SyncError> },
+    /// an account's calendars were listed; `first` on signing in
+    Listed { account: u64, first: bool, home: Option<String>, res: Result<Vec<sync::RemoteCalendar>, sync::SyncError> },
+    /// a private link was read from the keyring
+    Link { cal: u64, res: Result<String, String> },
+    /// a private link was put into the keyring
+    LinkKept { cal: u64, res: Result<(), String> },
+}
 
 pub struct Palette {
     pub dark: bool,
@@ -396,11 +412,20 @@ pub struct App {
     pub quick_nav: bool,
     pub sub_url: String,
     pub sub_name: String,
-    pub syncing: std::collections::HashSet<String>,
-    pub sync_tx: std::sync::mpsc::Sender<(String, Result<ics::Feed, String>)>,
-    pub sync_rx: std::sync::mpsc::Receiver<(String, Result<ics::Feed, String>)>,
+    /// ids of the calendars and accounts being synced right now
+    pub syncing: std::collections::HashSet<u64>,
+    pub sync_tx: std::sync::mpsc::Sender<SyncDone>,
+    pub sync_rx: std::sync::mpsc::Receiver<SyncDone>,
     pub synced_on_start: bool,
     pub last_auto_sync: f64,
+    /// after failures: how many in a row, and when to try again
+    pub backoff: std::collections::HashMap<u64, (u32, f64)>,
+    pub was_focused: bool,
+    /// the "connect an account" form
+    pub acct_server: String,
+    pub acct_user: String,
+    pub acct_pass: String,
+    pub acct_error: Option<String>,
     pub side_scroll: f32,
     pub sort_by: usize,
     pub filter_tag: Option<String>,
@@ -420,6 +445,30 @@ impl App {
         let (sync_tx, sync_rx) = std::sync::mpsc::channel();
         let today = Local::now().date_naive();
         let data = if shot.is_some() { Data::sample(today) } else { Data::load_or_sample(today) };
+        let mut data = data;
+        // for screenshots of the settings: a signed-in account to look at
+        if shot.is_some() && std::env::var_os("KALENDAR_DEMO_ACCOUNT").is_some() {
+            data.accounts.push(Account {
+                id: 900,
+                server: "https://cloud.example.org".into(),
+                username: "sam".into(),
+                home: Some("https://cloud.example.org/dav/calendars/sam/".into()),
+                last_sync: Some("Nov 11, 10:28".into()),
+                error: None,
+            });
+            for (i, (name, color, visible)) in [("Home", EVENT_COLORS[6].0, true), ("Team", EVENT_COLORS[2].0, true), ("Holidays", EVENT_COLORS[12].0, false)].into_iter().enumerate() {
+                data.calendars.push(Calendar {
+                    id: 901 + i as u64,
+                    name: name.into(),
+                    color,
+                    visible,
+                    account: Some(900),
+                    remote_id: Some(format!("https://cloud.example.org/dav/calendars/sam/{i}/")),
+                    read_only: true,
+                    ..Default::default()
+                });
+            }
+        }
         let view = data.prefs.initial_view;
         let scroll = (opening_scroll_min(Self::now()) - data.prefs.grid_start_h * 60) as f32 / 60.0 * data.prefs.hour_height();
         let mut app = App {
@@ -462,6 +511,12 @@ impl App {
             sync_rx,
             synced_on_start: false,
             last_auto_sync: 0.0,
+            backoff: Default::default(),
+            was_focused: true,
+            acct_server: String::new(),
+            acct_user: String::new(),
+            acct_pass: String::new(),
+            acct_error: None,
             side_scroll: 0.0,
             sort_by: 0,
             filter_tag: None,
@@ -771,63 +826,330 @@ impl App {
         self.sub_url.clear();
         self.sub_name.clear();
         self.commit();
-        self.sync_one(ctx, &url);
+        self.keep_private_links(ctx);
+        self.sync_feed(ctx, id);
     }
 
-    /// Fetches one subscribed calendar in the background.
-    pub fn sync_one(&mut self, ctx: &egui::Context, url: &str) {
-        if self.shot.is_some() || !self.syncing.insert(url.to_string()) {
-            return;
-        }
-        let (tx, url, ctx, now) = (self.sync_tx.clone(), url.to_string(), ctx.clone(), Self::now());
+    /// Runs `work` on a background thread and hands its result to the
+    /// window, which is woken to take it in.
+    fn in_background(&self, ctx: &egui::Context, work: impl FnOnce(&dyn Fn(SyncDone)) + Send + 'static) {
+        let (tx, ctx) = (self.sync_tx.clone(), ctx.clone());
         std::thread::spawn(move || {
-            let res = ics::fetch(&url, now);
-            let _ = tx.send((url, res));
-            ctx.request_repaint();
+            work(&|done| {
+                let _ = tx.send(done);
+                ctx.request_repaint();
+            });
         });
     }
 
-    pub fn sync_all(&mut self, ctx: &egui::Context) -> usize {
-        let urls: Vec<String> = self.data.calendars.iter().filter_map(|c| c.url.clone()).collect();
-        for u in &urls {
-            self.sync_one(ctx, u);
+    /// A Proton link holds the keys to its calendar: it is moved into the
+    /// keyring, and links already there are read back.
+    pub fn keep_private_links(&mut self, ctx: &egui::Context) {
+        if self.shot.is_some() {
+            return;
         }
-        urls.len()
+        let allow_file = self.data.prefs.plaintext_secrets;
+        for c in &self.data.calendars {
+            let (id, Some(url)) = (c.id, c.url.clone()) else { continue };
+            if c.url_secret && url == SECRET_URL {
+                self.in_background(ctx, move |send| send(SyncDone::Link { cal: id, res: secrets::get(&secrets::feed_key(id), allow_file) }));
+            } else if !c.url_secret && ics::is_proton(&url) {
+                self.in_background(ctx, move |send| send(SyncDone::LinkKept { cal: id, res: secrets::set(&secrets::feed_key(id), &url, allow_file) }));
+            }
+        }
     }
 
-    /// Takes in whatever the background fetches have finished.
-    fn poll_sync(&mut self, ctx: &egui::Context) {
-        while let Ok((url, res)) = self.sync_rx.try_recv() {
-            self.syncing.remove(&url);
-            let Some(i) = self.data.calendars.iter().position(|c| c.url.as_deref() == Some(url.as_str())) else { continue };
-            match res {
-                Ok(feed) => {
-                    let count = feed.events.len();
-                    let default = ics::default_name(&url);
-                    if let Some(n) = feed.name.filter(|_| self.data.calendars[i].name == default) {
-                        self.data.calendars[i].name = n;
+    /// Removes a calendar and forgets its private link.
+    pub fn drop_calendar(&mut self, id: u64) {
+        if self.data.calendar(id).is_some_and(|c| c.url_secret) && self.shot.is_none() {
+            std::thread::spawn(move || secrets::delete(&secrets::feed_key(id)));
+        }
+        self.data.remove_calendar(id);
+    }
+
+    /// Fetches one subscribed calendar in the background.
+    pub fn sync_feed(&mut self, ctx: &egui::Context, cal: u64) {
+        let Some(url) = self.data.calendar(cal).and_then(|c| c.url.clone()).filter(|u| u != SECRET_URL) else { return };
+        if self.shot.is_some() || !self.syncing.insert(cal) {
+            return;
+        }
+        let now = Self::now();
+        self.in_background(ctx, move |send| {
+            let res = sync::IcsFeed { url }.pull(&sync::RemoteCalendar::default(), None, now);
+            send(SyncDone::Pulled { cal, res });
+        });
+    }
+
+    /// Signs in to the server typed in preferences.
+    pub fn connect_account(&mut self, ctx: &egui::Context) {
+        let (server, user) = (self.acct_server.trim().to_string(), self.acct_user.trim().to_string());
+        if server.is_empty() || user.is_empty() || self.acct_pass.is_empty() {
+            self.acct_error = Some("Fill in the server address, the user name and the app password.".into());
+            return;
+        }
+        if self.data.accounts.iter().any(|a| a.server == server && a.username == user) {
+            self.acct_error = Some("This account is already connected.".into());
+            return;
+        }
+        self.acct_error = None;
+        let id = self.data.new_id();
+        self.data.accounts.push(Account { id, server, username: user, ..Default::default() });
+        // the password leaves the form at once; it is kept only once it worked
+        let pass = std::mem::take(&mut self.acct_pass);
+        self.sync_account(ctx, id, Some(pass));
+    }
+
+    /// Signs out: the calendars go, and the password leaves the keyring.
+    pub fn remove_account(&mut self, id: u64) {
+        self.snapshot();
+        self.data.remove_account(id);
+        if self.shot.is_none() {
+            std::thread::spawn(move || secrets::delete(&secrets::account_key(id)));
+        }
+        self.commit();
+    }
+
+    /// Asks an account's server which calendars it has; their events are
+    /// pulled once the answer is in. `password` is given on first sign-in,
+    /// and kept in the keyring if the server takes it.
+    pub fn sync_account(&mut self, ctx: &egui::Context, account: u64, password: Option<String>) {
+        let Some(a) = self.data.account(account).cloned() else { return };
+        if self.shot.is_some() || !self.syncing.insert(account) {
+            return;
+        }
+        let allow_file = self.data.prefs.plaintext_secrets;
+        let first = password.is_some();
+        self.in_background(ctx, move |send| {
+            let key = secrets::account_key(account);
+            let pass = match password {
+                Some(p) => Ok(p),
+                None => secrets::get(&key, allow_file),
+            };
+            let (home, res) = match pass {
+                Err(e) => (None, Err(sync::SyncError::Other(e))),
+                Ok(p) => {
+                    let mut dav = CalDav::new(&a.server, &a.username, &p, a.home.clone());
+                    let mut res = dav.list_calendars();
+                    // the calendars may have moved since they were found
+                    if a.home.is_some() && matches!(res, Err(sync::SyncError::Other(_))) {
+                        dav.home = None;
+                        res = dav.list_calendars();
                     }
-                    let id = self.data.calendars[i].id;
-                    self.data.apply_full(id, feed.events);
-                    self.data.calendars[i].last_sync = Some(Local::now().format("%b %-d, %H:%M").to_string());
-                    self.data.calendars[i].error = None;
-                    let name = self.data.calendars[i].name.clone();
-                    self.say(ctx, format!("{name}: {count} events"), false);
+                    if first && res.is_ok() {
+                        if let Err(e) = secrets::set(&key, &p, allow_file) {
+                            res = Err(sync::SyncError::Other(e));
+                        }
+                    }
+                    (dav.home, res)
                 }
-                Err(e) => {
-                    let name = self.data.calendars[i].name.clone();
-                    self.say(ctx, format!("{name}: {e}"), false);
-                    self.data.calendars[i].error = Some(e);
+            };
+            send(SyncDone::Listed { account, first, home, res });
+        });
+    }
+
+    /// Pulls the shown calendars of an account, one after the other.
+    fn pull_account(&mut self, ctx: &egui::Context, account: u64) {
+        let Some(a) = self.data.account(account).cloned() else { return };
+        if self.shot.is_some() {
+            return;
+        }
+        let mut jobs: Vec<(u64, sync::RemoteCalendar, Option<String>)> = vec![];
+        for c in self.data.calendars.iter().filter(|c| c.account == Some(account) && c.visible) {
+            let Some(id) = c.remote_id.clone() else { continue };
+            if self.syncing.insert(c.id) {
+                jobs.push((c.id, sync::RemoteCalendar { id, ctag: c.ctag.clone(), ..Default::default() }, c.sync_state.clone()));
+            }
+        }
+        if jobs.is_empty() {
+            return;
+        }
+        let (allow_file, now) = (self.data.prefs.plaintext_secrets, Self::now());
+        self.in_background(ctx, move |send| {
+            let pass = secrets::get(&secrets::account_key(account), allow_file);
+            let mut dav = pass.as_ref().ok().map(|p| CalDav::new(&a.server, &a.username, p, a.home.clone()));
+            for (cal, remote, state) in jobs {
+                let res = match (&mut dav, &pass) {
+                    (Some(dav), _) => dav.pull(&remote, state.as_deref(), now),
+                    (None, Err(e)) => Err(sync::SyncError::Other(e.clone())),
+                    (None, Ok(_)) => unreachable!(),
+                };
+                send(SyncDone::Pulled { cal, res });
+            }
+        });
+    }
+
+    /// Refreshes everything now, whatever failed before.
+    pub fn sync_all(&mut self, ctx: &egui::Context) -> usize {
+        self.backoff.clear();
+        self.sync_due(ctx, f64::MAX)
+    }
+
+    /// Refreshes what is not waiting after a failure.
+    fn sync_due(&mut self, ctx: &egui::Context, time: f64) -> usize {
+        let ready = |b: &std::collections::HashMap<u64, (u32, f64)>, id: u64| b.get(&id).is_none_or(|(_, next)| time >= *next);
+        let feeds: Vec<u64> = self.data.calendars.iter().filter(|c| c.url.is_some() && ready(&self.backoff, c.id)).map(|c| c.id).collect();
+        let accounts: Vec<u64> = self.data.accounts.iter().filter(|a| ready(&self.backoff, a.id)).map(|a| a.id).collect();
+        for id in &feeds {
+            self.sync_feed(ctx, *id);
+        }
+        for id in &accounts {
+            self.sync_account(ctx, *id, None);
+        }
+        feeds.len() + accounts.len()
+    }
+
+    /// After a failure the next automatic try waits twice as long each
+    /// time, up to four hours.
+    fn back_off(&mut self, id: u64, time: f64) {
+        let fails = self.backoff.get(&id).map(|b| b.0).unwrap_or(0) + 1;
+        let wait = SYNC_EVERY_S * 2f64.powi(fails.min(4) as i32);
+        self.backoff.insert(id, (fails, time + wait));
+    }
+
+    /// Takes in whatever the background work has finished.
+    fn poll_sync(&mut self, ctx: &egui::Context) {
+        let time = ctx.input(|i| i.time);
+        let stamp = || Some(Local::now().format("%b %-d, %H:%M").to_string());
+        while let Ok(done) = self.sync_rx.try_recv() {
+            match done {
+                SyncDone::Pulled { cal, res } => {
+                    self.syncing.remove(&cal);
+                    let Some(c) = self.data.calendar(cal) else { continue };
+                    let (feed_url, account, name) = (c.url.clone(), c.account, c.name.clone());
+                    match res {
+                        Ok(delta) => {
+                            let count = delta.upserts.len();
+                            // a feed that names itself replaces the stand-in name
+                            let own = delta.name.clone().filter(|_| feed_url.as_deref().map(ics::default_name).as_deref() == Some(name.as_str()));
+                            self.data.apply(cal, delta);
+                            let Some(c) = self.data.calendar_mut(cal) else { continue };
+                            c.last_sync = stamp();
+                            c.error = None;
+                            if let Some(n) = own {
+                                c.name = n;
+                            }
+                            let name = c.name.clone();
+                            self.backoff.remove(&cal);
+                            if feed_url.is_some() {
+                                self.say(ctx, format!("{name}: {count} events"), false);
+                            }
+                        }
+                        Err(e) => {
+                            let text = e.text();
+                            if feed_url.is_some() {
+                                self.say(ctx, format!("{name}: {text}"), false);
+                            }
+                            if let Some(c) = self.data.calendar_mut(cal) {
+                                c.error = Some(text.clone());
+                            }
+                            if let Some(a) = account.and_then(|a| self.data.account_mut(a)) {
+                                a.error = Some(text);
+                            }
+                            self.back_off(account.unwrap_or(cal), time);
+                        }
+                    }
+                }
+                SyncDone::Listed { account, first, home, res } => {
+                    self.syncing.remove(&account);
+                    if self.data.account(account).is_none() {
+                        continue;
+                    }
+                    match res {
+                        Ok(list) => {
+                            self.take_calendar_list(account, home, &list);
+                            self.backoff.remove(&account);
+                            if first {
+                                self.acct_server.clear();
+                                self.acct_user.clear();
+                                let n = list.len();
+                                self.say(ctx, format!("Connected: {n} calendar{}", if n == 1 { "" } else { "s" }), false);
+                            }
+                            self.pull_account(ctx, account);
+                        }
+                        Err(e) if first => {
+                            // nothing was kept: the form shows what went wrong
+                            self.acct_server = self.data.account(account).map(|a| a.server.clone()).unwrap_or_default();
+                            self.acct_user = self.data.account(account).map(|a| a.username.clone()).unwrap_or_default();
+                            self.data.remove_account(account);
+                            self.acct_error = Some(e.text());
+                        }
+                        Err(e) => {
+                            if let Some(a) = self.data.account_mut(account) {
+                                a.error = Some(e.text());
+                            }
+                            self.back_off(account, time);
+                        }
+                    }
+                }
+                SyncDone::Link { cal, res } => {
+                    let Some(c) = self.data.calendar_mut(cal) else { continue };
+                    match res {
+                        Ok(url) => {
+                            c.url = Some(url);
+                            self.sync_feed(ctx, cal);
+                        }
+                        Err(e) => c.error = Some(format!("Its link is in the keyring and could not be read. {e}")),
+                    }
+                }
+                SyncDone::LinkKept { cal, res } => {
+                    // without a keyring the link stays in data.json, as before
+                    if let (Ok(()), Some(c)) = (res, self.data.calendar_mut(cal)) {
+                        c.url_secret = true;
+                    }
                 }
             }
             self.commit();
         }
-        // on start, then every 15 minutes
-        let time = ctx.input(|i| i.time);
-        if !self.synced_on_start || time - self.last_auto_sync > SYNC_EVERY_S {
+        // on start, every 15 minutes, and when the window is come back to;
+        // never while it is minimised
+        let (focused, minimized) = ctx.input(|i| (i.focused, i.viewport().minimized.unwrap_or(false)));
+        let came_back = focused && !self.was_focused && time - self.last_auto_sync > SYNC_ON_FOCUS_S;
+        self.was_focused = focused;
+        if !self.synced_on_start {
+            self.keep_private_links(ctx);
+        }
+        if (!self.synced_on_start || time - self.last_auto_sync > SYNC_EVERY_S || came_back) && !minimized {
             self.synced_on_start = true;
             self.last_auto_sync = time;
-            self.sync_all(ctx);
+            self.sync_due(ctx, time);
+        }
+    }
+
+    /// Brings the account's calendars in line with the server's list: new
+    /// ones are added, ones that are gone leave with their events.
+    fn take_calendar_list(&mut self, account: u64, home: Option<String>, list: &[sync::RemoteCalendar]) {
+        if let Some(a) = self.data.account_mut(account) {
+            a.home = home;
+            a.error = None;
+            a.last_sync = Some(Local::now().format("%b %-d, %H:%M").to_string());
+        }
+        let gone: Vec<u64> = self
+            .data
+            .calendars
+            .iter()
+            .filter(|c| c.account == Some(account) && !list.iter().any(|r| Some(&r.id) == c.remote_id.as_ref()))
+            .map(|c| c.id)
+            .collect();
+        for id in gone {
+            self.data.remove_calendar(id);
+        }
+        for r in list {
+            if self.data.calendars.iter().any(|c| c.account == Some(account) && c.remote_id.as_ref() == Some(&r.id)) {
+                continue;
+            }
+            let n = self.data.calendars.len();
+            let id = self.data.new_id();
+            self.data.calendars.push(Calendar {
+                id,
+                name: r.name.clone(),
+                color: r.color.unwrap_or(EVENT_COLORS[(n * 3 + 1) % EVENT_COLORS.len()].0),
+                visible: true,
+                account: Some(account),
+                remote_id: Some(r.id.clone()),
+                // writing to the server is not there yet
+                read_only: true,
+                ..Default::default()
+            });
         }
     }
 
@@ -1172,7 +1494,7 @@ impl App {
             Cmd::Shortcuts => self.open_settings(settings::Page::Shortcuts),
             Cmd::Refresh => {
                 if self.sync_all(ctx) == 0 {
-                    self.say(ctx, "No subscribed calendars to refresh", false);
+                    self.say(ctx, "No subscribed calendars or accounts to refresh", false);
                 } else {
                     self.say(ctx, "Refreshing calendars…", false);
                 }
@@ -1464,6 +1786,32 @@ fn main() {
                         std::process::exit(1);
                     }
                 }
+            }
+            // test aid: sign in to a CalDAV server and say what it holds.
+            // The password is read from KALENDAR_PASS, so it stays out of
+            // the command line; nothing is kept.
+            "--check-caldav" => {
+                let (Some(server), Some(user)) = (args.next(), args.next()) else {
+                    eprintln!("--check-caldav needs a server address and a user name; the password is read from KALENDAR_PASS");
+                    std::process::exit(2);
+                };
+                let pass = std::env::var("KALENDAR_PASS").unwrap_or_default();
+                let mut dav = CalDav::new(&server, &user, &pass, None);
+                let cals = dav.list_calendars().unwrap_or_else(|e| {
+                    eprintln!("{}", e.text());
+                    std::process::exit(1);
+                });
+                println!("{} calendars at {}", cals.len(), dav.home.clone().unwrap_or_default());
+                for c in &cals {
+                    match dav.pull(c, None, App::now()) {
+                        Ok(d) => {
+                            let tokens = d.state.as_deref().is_some_and(|s| !s.ends_with('|'));
+                            println!("  {}: {} events{}{}", c.name, d.upserts.len(), if c.read_only { ", read-only" } else { "" }, if tokens { "" } else { ", no sync tokens" });
+                        }
+                        Err(e) => println!("  {}: {}", c.name, e.text()),
+                    }
+                }
+                return;
             }
             "--help" | "-h" => {
                 println!("kalendar [--screenshot <file.png>]");

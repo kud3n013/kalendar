@@ -2,7 +2,7 @@
 
 use crate::icons;
 use crate::model::*;
-use crate::{bind_label, ics, mix, parse_bind, rgb, App, Cmd, KeyBind, COMMANDS};
+use crate::{bind_label, ics, mix, parse_bind, rgb, secrets, App, Cmd, KeyBind, COMMANDS};
 use eframe::egui::Key;
 use eframe::egui::{self, vec2, Align, Color32, FontId, Layout, Margin, RichText, Sense, Stroke};
 
@@ -644,6 +644,7 @@ impl App {
         let mut ask: Option<Option<u64>> = None;
         for (i, c) in self.data.calendars.iter_mut().enumerate() {
             let subscribed = !c.is_local();
+            let synced = c.account.is_some();
             let cid = c.id;
             ui.allocate_ui_with_layout(vec2(ui.available_width(), 52.0), Layout::left_to_right(Align::Center), |ui| {
                 ui.checkbox(&mut c.visible, "").on_hover_text("Show on the calendar");
@@ -664,7 +665,7 @@ impl App {
                     });
                 });
                 ui.add(egui::TextEdit::singleline(&mut c.name).font(FontId::proportional(16.0)).desired_width((ui.available_width() - 330.0).clamp(110.0, 280.0)).id_salt(("calname", cid)));
-                let what = if subscribed { "subscribed, read-only".to_string() } else { format!("{} events", counts[i]) };
+                let what = if synced { "from an account, read-only".to_string() } else if subscribed { "subscribed, read-only".to_string() } else { format!("{} events", counts[i]) };
                 ui.label(RichText::new(what).size(13.0).color(muted));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     if self.confirm_remove == Some(cid) {
@@ -676,10 +677,13 @@ impl App {
                             remove = Some(cid);
                         }
                     } else {
-                        let last_own = !subscribed && own_count <= 1;
+                        // an account's calendar goes when the account is signed out
+                        let last_own = (!subscribed && own_count <= 1) || synced;
                         let b = egui::Button::new(RichText::new(if subscribed { "Unsubscribe" } else { "Remove" }).size(14.0).color(RED)).fill(mix(side, text, 0.07)).corner_radius(7);
                         let resp = ui.add_enabled(!last_own, b);
-                        if last_own {
+                        if synced {
+                            resp.on_disabled_hover_text("Untick it under Integrations to stop syncing it, or sign out of its account there");
+                        } else if last_own {
                             resp.on_disabled_hover_text("At least one calendar of your own is needed");
                         } else if resp.clicked() {
                             ask = Some(Some(cid));
@@ -696,7 +700,7 @@ impl App {
         if let Some(id) = remove {
             self.snapshot();
             let name = self.data.calendar(id).map(|c| c.name.clone()).unwrap_or_default();
-            self.data.remove_calendar(id);
+            self.drop_calendar(id);
             self.confirm_remove = None;
             self.selected = None;
             self.editor = None;
@@ -708,7 +712,7 @@ impl App {
     fn page_calendars(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         if finding(ui) {
             let names: Vec<&str> = self.data.calendars.iter().filter(|c| c.url.is_some()).map(|c| c.name.as_str()).collect();
-            let words = [&["integration", "subscription", "link", "url", "ics", "webcal", "feed", "proton", "import", "refresh", "unsubscribe"][..], &names].concat();
+            let words = [&["integration", "subscription", "link", "url", "ics", "webcal", "feed", "proton", "import", "refresh", "unsubscribe", "account", "caldav", "nextcloud", "fastmail", "radicale", "sync", "password", "keyring", "sign in", "server"][..], &names].concat();
             page_result(ui, Page::Calendars, "Subscribe to a calendar", "Bring other calendars in by their link, such as Proton Calendar", &words);
             return;
         }
@@ -763,7 +767,7 @@ impl App {
         }
         divider(ui, border);
         heading(ui, "Manage integrations");
-        let mut refresh: Option<String> = None;
+        let mut refresh: Option<u64> = None;
         let mut remove: Option<u64> = None;
         let subs: Vec<(u64, Calendar)> = self.data.calendars.iter().filter(|c| c.url.is_some()).map(|c| (c.id, c.clone())).collect();
         if subs.is_empty() {
@@ -779,14 +783,16 @@ impl App {
                     ui.spacing_mut().item_spacing.y = 2.0;
                     ui.add_space(12.0);
                     ui.label(RichText::new(&c.name).size(17.0));
-                    let kind = if ics::is_proton(&url) { "Proton Calendar".to_string() } else { format!("Feed from {}", ics::default_name(&url)) };
+                    let kind = if url == SECRET_URL {
+                        "Private link, kept in the keyring".to_string()
+                    } else if ics::is_proton(&url) { "Proton Calendar".to_string() } else { format!("Feed from {}", ics::default_name(&url)) };
                     let when = c.last_sync.as_ref().map(|t| format!("  ·  refreshed {t}")).unwrap_or_default();
                     ui.label(RichText::new(format!("{kind}{when}")).size(14.0).color(muted));
                 });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.menu_button(RichText::new(icons::ELLIPSIS).size(18.0).color(muted), |ui| {
                         if ui.button("Refresh").clicked() {
-                            refresh = Some(url.clone());
+                            refresh = Some(i);
                             ui.close();
                         }
                         if ui.button(RichText::new("Unsubscribe").color(RED)).clicked() {
@@ -795,7 +801,7 @@ impl App {
                         }
                     });
                     ui.add_space(60.0);
-                    if self.syncing.contains(&url) {
+                    if self.syncing.contains(&i) {
                         ui.label(RichText::new("Refreshing…").size(16.0).color(muted));
                         ui.spinner();
                     } else if let Some(e) = &c.error {
@@ -813,13 +819,150 @@ impl App {
             let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
             ui.painter().rect_filled(r, 0.0, border);
         }
-        if let Some(u) = refresh {
-            self.sync_one(ctx, &u);
+        if let Some(id) = refresh {
+            self.sync_feed(ctx, id);
         }
         if let Some(i) = remove {
             self.snapshot();
-            self.data.remove_calendar(i);
+            self.drop_calendar(i);
             self.commit();
+        }
+        self.accounts_section(ui, ctx);
+    }
+
+    /// Calendar servers the person signed in to, and the form to add one.
+    fn accounts_section(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let (muted, border, side, text) = (self.pal.muted, self.pal.border, self.pal.side, self.pal.text);
+        divider(ui, border);
+        heading(ui, "Accounts");
+        ui.add(
+            egui::Label::new(
+                RichText::new("Sign in to a calendar server that speaks CalDAV, such as Nextcloud, Fastmail, Radicale or Baïkal. All its calendars come in and stay up to date. For now they are read-only here.")
+                    .size(15.0)
+                    .color(muted),
+            )
+            .wrap(),
+        );
+        ui.add_space(10.0);
+        egui::Frame::new().fill(mix(side, text, 0.04)).stroke(Stroke::new(1.0, border)).corner_radius(10).inner_margin(Margin::same(16)).show(ui, |ui| {
+            let field = |ui: &mut egui::Ui, value: &mut String, hint: &str, secret: bool| {
+                ui.add(
+                    egui::TextEdit::singleline(value)
+                        .hint_text(hint)
+                        .password(secret)
+                        .font(FontId::proportional(15.0))
+                        .margin(Margin::symmetric(10, 8))
+                        .desired_width(f32::INFINITY),
+                )
+            };
+            field(ui, &mut self.acct_server, "Server address, such as https://cloud.example.org", false);
+            ui.add_space(4.0);
+            field(ui, &mut self.acct_user, "User name", false);
+            ui.add_space(4.0);
+            let r = field(ui, &mut self.acct_pass, "App password", true);
+            let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            ui.add_space(2.0);
+            ui.add(
+                egui::Label::new(
+                    RichText::new("Make an app password in the server's security settings and use it here, not your main password. It is kept in your desktop's keyring, never in kalendar's files.")
+                        .size(13.0)
+                        .color(muted),
+                )
+                .wrap(),
+            );
+            ui.add_space(6.0);
+            let connecting = self.data.accounts.iter().any(|a| a.home.is_none() && self.syncing.contains(&a.id));
+            ui.horizontal(|ui| {
+                let b = egui::Button::new(RichText::new("Connect").size(15.0).color(Color32::WHITE)).fill(self.pal.accent).corner_radius(8);
+                if (ui.add_enabled(!connecting, b).clicked() || enter) && !connecting {
+                    self.connect_account(ctx);
+                }
+                if connecting {
+                    ui.spinner();
+                    ui.label(RichText::new("Connecting…").size(15.0).color(muted));
+                }
+            });
+            if let Some(e) = &self.acct_error {
+                ui.add_space(4.0);
+                ui.add(egui::Label::new(RichText::new(e).size(14.0).color(RED)).wrap());
+            }
+        });
+        ui.add_space(8.0);
+        ui.checkbox(&mut self.data.prefs.plaintext_secrets, RichText::new("Keep passwords in a file when no keyring is running").size(14.0))
+            .on_hover_text(format!("Off by default. When on, and only if no keyring answers, passwords go to {} as plain text that only you can read.", secrets::file_path().display()));
+
+        let mut sync_now: Option<u64> = None;
+        let mut remove: Option<u64> = None;
+        let mut changed = false;
+        // accounts still signing in for the first time are not listed yet
+        let accounts: Vec<Account> = self.data.accounts.iter().filter(|a| a.home.is_some()).cloned().collect();
+        for a in &accounts {
+            ui.add_space(6.0);
+            ui.allocate_ui_with_layout(vec2(ui.available_width(), 64.0), Layout::left_to_right(Align::Center), |ui| {
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    ui.add_space(10.0);
+                    ui.label(RichText::new(a.label()).size(17.0));
+                    let when = a.last_sync.as_ref().map(|t| format!("  ·  synced {t}")).unwrap_or_default();
+                    ui.label(RichText::new(format!("CalDAV account{when}")).size(14.0).color(muted));
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    ui.menu_button(RichText::new(icons::ELLIPSIS).size(18.0).color(muted), |ui| {
+                        if ui.button("Sync now").clicked() {
+                            sync_now = Some(a.id);
+                            ui.close();
+                        }
+                        if ui.button(RichText::new("Sign out and remove").color(RED)).clicked() {
+                            remove = Some(a.id);
+                            ui.close();
+                        }
+                    });
+                    ui.add_space(60.0);
+                    let busy = self.syncing.contains(&a.id) || self.data.calendars.iter().any(|c| c.account == Some(a.id) && self.syncing.contains(&c.id));
+                    if busy {
+                        ui.label(RichText::new("Syncing…").size(16.0).color(muted));
+                        ui.spinner();
+                    } else if let Some(e) = &a.error {
+                        ui.label(RichText::new("Not connected").size(16.0).color(RED)).on_hover_text(e);
+                    } else {
+                        ui.label(RichText::new(format!("{} Connected", icons::CHECK)).size(16.0).color(GREEN));
+                    }
+                });
+            });
+            if let Some(e) = &a.error {
+                ui.add(egui::Label::new(RichText::new(e).size(13.0).color(RED)).wrap());
+            }
+            // its calendars: a tick brings one in and keeps it in step
+            for c in self.data.calendars.iter_mut().filter(|c| c.account == Some(a.id)) {
+                ui.horizontal(|ui| {
+                    ui.add_space(14.0);
+                    if ui.checkbox(&mut c.visible, "").on_hover_text("Show and sync this calendar").changed() {
+                        changed = true;
+                        if c.visible {
+                            sync_now = Some(a.id);
+                        }
+                    }
+                    let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+                    ui.painter().circle_filled(r.center(), 6.0, rgb(c.color));
+                    ui.label(RichText::new(&c.name).size(15.0));
+                    if let Some(e) = &c.error {
+                        ui.label(RichText::new("could not sync").size(13.0).color(RED)).on_hover_text(e);
+                    }
+                });
+            }
+            ui.add_space(6.0);
+            let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+            ui.painter().rect_filled(r, 0.0, border);
+        }
+        if changed {
+            self.commit();
+        }
+        if let Some(id) = sync_now {
+            self.backoff.remove(&id);
+            self.sync_account(ctx, id, None);
+        }
+        if let Some(id) = remove {
+            self.remove_account(id);
         }
     }
 
@@ -1020,7 +1163,7 @@ impl App {
         ui.label(RichText::new(config_path().display().to_string()).size(15.0).monospace());
         ui.add_space(8.0);
         ui.label(
-            RichText::new("Links of subscribed calendars are stored in data.json as plain text. A Proton Calendar link contains the keys that give access to that calendar, so keep that file private.")
+            RichText::new("Account passwords and Proton Calendar links are kept in your desktop's keyring, not in these files. Links of other subscribed calendars are stored in data.json as plain text. Without a running keyring a Proton link stays in data.json too; it contains the keys that give access to that calendar, so keep that file private.")
                 .size(15.0)
                 .color(muted),
         );
