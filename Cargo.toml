@@ -14,6 +14,7 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 roxmltree = "0.21.2"
 keyring-core = "1.0.1"
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["crypto-rust"] }
+sha2 = "0.11"
 
 [profile.dev]
 opt-level = 1

@@ -1,7 +1,9 @@
 //! Calendars kept in step with a server.
 
 pub mod caldav;
+pub mod google;
 pub mod nextcloud;
+pub mod oauth;
 
 use crate::ics::FeedEvent;
 use crate::model::{Event, RemoteKey};

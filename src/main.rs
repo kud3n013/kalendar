@@ -34,6 +34,53 @@ pub enum SyncDone {
     NextcloudOpened { login: String },
     /// the person signed in on Nextcloud's page, or it failed
     NextcloudDone { res: Result<sync::nextcloud::Granted, sync::SyncError> },
+    /// the person signed in on Google's page, or it failed
+    GoogleDone { res: Result<GoogleGrant, sync::SyncError> },
+}
+
+pub struct GoogleGrant {
+    email: String,
+    client_id: String,
+    /// what goes into the keyring: refresh token and client secret
+    secret: String,
+    access: String,
+    expires_in: u64,
+}
+
+/// Access tokens of signed-in accounts: in memory only, shared with the
+/// background threads. Each is kept with the time it runs out.
+pub type TokenCache = std::sync::Arc<std::sync::Mutex<std::collections::HashMap<u64, (String, std::time::Instant)>>>;
+
+/// A connection to an account's server. `secret` is what the keyring
+/// holds for it: an app password, or for Google the refresh token, from
+/// which an access token is had when the last one has run out.
+fn open_account(a: &Account, secret: &str, tokens: &TokenCache) -> Result<CalDav, sync::SyncError> {
+    if !a.google {
+        return Ok(CalDav::new(&a.server, &a.username, secret, a.home.clone()));
+    }
+    let now = std::time::Instant::now();
+    let cached = tokens.lock().ok().and_then(|t| t.get(&a.id).filter(|(_, until)| *until > now).map(|(t, _)| t.clone()));
+    let access = match cached {
+        Some(t) => t,
+        None => {
+            let (refresh, client_secret) = sync::google::unpack(secret).ok_or(sync::SyncError::Auth)?;
+            let app = sync::google::app(a.client_id.as_deref().unwrap_or(""), &client_secret, &a.username);
+            let t = sync::oauth::refresh(&app, &refresh)?;
+            if let Ok(mut cache) = tokens.lock() {
+                cache.insert(a.id, (t.access.clone(), now + std::time::Duration::from_secs(t.expires_in.saturating_sub(60))));
+            }
+            t.access
+        }
+    };
+    Ok(CalDav::with_bearer(&a.server, &a.username, &access, a.home.clone()))
+}
+
+/// Why an account's sync failed, in words that say what to do.
+fn account_error(a: Option<&Account>, e: &sync::SyncError) -> String {
+    match (a, e) {
+        (Some(a), sync::SyncError::Auth) if a.google => "Google wants you to sign in again: sign out of this account here, then sign in once more. While a Google Cloud project is in Testing, a sign-in lasts 7 days.".into(),
+        _ => e.text(),
+    }
 }
 
 pub struct Palette {
@@ -440,6 +487,12 @@ pub struct App {
     /// a Nextcloud sign-in is waiting for the browser: its page, and the
     /// switch that calls it off
     pub nextcloud_wait: Option<(String, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
+    pub tokens: TokenCache,
+    /// the Google sign-in form
+    pub g_open: bool,
+    pub g_email: String,
+    pub g_client_id: String,
+    pub g_secret: String,
     pub side_scroll: f32,
     pub sort_by: usize,
     pub filter_tag: Option<String>,
@@ -469,7 +522,7 @@ impl App {
                 home: Some("https://cloud.example.org/dav/calendars/sam/".into()),
                 last_sync: Some("Nov 11, 10:28".into()),
                 error: None,
-                nextcloud: false,
+                ..Default::default()
             });
             for (i, (name, color, visible)) in [("Home", EVENT_COLORS[6].0, true), ("Team", EVENT_COLORS[2].0, true), ("Holidays", EVENT_COLORS[12].0, false)].into_iter().enumerate() {
                 data.calendars.push(Calendar {
@@ -535,6 +588,11 @@ impl App {
             shadow: Default::default(),
             outbox_changed: None,
             nextcloud_wait: None,
+            tokens: Default::default(),
+            g_open: std::env::var_os("KALENDAR_DEMO_ACCOUNT").is_some(),
+            g_email: String::new(),
+            g_client_id: String::new(),
+            g_secret: String::new(),
             side_scroll: 0.0,
             sort_by: 0,
             filter_tag: None,
@@ -986,9 +1044,13 @@ impl App {
             std::thread::spawn(move || {
                 let key = secrets::account_key(id);
                 // a Nextcloud app password is taken back at the server too
-                if let Some(a) = gone.filter(|a| a.nextcloud) {
+                // a Google sign-in likewise
+                if let Some(a) = gone.filter(|a| a.nextcloud || a.google) {
                     if let Ok(pass) = secrets::get(&key, allow_file) {
-                        sync::nextcloud::revoke(&a.server, &a.username, &pass);
+                        match sync::google::unpack(&pass).filter(|_| a.google) {
+                            Some((refresh, _)) => sync::google::revoke(&refresh),
+                            None => sync::nextcloud::revoke(&a.server, &a.username, &pass),
+                        }
                     }
                 }
                 secrets::delete(&key);
@@ -1007,6 +1069,7 @@ impl App {
         }
         let allow_file = self.data.prefs.plaintext_secrets;
         let first = password.is_some();
+        let tokens = self.tokens.clone();
         self.in_background(ctx, move |send| {
             let key = secrets::account_key(account);
             let pass = match password {
@@ -1015,8 +1078,9 @@ impl App {
             };
             let (home, res) = match pass {
                 Err(e) => (None, Err(sync::SyncError::Other(e))),
-                Ok(p) => {
-                    let mut dav = CalDav::new(&a.server, &a.username, &p, a.home.clone());
+                Ok(p) => match open_account(&a, &p, &tokens) {
+                  Err(e) => (None, Err(e)),
+                  Ok(mut dav) => {
                     let mut res = dav.list_calendars();
                     // the calendars may have moved since they were found
                     if a.home.is_some() && matches!(res, Err(sync::SyncError::Other(_))) {
@@ -1029,7 +1093,8 @@ impl App {
                         }
                     }
                     (dav.home, res)
-                }
+                  }
+                },
             };
             send(SyncDone::Listed { account, first, home, res });
         });
@@ -1059,9 +1124,15 @@ impl App {
             return;
         }
         let (allow_file, now) = (self.data.prefs.plaintext_secrets, Self::now());
+        let tokens = self.tokens.clone();
         self.in_background(ctx, move |send| {
-            let pass = secrets::get(&secrets::account_key(account), allow_file);
-            let mut dav = pass.as_ref().ok().map(|p| CalDav::new(&a.server, &a.username, p, a.home.clone()));
+            // the keyring's answer and the sign-in both have to work out
+            let pass = secrets::get(&secrets::account_key(account), allow_file).map_err(sync::SyncError::Other);
+            let opened = pass.and_then(|p| open_account(&a, &p, &tokens));
+            let (mut dav, pass) = match opened {
+                Ok(d) => (Some(d), Ok(())),
+                Err(e) => (None, Err(e)),
+            };
             for (cal, remote, mut state, out) in jobs {
                 if let (Some(dav), false) = (&mut dav, out.is_empty()) {
                     let results = sync::push(dav, &remote, &out, chrono::Utc::now().naive_utc());
@@ -1073,7 +1144,7 @@ impl App {
                 }
                 let res = match (&mut dav, &pass) {
                     (Some(dav), _) => dav.pull(&remote, state.as_deref(), now),
-                    (None, Err(e)) => Err(sync::SyncError::Other(e.clone())),
+                    (None, Err(e)) => Err(e.clone()),
                     (None, Ok(_)) => unreachable!(),
                 };
                 send(SyncDone::Pulled { cal, res });
@@ -1145,8 +1216,9 @@ impl App {
                             if let Some(c) = self.data.calendar_mut(cal) {
                                 c.error = Some(text.clone());
                             }
+                            let why = account_error(account.and_then(|a| self.data.account(a)), &e);
                             if let Some(a) = account.and_then(|a| self.data.account_mut(a)) {
-                                a.error = Some(text);
+                                a.error = Some(why);
                             }
                             self.back_off(account.unwrap_or(cal), time);
                         }
@@ -1177,8 +1249,9 @@ impl App {
                             self.acct_error = Some(e.text());
                         }
                         Err(e) => {
+                            let why = account_error(self.data.account(account), &e);
                             if let Some(a) = self.data.account_mut(account) {
-                                a.error = Some(e.text());
+                                a.error = Some(why);
                             }
                             self.back_off(account, time);
                         }
@@ -1203,6 +1276,29 @@ impl App {
                                 let id = self.data.new_id();
                                 self.data.accounts.push(Account { id, server, username: user, nextcloud: true, ..Default::default() });
                                 self.sync_account(ctx, id, Some(g.app_password));
+                            }
+                        }
+                        Err(e) => self.acct_error = Some(e.text()),
+                    }
+                }
+                SyncDone::GoogleDone { res } => {
+                    if self.nextcloud_wait.take().is_none() {
+                        continue; // called off meanwhile
+                    }
+                    match res {
+                        Ok(g) => {
+                            let server = sync::google::server(&g.email);
+                            if self.data.accounts.iter().any(|a| a.server == server) {
+                                self.acct_error = Some("This account is already connected.".into());
+                            } else {
+                                let id = self.data.new_id();
+                                self.data.accounts.push(Account { id, server, username: g.email, google: true, client_id: Some(g.client_id), ..Default::default() });
+                                if let Ok(mut cache) = self.tokens.lock() {
+                                    cache.insert(id, (g.access, std::time::Instant::now() + std::time::Duration::from_secs(g.expires_in.saturating_sub(60))));
+                                }
+                                self.g_secret.clear();
+                                self.g_open = false;
+                                self.sync_account(ctx, id, Some(g.secret));
                             }
                         }
                         Err(e) => self.acct_error = Some(e.text()),
@@ -1341,6 +1437,34 @@ impl App {
                 }
             });
             send(SyncDone::NextcloudDone { res });
+        });
+    }
+
+    /// Signs in to Google through its page in the browser, with the
+    /// client ID and secret the person brought.
+    pub fn connect_google(&mut self, ctx: &egui::Context) {
+        let (email, client_id, secret) = (self.g_email.trim().to_string(), self.g_client_id.trim().to_string(), self.g_secret.trim().to_string());
+        if !email.contains('@') || client_id.is_empty() {
+            self.acct_error = Some("Fill in your Google address and the client ID of your Google Cloud project.".into());
+            return;
+        }
+        if self.shot.is_some() || self.nextcloud_wait.is_some() {
+            return;
+        }
+        self.acct_error = None;
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.nextcloud_wait = Some((String::new(), stop.clone()));
+        self.in_background(ctx, move |send| {
+            let app = sync::google::app(&client_id, &secret, &email);
+            let opened = |url: &str| {
+                let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+                send(SyncDone::NextcloudOpened { login: url.to_string() });
+            };
+            let res = sync::oauth::authorize(&app, &opened, &stop, NEXTCLOUD_WAIT_S).and_then(|t| match t.refresh {
+                Some(r) => Ok(GoogleGrant { email, client_id, secret: sync::google::pack(&r, &secret), access: t.access, expires_in: t.expires_in }),
+                None => Err(sync::SyncError::Other("Google signed you in but gave nothing to stay signed in with. Remove kalendar under your Google account's third-party access, then try again.".into())),
+            });
+            send(SyncDone::GoogleDone { res });
         });
     }
 

@@ -17,6 +17,8 @@ pub struct CalDav {
     pub server: String,
     pub username: String,
     pub password: String,
+    /// an access token from a browser sign-in, used in place of the password
+    pub bearer: Option<String>,
     /// the collection holding the calendars, once found
     pub home: Option<String>,
 }
@@ -132,7 +134,12 @@ impl CalDav {
     pub fn new(server: &str, username: &str, password: &str, home: Option<String>) -> CalDav {
         let server = server.trim();
         let server = if server.contains("://") { server.to_string() } else { format!("https://{server}") };
-        CalDav { server, username: username.trim().to_string(), password: password.to_string(), home }
+        CalDav { server, username: username.trim().to_string(), password: password.to_string(), bearer: None, home }
+    }
+
+    /// For a server that takes an access token from a browser sign-in.
+    pub fn with_bearer(server: &str, username: &str, token: &str, home: Option<String>) -> CalDav {
+        CalDav { bearer: Some(token.to_string()), ..CalDav::new(server, username, "", home) }
     }
 
     /// One request; redirects are followed here so that the method and
@@ -159,8 +166,11 @@ impl CalDav {
             }
             let mut req = ureq::http::Request::builder().method(method).uri(&url).header("User-Agent", "kalendar");
             if same_site(&self.server, &url) {
-                let basic = base64(format!("{}:{}", self.username, self.password).as_bytes());
-                req = req.header("Authorization", format!("Basic {basic}"));
+                let auth = match &self.bearer {
+                    Some(token) => format!("Bearer {token}"),
+                    None => format!("Basic {}", base64(format!("{}:{}", self.username, self.password).as_bytes())),
+                };
+                req = req.header("Authorization", auth);
             }
             if let Some(d) = depth {
                 req = req.header("Depth", d);

@@ -278,6 +278,11 @@ pub struct Account {
     pub home: Option<String>,
     pub last_sync: Option<String>,
     pub error: Option<String>,
+    /// a Google account, signed in through the browser; the keyring holds
+    /// its refresh token and client secret
+    pub google: bool,
+    /// the Google Cloud client ID the person brought
+    pub client_id: Option<String>,
     /// signed in through Nextcloud's own page; its app password can be
     /// taken back on signing out
     pub nextcloud: bool,
@@ -294,6 +299,9 @@ pub struct PendingDelete {
 impl Account {
     /// "name @ server" for lists.
     pub fn label(&self) -> String {
+        if self.google {
+            return self.username.clone();
+        }
         let host = self.server.split("://").last().unwrap_or("").split('/').next().unwrap_or("");
         format!("{} @ {}", self.username, host)
     }
