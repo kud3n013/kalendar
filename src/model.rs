@@ -872,23 +872,32 @@ impl Data {
         let midnight = day.and_hms_opt(0, 0, 0).unwrap();
         let ws = (midnight + Duration::minutes(WORK_START_MIN)).max(from);
         let we = midnight + Duration::minutes(WORK_END_MIN);
+        self.free_gaps_in(ws, we)
+    }
+
+    /// Stretches of [a, b) not covered by any timed event, on any calendar.
+    /// Frames are not events and never count as busy.
+    fn free_gaps_in(&self, a: NaiveDateTime, b: NaiveDateTime) -> Vec<(NaiveDateTime, NaiveDateTime)> {
+        if a >= b {
+            return vec![];
+        }
         let mut busy: Vec<(NaiveDateTime, NaiveDateTime)> = self
             .events
             .iter()
-            .filter(|e| !e.all_day && e.start < we && e.end > ws)
+            .filter(|e| !e.all_day && e.start < b && e.end > a)
             .map(|e| (e.start, e.end))
             .collect();
         busy.sort();
         let mut gaps = vec![];
-        let mut cur = ws;
+        let mut cur = a;
         for (s, e) in busy {
             if s > cur {
                 gaps.push((cur, s));
             }
             cur = cur.max(e);
         }
-        if cur < we {
-            gaps.push((cur, we));
+        if cur < b {
+            gaps.push((cur, b));
         }
         gaps
     }
@@ -1162,6 +1171,47 @@ mod tests {
         assert!(!f.matches(&no_len, 60), "default length counts");
         assert!(f.matches(&no_len, 30));
         assert_eq!(f.filter.specificity(), 3);
+    }
+
+    fn sessions(d: &Data) -> Vec<String> {
+        let mut v: Vec<String> = d
+            .events
+            .iter()
+            .filter(|e| e.task_id.is_some())
+            .map(|e| format!("{} {} {} c{}", e.start.format("%a %H:%M"), e.end.format("%H:%M"), e.title, e.calendar))
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn plan_without_frames_is_unchanged() {
+        let now = ymd(11, 18).and_hms_opt(8, 0, 0).unwrap();
+        let mut d = Data::sample(now.date());
+        for (title, mins) in [("Big job", 240), ("Huge job", 400), ("Too big", 2000)] {
+            let id = d.new_id();
+            d.tasks.push(Task { id, title: title.into(), duration_min: Some(mins), due: Some(ymd(11, 30)), ..Default::default() });
+        }
+        // recorded from the planner before frames existed
+        assert_eq!(d.plan_tasks(now), (14, 1));
+        let want = [
+            "Fri 08:00 08:15 Renew library card c3",
+            "Fri 09:30 10:40 Huge job c3",
+            "Fri 12:00 13:00 Tidy up the notes c3",
+            "Thu 08:00 08:30 Huge job c3",
+            "Thu 09:30 13:30 Big job c3",
+            "Thu 13:30 14:00 Huge job c3",
+            "Thu 14:45 18:00 Huge job c3",
+            "Wed 08:00 08:30 Send the invoice c3",
+            "Wed 08:30 09:30 Write the monthly report c3",
+            "Wed 11:30 12:00 Reply to open emails c3",
+            "Wed 13:00 13:45 Review the budget c3",
+            "Wed 13:45 14:00 Book train tickets c3",
+            "Wed 14:00 15:30 Prepare slides c3",
+            "Wed 15:30 16:45 Read chapter 4 c3",
+            "Wed 16:45 18:00 Huge job c3",
+        ];
+        assert_eq!(sessions(&d), want);
     }
 
     #[test]
