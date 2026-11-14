@@ -388,6 +388,8 @@ pub struct App {
     pub new_task_text: String,
     pub new_task_open: bool,
     pub new_task_focus: bool,
+    /// the list the new-task bar adds to (0 = Inbox)
+    pub new_task_list: u64,
     pub quick_nav: bool,
     pub sub_url: String,
     pub sub_name: String,
@@ -400,7 +402,6 @@ pub struct App {
     pub sort_by: usize,
     pub filter_tag: Option<String>,
     pub new_list_text: Option<String>,
-    pub adding_to: Option<(u64, String)>,
     pub collapsed: std::collections::HashSet<String>,
     pub scroll_to: Option<f32>,
     pub clipboard: Option<Event>,
@@ -447,6 +448,7 @@ impl App {
             new_task_text: String::new(),
             new_task_open: false,
             new_task_focus: false,
+            new_task_list: 0,
             quick_nav: false,
             sub_url: String::new(),
             sub_name: String::new(),
@@ -459,7 +461,6 @@ impl App {
             sort_by: 0,
             filter_tag: None,
             new_list_text: None,
-            adding_to: None,
             collapsed: ["done".to_string()].into_iter().collect(),
             scroll_to: Some(scroll.max(0.0)),
             clipboard: None,
@@ -482,9 +483,10 @@ impl App {
                 app.data.prefs.slot_min = m;
             }
         }
-        if std::env::var("KALENDAR_SHOW_NEWTASK").is_ok() {
-            app.new_task_open = true;
-            app.new_task_focus = true;
+        // KALENDAR_SHOW_NEWTASK=<list name> opens it as that list's + button does
+        if let Ok(v) = std::env::var("KALENDAR_SHOW_NEWTASK") {
+            let list = app.data.lists.iter().find(|l| l.name.eq_ignore_ascii_case(&v)).map_or(0, |l| l.id);
+            app.open_new_task(list);
         }
         if std::env::var("KALENDAR_SHOW_CREATE").is_ok() {
             let start = today.and_hms_opt(10, 0, 0).unwrap();
@@ -1067,10 +1069,7 @@ impl App {
                 self.anchor = start.date();
                 self.open_new_event(start, NEW_EVENT_MIN, false);
             }
-            Cmd::NewTask => {
-                self.new_task_open = true;
-                self.new_task_focus = true;
-            }
+            Cmd::NewTask => self.open_new_task(0),
             Cmd::NewFrame => {
                 // the viewed day, at the next full hour when that is today
                 let now = Self::now();

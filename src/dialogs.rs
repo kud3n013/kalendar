@@ -416,6 +416,13 @@ impl App {
         }
         let muted = self.pal.muted;
         let focus = std::mem::take(&mut self.new_task_focus);
+        let list_name = match self.data.lists.iter().find(|l| l.id == self.new_task_list) {
+            Some(l) => l.name.clone(),
+            None => {
+                self.new_task_list = 0;
+                "your Inbox".to_string()
+            }
+        };
         let mut close = false;
         egui::Window::new("newtask")
             .title_bar(false)
@@ -438,7 +445,7 @@ impl App {
                         if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                             let t = std::mem::take(&mut self.new_task_text);
                             if !t.trim().is_empty() {
-                                self.add_task(&t, 0);
+                                self.add_task(&t, self.new_task_list);
                                 close = true;
                             }
                         } else if ui.input(|i| i.pointer.any_click()) {
@@ -446,7 +453,7 @@ impl App {
                         }
                     }
                 });
-                ui.label(RichText::new("Enter adds the task to your Inbox  ·  Esc closes").size(11.5).color(muted));
+                ui.label(RichText::new(format!("Enter adds the task to {list_name}  ·  Esc closes")).size(11.5).color(muted));
             });
         if close {
             self.new_task_open = false;

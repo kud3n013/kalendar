@@ -174,6 +174,16 @@ impl App {
 
     // --------------------------------------------------------- task panel
 
+    /// Opens the new-task bar (Ctrl+T), adding to `list` (0 = Inbox).
+    pub fn open_new_task(&mut self, list: u64) {
+        if list != self.new_task_list {
+            self.new_task_text.clear();
+        }
+        self.new_task_list = list;
+        self.new_task_open = true;
+        self.new_task_focus = true;
+    }
+
     /// Adds a task typed into a quick field.
     pub fn add_task(&mut self, text: &str, list: u64) {
         let today = Local::now().date_naive();
@@ -585,7 +595,9 @@ impl App {
             }
         }
         if add_clicked {
-            self.adding_to = list.map(|l| (l, String::new()));
+            if let Some(l) = list {
+                self.open_new_task(l);
+            }
             self.collapsed.remove(key);
         } else if resp.clicked() {
             if collapsed {
@@ -627,20 +639,6 @@ impl App {
         if a > 0.0 {
             ui.scope(|ui| {
                 ui.set_opacity(a);
-                if let Some((l, mut textv)) = self.adding_to.take().filter(|(l, _)| Some(*l) == list) {
-                    let r = ui.add(egui::TextEdit::singleline(&mut textv).hint_text("New task").desired_width(f32::INFINITY).margin(Margin::symmetric(8, 5)));
-                    r.request_focus();
-                    let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
-                    if enter {
-                        self.add_task(&textv, l);
-                        self.adding_to = Some((l, String::new()));
-                    } else if !esc {
-                        self.adding_to = Some((l, textv));
-                    }
-                } else if self.adding_to.as_ref().map(|(l, _)| Some(*l) != list).unwrap_or(false) {
-                    // another list is being added to; leave it alone
-                }
                 for id in items {
                     self.task_row(ui, ctx, *id, key);
                 }
