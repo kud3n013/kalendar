@@ -131,13 +131,29 @@ pub struct EventEdit {
     pub anchor_rect: Option<egui::Rect>,
 }
 
+/// What a block drawn on the calendar becomes.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum CreateKind {
+    Task,
+    Event,
+    Frame,
+}
+
 /// The small window that follows a block drawn on the calendar: it makes
-/// the block a task session (the default) or a plain event.
+/// the block a task session (the default), a plain event, or a frame.
 pub struct CreateEdit {
     pub ev: Event,
-    pub as_task: bool,
+    pub kind: CreateKind,
     /// where the block is, in screen points; the window sits beside it
     pub anchor_rect: egui::Rect,
+    pub focus: bool,
+}
+
+/// The frame editor: a frame being made or changed.
+pub struct FrameEdit {
+    pub frame: Frame,
+    pub is_new: bool,
+    pub until_text: String,
     pub focus: bool,
 }
 
@@ -172,6 +188,7 @@ pub enum Cmd {
     ViewTwoWeeks,
     NewEvent,
     NewTask,
+    NewFrame,
     Edit,
     Delete,
     Copy,
@@ -208,6 +225,7 @@ pub const COMMANDS: &[(Cmd, &str, &str, &str)] = &[
     (Cmd::Refresh, "Refresh your calendars", "R", "Calendar view"),
     (Cmd::NewEvent, "Create a new event", "C", "Events and tasks"),
     (Cmd::NewTask, "Create a new task", "Ctrl+T", "Events and tasks"),
+    (Cmd::NewFrame, "Create a new frame", "B", "Events and tasks"),
     (Cmd::Edit, "Edit an event", "E", "Events and tasks"),
     (Cmd::Delete, "Delete selected event or task", "Del / Backspace", "Events and tasks"),
     (Cmd::Copy, "Copy", "Ctrl+C", "Events and tasks"),
@@ -244,6 +262,7 @@ impl Cmd {
             Cmd::ViewTwoWeeks => "view-two-weeks",
             Cmd::NewEvent => "new-event",
             Cmd::NewTask => "new-task",
+            Cmd::NewFrame => "new-frame",
             Cmd::Edit => "edit",
             Cmd::Delete => "delete",
             Cmd::Copy => "copy",
@@ -345,9 +364,12 @@ pub struct App {
     pub editor: Option<EventEdit>,
     pub task_editor: Option<TaskEdit>,
     pub create: Option<CreateEdit>,
+    pub frame_editor: Option<FrameEdit>,
     pub drag: Option<Drag>,
     pub drag_task: Option<u64>,
     pub ctx_target: Option<u64>,
+    /// the frame (and its day) under the last right-click, if no event was
+    pub ctx_frame: Option<(u64, NaiveDate)>,
     /// start time and direction of the slide when the view changes
     pub nav_anim: (f64, f32),
     pub last_shown: Option<(View, NaiveDate)>,
@@ -404,9 +426,11 @@ impl App {
             editor: None,
             task_editor: None,
             create: None,
+            frame_editor: None,
             drag: None,
             drag_task: None,
             ctx_target: None,
+            ctx_frame: None,
             nav_anim: (-10.0, 0.0),
             last_shown: None,
             demo_menu: std::env::var("KALENDAR_SHOW_MENU").ok(),
@@ -465,6 +489,11 @@ impl App {
         if std::env::var("KALENDAR_SHOW_CREATE").is_ok() {
             let start = today.and_hms_opt(10, 0, 0).unwrap();
             app.open_create(start, 60, egui::Rect::from_min_size(egui::pos2(700.0, 300.0), egui::vec2(150.0, 100.0)));
+        }
+        if app.shot.is_some() && std::env::var("KALENDAR_SHOW_FRAME").is_ok() {
+            if let Some(id) = app.data.frames.first().map(|f| f.id) {
+                app.edit_frame(id);
+            }
         }
         app
     }
@@ -565,12 +594,67 @@ impl App {
                 color: None,
                 ..Default::default()
             },
-            as_task: true,
+            kind: CreateKind::Task,
             anchor_rect,
             focus: true,
         });
         self.editor = None;
         self.selected = None;
+    }
+
+    /// Opens the frame editor on a new frame for `start_min..end_min` of a
+    /// day: on weekdays it repeats Monday to Friday, on a weekend day just
+    /// on that weekday. Subscribed calendars never get frames.
+    pub fn open_new_frame(&mut self, day: NaiveDate, start_min: i64, end_min: i64, calendar: usize, name: String) {
+        let calendar = if self.data.calendars.get(calendar).is_some_and(|c| c.url.is_none()) {
+            calendar
+        } else {
+            self.data.first_own_calendar()
+        };
+        let days = if day.weekday().num_days_from_monday() < 5 { FRAME_WEEKDAYS } else { day_bit(day) };
+        let id = self.data.new_id();
+        self.frame_editor = Some(FrameEdit {
+            frame: Frame { id, name, calendar, start_min, end_min: end_min.max(start_min + 15), days, from: day, ..Default::default() },
+            is_new: true,
+            until_text: String::new(),
+            focus: true,
+        });
+        self.create = None;
+        self.editor = None;
+        self.selected = None;
+    }
+
+    pub fn edit_frame(&mut self, id: u64) {
+        if let Some(f) = self.data.frame(id).cloned() {
+            self.frame_editor = Some(FrameEdit {
+                until_text: f.until.map(|d| d.to_string()).unwrap_or_default(),
+                frame: f,
+                is_new: false,
+                focus: false,
+            });
+            self.create = None;
+            self.editor = None;
+        }
+    }
+
+    /// Takes one day out of a frame.
+    pub fn skip_frame_day(&mut self, ctx: &egui::Context, id: u64, day: NaiveDate) {
+        self.snapshot();
+        if let Some(f) = self.data.frame_mut(id) {
+            if !f.skip.contains(&day) {
+                f.skip.push(day);
+                f.skip.sort();
+            }
+        }
+        self.commit();
+        self.say(ctx, format!("Frame skipped on {}", day.format("%a, %b %-d")), true);
+    }
+
+    pub fn delete_frame(&mut self, ctx: &egui::Context, id: u64) {
+        self.snapshot();
+        self.data.frames.retain(|f| f.id != id);
+        self.commit();
+        self.say(ctx, "Frame deleted", true);
     }
 
     pub fn open_new_event(&mut self, start: NaiveDateTime, mins: i64, all_day: bool) {
@@ -982,6 +1066,13 @@ impl App {
                 self.new_task_open = true;
                 self.new_task_focus = true;
             }
+            Cmd::NewFrame => {
+                // the viewed day, at the next full hour when that is today
+                let now = Self::now();
+                let start_h = if self.anchor == now.date() { (now.hour() as i64 + 1).min(22) } else { 9 };
+                let day = self.anchor;
+                self.open_new_frame(day, start_h * 60, (start_h + 2).min(24) * 60, self.data.first_own_calendar(), String::new());
+            }
             Cmd::Edit => {
                 if let Some(id) = self.selected {
                     self.edit_event(id);
@@ -1082,6 +1173,7 @@ impl App {
             || self.task_editor.is_some()
             || self.command_bar.is_some()
             || self.create.is_some()
+            || self.frame_editor.is_some()
             || self.new_task_open;
         if self.recording.is_some() {
             return;
@@ -1110,6 +1202,7 @@ impl App {
             } else if self.new_task_open {
                 self.new_task_open = false;
             } else if self.create.take().is_some() {
+            } else if self.frame_editor.take().is_some() {
             } else if self.editor.take().is_some() || self.task_editor.take().is_some() {
             } else if self.show_prefs {
                 self.show_prefs = false;

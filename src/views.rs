@@ -2,7 +2,7 @@
 
 use crate::icons;
 use crate::model::*;
-use crate::{fill_squircle, mix, rgb, stroke_squircle, App, Cmd, CreateEdit, Drag, Palette};
+use crate::{fill_squircle, mix, rgb, stroke_squircle, App, Cmd, CreateEdit, CreateKind, Drag, Palette};
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, Timelike};
 use eframe::egui::{
     self, pos2, vec2, Align, Align2, Color32, FontId, Id, Layout, Margin, PointerButton, Pos2, Rect, RichText, Sense,
@@ -666,7 +666,7 @@ impl App {
                         .map(|it| it.rect)
                         .reduce(|a, b| a.union(b))
                         .unwrap_or_else(|| Rect::from_center_size(rect.center(), vec2(120.0, 40.0)));
-                    self.create = Some(CreateEdit { ev: draft, as_task: true, anchor_rect: anchor, focus: true });
+                    self.create = Some(CreateEdit { ev: draft, kind: CreateKind::Task, anchor_rect: anchor, focus: true });
                 }
                 Some(Drag::Move { id, .. }) => {
                     let sched = self.data.event(id).and_then(|e| e.task_id.map(|t| (t, e.start.date())));
@@ -719,21 +719,28 @@ impl App {
                 }
             }
         }
+        // the frame under a point, when no event is there
+        let frame_at = |pos: Pos2| frame_boxes.iter().rev().find(|b| b.rect.contains(pos));
         if resp.double_clicked() {
             if let Some((id, _, r)) = resp.interact_pointer_pos().and_then(hit_info) {
                 self.edit_event_at(id, Some(r));
+            } else if let Some(b) = resp.interact_pointer_pos().and_then(|q| frame_boxes.iter().find(|b| b.label.expand(2.0).contains(q))) {
+                // the frame's name label opens its editor
+                self.edit_frame(b.id);
             }
         }
         if resp.secondary_clicked() {
             let pos = resp.interact_pointer_pos();
             self.ctx_target = pos.and_then(hit_info).map(|x| x.0);
             self.ctx_time = pos.map(|q| snap_dt(pos_to(q), snap, -1));
+            self.ctx_frame = if self.ctx_target.is_none() { pos.and_then(frame_at).map(|b| (b.id, b.day)) } else { None };
             if self.ctx_target.is_some() {
                 self.selected = self.ctx_target;
             }
         }
         let target = self.ctx_target;
         let at = self.ctx_time;
+        let in_frame = self.ctx_frame.and_then(|(id, day)| self.data.frame(id).map(|f| (id, day, f.name.clone())));
         resp.context_menu(|ui| {
             if let Some(id) = target {
                 self.block_menu(ui, id);
@@ -745,6 +752,27 @@ impl App {
                 }
                 if ui.button(format!("{}  Create new event", icons::CALENDAR_PLUS)).clicked() {
                     self.open_new_event(t, NEW_EVENT_MIN, false);
+                    ui.close_menu();
+                }
+                let ctx = ui.ctx().clone();
+                if let Some((fid, day, name)) = &in_frame {
+                    ui.separator();
+                    ui.label(RichText::new(format!("Frame: {name}")).size(11.5).color(self.pal.muted));
+                    if ui.button(format!("{}  Edit frame…", icons::PEN)).clicked() {
+                        self.edit_frame(*fid);
+                        ui.close_menu();
+                    }
+                    if ui.button(format!("{}  Skip this day", icons::BAN)).clicked() {
+                        self.skip_frame_day(&ctx, *fid, *day);
+                        ui.close_menu();
+                    }
+                    if ui.button(RichText::new(format!("{}  Delete frame", icons::TRASH)).color(Color32::from_rgb(0xeb, 0x62, 0x62))).clicked() {
+                        self.delete_frame(&ctx, *fid);
+                        ui.close_menu();
+                    }
+                } else if ui.button(format!("{}  New frame here", icons::CALENDAR_DAYS)).clicked() {
+                    let s = (t - midnight(t.date())).num_minutes();
+                    self.open_new_frame(t.date(), s, (s + 60).min(24 * 60), self.data.first_own_calendar(), String::new());
                     ui.close_menu();
                 }
             }

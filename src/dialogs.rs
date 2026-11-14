@@ -3,7 +3,7 @@
 use crate::icons;
 use crate::model::*;
 use crate::views::midnight;
-use crate::{mix, rgb, App, Cmd, COMMANDS};
+use crate::{mix, rgb, App, Cmd, CreateKind, COMMANDS};
 use chrono::{Duration, Local, NaiveDate, Timelike};
 use eframe::egui::{self, pos2, Align, Align2, FontId, Id, Layout, Margin, RichText, Stroke};
 
@@ -34,6 +34,7 @@ impl App {
         self.dlg_create(ctx);
         self.dlg_event(ctx);
         self.dlg_task(ctx);
+        self.dlg_frame(ctx);
         self.ui_settings_window(ctx);
         self.dlg_command(ctx);
         self.dlg_new_task(ctx);
@@ -42,10 +43,10 @@ impl App {
 
     /// The small window beside a block drawn on the calendar: it saves the
     /// block as a task session (the default) or as a plain event, into one
-    /// chosen calendar.
+    /// chosen calendar, or turns it into a frame in the frame editor.
     fn dlg_create(&mut self, ctx: &egui::Context) {
         let Some(mut c) = self.create.take() else { return };
-        let (mut save, mut cancel) = (false, false);
+        let (mut save, mut cancel, mut to_frame) = (false, false, false);
         let muted = self.pal.muted;
         let p = self.data.prefs.clone();
         let w = 280.0;
@@ -57,18 +58,21 @@ impl App {
             .fixed_pos(pos)
             .show(ctx, |ui| {
                 ui.set_width(w);
-                // what the block becomes: a task session or a plain event
+                // what the block becomes: a task session, a plain event or a frame
                 ui.horizontal(|ui| {
-                    for (on, label) in [(true, "Task"), (false, "Event")] {
-                        if ui.selectable_label(c.as_task == on, RichText::new(label).size(13.5)).clicked() {
-                            c.as_task = on;
+                    for (kind, label) in [(CreateKind::Task, "Task"), (CreateKind::Event, "Event"), (CreateKind::Frame, "Frame")] {
+                        let r = ui.selectable_label(c.kind == kind, RichText::new(label).size(13.5));
+                        let r = if kind == CreateKind::Frame { r.on_hover_text("Reserve this time every week for a kind of work") } else { r };
+                        if r.clicked() {
+                            c.kind = kind;
+                            to_frame = kind == CreateKind::Frame;
                         }
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(RichText::new(format!("{} – {}", p.fmt_time(c.ev.start.time()), p.fmt_time(c.ev.end.time()))).size(12.0).color(muted));
                     });
                 });
-                let hint = if c.as_task { "New Task" } else { "New Event" };
+                let hint = if c.kind == CreateKind::Event { "New Event" } else { "New Task" };
                 let resp = ui.add(
                     egui::TextEdit::singleline(&mut c.ev.title)
                         .hint_text(hint)
@@ -106,7 +110,12 @@ impl App {
                     save = true;
                 }
             });
-        if save {
+        if to_frame {
+            let day = c.ev.start.date();
+            let s = (c.ev.start - midnight(day)).num_minutes();
+            let e = if c.ev.end.date() == day { (c.ev.end - midnight(day)).num_minutes() } else { 24 * 60 };
+            self.open_new_frame(day, s, e, c.ev.calendar, c.ev.title.clone());
+        } else if save {
             self.snapshot();
             let mut ev = c.ev.clone();
             if ev.end <= ev.start {
@@ -114,7 +123,7 @@ impl App {
             }
             let id = ev.id;
             let day = ev.start.date();
-            if c.as_task {
+            if c.kind == CreateKind::Task {
                 // the block becomes a session of a new task
                 let task_id = self.data.new_id();
                 self.data.tasks.insert(
@@ -136,6 +145,267 @@ impl App {
             self.commit();
         } else if !cancel {
             self.create = Some(c);
+        }
+    }
+
+    /// The frame editor: name, calendar, colour, hours, weekdays, repeat,
+    /// end date, which tasks it takes, and whether it keeps others out.
+    fn dlg_frame(&mut self, ctx: &egui::Context) {
+        let Some(mut ed) = self.frame_editor.take() else { return };
+        let (mut save, mut cancel, mut delete) = (false, false, false);
+        let muted = self.pal.muted;
+        let cal_color = self.data.calendar_color(ed.frame.calendar);
+        // every tag in use, plus the ones the frame already asks for
+        let mut all_tags: Vec<String> = self.data.tasks.iter().flat_map(|t| t.tags.iter().cloned()).collect();
+        all_tags.extend(ed.frame.filter.tags.iter().cloned());
+        all_tags.sort_by_key(|t| t.to_lowercase());
+        all_tags.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+        let mut lists: Vec<(u64, String, [u8; 3])> = vec![(0, "Inbox".into(), [128, 128, 128])];
+        lists.extend(self.data.lists.iter().map(|l| (l.id, l.name.clone(), l.color)));
+        let hour12 = self.data.prefs.hour12;
+        egui::Window::new(if ed.is_new { "New frame" } else { "Frame" })
+            .id(Id::new("frame_editor"))
+            .collapsible(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_CENTER, [0.0, -30.0])
+            .show(ctx, |ui| {
+                ui.set_width(380.0);
+                let r = ui.add(
+                    egui::TextEdit::singleline(&mut ed.frame.name)
+                        .hint_text("Frame name, e.g. Deep work")
+                        .font(FontId::proportional(18.0))
+                        .desired_width(f32::INFINITY),
+                );
+                if ed.focus {
+                    r.request_focus();
+                    ed.focus = false;
+                }
+                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    save = true;
+                }
+                ui.add_space(4.0);
+                let label = |ui: &mut egui::Ui, t: &str| {
+                    ui.label(RichText::new(t).color(muted));
+                };
+                egui::Grid::new("framegrid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+                    label(ui, "Calendar");
+                    let cname = |i: usize| self.data.calendars.get(i).map(|c| c.name.clone()).unwrap_or_default();
+                    egui::ComboBox::from_id_salt("fcal").selected_text(cname(ed.frame.calendar)).show_ui(ui, |ui| {
+                        for (i, cal) in self.data.calendars.iter().enumerate().filter(|(_, c)| c.url.is_none()) {
+                            ui.selectable_value(&mut ed.frame.calendar, i, RichText::new(format!("{} {}", icons::CIRCLE, cal.name)).color(rgb(cal.color)));
+                        }
+                    });
+                    ui.end_row();
+
+                    label(ui, "Colour");
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        let swatch = |ui: &mut egui::Ui, col: [u8; 3], on: bool, tip: &str| {
+                            let (cr, resp) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
+                            ui.painter().circle_filled(cr.center(), 7.0, rgb(col));
+                            if on {
+                                ui.painter().circle_stroke(cr.center(), 8.5, Stroke::new(1.5_f32, ui.visuals().text_color()));
+                            }
+                            resp.on_hover_text(tip).clicked()
+                        };
+                        if swatch(ui, cal_color, ed.frame.color.is_none(), "Calendar colour") {
+                            ed.frame.color = None;
+                        }
+                        ui.add_space(6.0);
+                        for (col, cname) in EVENT_COLORS.iter() {
+                            if swatch(ui, *col, ed.frame.color == Some(*col), cname) {
+                                ed.frame.color = Some(*col);
+                            }
+                        }
+                    });
+                    ui.end_row();
+
+                    // hours, in 5-minute steps; a frame ends on its own day
+                    let time = |ui: &mut egui::Ui, m: &mut i64, lo: i64, hi: i64| {
+                        let (mut h, mut mm) = (*m / 60, *m % 60);
+                        ui.add(egui::DragValue::new(&mut h).range(0..=24).speed(0.1).custom_formatter(|v, _| {
+                            let v = v as i64;
+                            if hour12 {
+                                format!("{}", if v % 12 == 0 { 12 } else { v % 12 })
+                            } else {
+                                format!("{v:02}")
+                            }
+                        }));
+                        ui.label(":");
+                        ui.add(egui::DragValue::new(&mut mm).range(0..=55).speed(0.2).custom_formatter(|v, _| format!("{:02}", v as i64 / 5 * 5)));
+                        if hour12 {
+                            ui.label(RichText::new(if h % 24 < 12 { "am" } else { "pm" }).color(muted));
+                        }
+                        *m = (h * 60 + mm / 5 * 5).clamp(lo, hi);
+                    };
+                    label(ui, "Time");
+                    ui.horizontal(|ui| {
+                        time(ui, &mut ed.frame.start_min, 0, 24 * 60 - 15);
+                        ui.label(RichText::new("to").color(muted));
+                        let lo = ed.frame.start_min + 15;
+                        time(ui, &mut ed.frame.end_min, lo, 24 * 60);
+                    });
+                    ui.end_row();
+
+                    label(ui, "Days");
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 3.0;
+                        for (i, d) in ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].iter().enumerate() {
+                            let bit = 1u8 << i;
+                            if ui.selectable_label(ed.frame.days & bit != 0, *d).clicked() {
+                                ed.frame.days ^= bit;
+                            }
+                        }
+                    });
+                    ui.end_row();
+
+                    label(ui, "Repeat");
+                    ui.horizontal(|ui| {
+                        ui.label("every");
+                        ui.add(egui::DragValue::new(&mut ed.frame.every_weeks).range(1..=8).speed(0.05));
+                        ui.label(if ed.frame.every_weeks == 1 { "week" } else { "weeks" });
+                        ui.label(RichText::new(format!("from {}", ed.frame.from.format("%b %-d"))).color(muted));
+                    });
+                    ui.end_row();
+
+                    label(ui, "Until");
+                    ui.horizontal(|ui| {
+                        ui.add(egui::TextEdit::singleline(&mut ed.until_text).hint_text("YYYY-MM-DD").desired_width(100.0));
+                        if !ed.until_text.is_empty() && ui.small_button("Forever").clicked() {
+                            ed.until_text.clear();
+                        }
+                    });
+                    ui.end_row();
+
+                    if !ed.frame.skip.is_empty() {
+                        label(ui, "Skipped");
+                        ui.horizontal(|ui| {
+                            let n = ed.frame.skip.len();
+                            ui.label(format!("{n} day{}", if n == 1 { "" } else { "s" }));
+                            if ui.small_button("Bring back").clicked() {
+                                ed.frame.skip.clear();
+                            }
+                        });
+                        ui.end_row();
+                    }
+                });
+
+                ui.add_space(6.0);
+                ui.label(RichText::new("Tasks it takes").strong());
+                ui.label(RichText::new("Nothing picked means any task.").size(11.5).color(muted));
+                ui.add_space(2.0);
+                egui::Grid::new("framefilter").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+                    label(ui, "Lists");
+                    ui.horizontal_wrapped(|ui| {
+                        for (id, name, col) in &lists {
+                            let on = ed.frame.filter.lists.contains(id);
+                            let text = RichText::new(format!("{} {name}", icons::CIRCLE)).color(if on { rgb(*col) } else { muted });
+                            if ui.selectable_label(on, text).clicked() {
+                                if on {
+                                    ed.frame.filter.lists.retain(|l| l != id);
+                                } else {
+                                    ed.frame.filter.lists.push(*id);
+                                }
+                            }
+                        }
+                    });
+                    ui.end_row();
+
+                    label(ui, "Tags");
+                    ui.horizontal_wrapped(|ui| {
+                        if all_tags.is_empty() {
+                            ui.label(RichText::new("No tags yet").color(muted));
+                        }
+                        for tag in &all_tags {
+                            let on = ed.frame.filter.tags.iter().any(|t| t.eq_ignore_ascii_case(tag));
+                            if ui.selectable_label(on, format!("#{tag}")).clicked() {
+                                if on {
+                                    ed.frame.filter.tags.retain(|t| !t.eq_ignore_ascii_case(tag));
+                                } else {
+                                    ed.frame.filter.tags.push(tag.clone());
+                                }
+                            }
+                        }
+                    });
+                    ui.end_row();
+
+                    if ed.frame.filter.tags.len() > 1 {
+                        label(ui, "Match");
+                        ui.horizontal(|ui| {
+                            ui.selectable_value(&mut ed.frame.filter.tags_all, false, "Any tag");
+                            ui.selectable_value(&mut ed.frame.filter.tags_all, true, "All tags");
+                        });
+                        ui.end_row();
+                    }
+
+                    label(ui, "Up to");
+                    let dur = |d: Option<i64>| d.map(fmt_duration).unwrap_or_else(|| "Any length".into());
+                    egui::ComboBox::from_id_salt("fmax").selected_text(dur(ed.frame.filter.max_min)).show_ui(ui, |ui| {
+                        for v in [None, Some(15), Some(30), Some(45), Some(60), Some(90), Some(120), Some(180), Some(240)] {
+                            ui.selectable_value(&mut ed.frame.filter.max_min, v, dur(v));
+                        }
+                    });
+                    ui.end_row();
+                });
+                ui.add_space(4.0);
+                ui.checkbox(&mut ed.frame.exclusive, "Keep other tasks out")
+                    .on_hover_text("The planner puts no other task here");
+                ui.checkbox(&mut ed.frame.enabled, "Enabled");
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if ui.button(RichText::new("Save").strong()).on_hover_text("Ctrl+Enter").clicked() {
+                        save = true;
+                    }
+                    if ui.button("Cancel").on_hover_text("Esc").clicked() {
+                        cancel = true;
+                    }
+                    if !ed.is_new {
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            if ui.button(RichText::new("Delete").color(egui::Color32::from_rgb(0xeb, 0x62, 0x62))).clicked() {
+                                delete = true;
+                            }
+                        });
+                    }
+                });
+                if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter)) {
+                    save = true;
+                }
+            });
+        if save {
+            let text = ed.until_text.trim();
+            let until = if text.is_empty() {
+                None
+            } else if let Ok(d) = NaiveDate::parse_from_str(text, "%Y-%m-%d") {
+                Some(d)
+            } else {
+                self.say(ctx, "The end date should look like 2026-12-31", false);
+                self.frame_editor = Some(ed);
+                return;
+            };
+            if ed.frame.days == 0 {
+                self.say(ctx, "Pick at least one day", false);
+                self.frame_editor = Some(ed);
+                return;
+            }
+            let mut f = ed.frame;
+            f.until = until;
+            if f.name.trim().is_empty() {
+                f.name = "Frame".into();
+            }
+            // never a subscribed calendar
+            if self.data.calendars.get(f.calendar).is_none_or(|c| c.url.is_some()) {
+                f.calendar = self.data.first_own_calendar();
+            }
+            self.snapshot();
+            match self.data.frame_mut(f.id) {
+                Some(old) => *old = f,
+                None => self.data.frames.push(f),
+            }
+            self.commit();
+        } else if delete {
+            self.delete_frame(ctx, ed.frame.id);
+        } else if !cancel {
+            self.frame_editor = Some(ed);
         }
     }
 
