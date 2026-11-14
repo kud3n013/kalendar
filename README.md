@@ -17,8 +17,13 @@ JSON data file, no account.
 - **Time blocking**: drag a task onto the calendar to book a session; a task
   can have several sessions; reschedule, follow-up, and split actions move
   work to the next free slot.
-- **Planner**: one click fits your open tasks into free working time
-  (Mon–Fri, 08:00–18:00), splitting long tasks into chunks.
+- **Frames**: blocks of time set aside for certain kinds of work, such as
+  "Deep work" on weekday mornings or "Quick wins" for tasks under 30 minutes.
+  A frame repeats on chosen days and can take only tasks from certain lists,
+  with certain tags, or up to a length. Make one from the + menu (`B`) or by
+  right-clicking the calendar.
+- **Planner**: one click fits open tasks into your frames, or free working
+  time (Mon–Fri, 08:00–18:00), splitting long tasks into chunks.
 - **Quick entry**: press `Ctrl+T` and type
   `Write report #deep-work !high >Work 90m .tomorrow` to set tags, priority,
   list, duration, and due date in one line.

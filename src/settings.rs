@@ -69,6 +69,32 @@ fn heading(ui: &mut egui::Ui, text: &str) {
     ui.add_space(6.0);
 }
 
+/// An on/off switch: a pill with a knob that slides across.
+fn switch(ui: &mut egui::Ui, on: &mut bool, accent: Color32) -> egui::Response {
+    let (r, mut resp) = ui.allocate_exact_size(vec2(38.0, 22.0), Sense::click());
+    if resp.clicked() {
+        *on = !*on;
+        resp.mark_changed();
+    }
+    let t = ui.ctx().animate_bool_with_time(resp.id, *on, ANIM_FAST_S);
+    let off = ui.visuals().widgets.inactive.bg_fill;
+    let track = if resp.hovered() { mix(off, ui.visuals().text_color(), 0.06) } else { off };
+    ui.painter().rect_filled(r, 11.0, mix(track, accent, t));
+    let x = egui::lerp(r.left() + 11.0..=r.right() - 11.0, t);
+    ui.painter().circle_filled(egui::pos2(x, r.center().y), 8.0, Color32::WHITE);
+    resp
+}
+
+/// "Weekdays", "Every day", or the short day names, from a Monday-first bit set.
+fn days_label(days: u8) -> String {
+    match days & 0x7f {
+        0x7f => "Every day".into(),
+        FRAME_WEEKDAYS => "Weekdays".into(),
+        0b110_0000 => "Weekends".into(),
+        d => ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].iter().enumerate().filter(|(i, _)| d & (1 << i) != 0).map(|(_, n)| *n).collect::<Vec<_>>().join(" "),
+    }
+}
+
 fn hour_label(p: &Prefs, h: i64) -> String {
     let t = chrono::NaiveTime::from_hms_opt((h % 24) as u32, 0, 0).unwrap();
     let base = if p.hour12 {
@@ -123,7 +149,7 @@ impl App {
 
     /// The whole content: page list on the left, the chosen page on the right.
     pub fn settings_body(&mut self, ui: &mut egui::Ui) {
-        let before = serde_json::to_string(&(&self.data.prefs, &self.data.calendars)).unwrap_or_default();
+        let before = serde_json::to_string(&(&self.data.prefs, &self.data.calendars, &self.data.frames)).unwrap_or_default();
         let (side, bg, muted, text, border) = (self.pal.side, self.pal.bg, self.pal.muted, self.pal.text, self.pal.border);
         let full = ui.max_rect();
         let nav_w = 264.0f32.min(full.width() * 0.4);
@@ -202,7 +228,7 @@ impl App {
                 });
             });
         });
-        if before != serde_json::to_string(&(&self.data.prefs, &self.data.calendars)).unwrap_or_default() {
+        if before != serde_json::to_string(&(&self.data.prefs, &self.data.calendars, &self.data.frames)).unwrap_or_default() {
             self.commit();
         }
     }
@@ -285,9 +311,19 @@ impl App {
     }
 
     fn page_planner(&mut self, ui: &mut egui::Ui) {
-        let muted = self.pal.muted;
+        let (muted, border) = (self.pal.muted, self.pal.border);
         heading(ui, "Planner");
-        ui.label(RichText::new("\"Plan my tasks\" fits open tasks into free time on working days, 08:00 to 18:00.").size(15.0).color(muted));
+        ui.add(
+            egui::Label::new(
+                RichText::new(
+                    "\"Plan my tasks\" fits open tasks into your frames: blocks of time set aside for certain kinds of work. \
+                     Without frames, or when none fits, it uses free time on working days, 08:00 to 18:00.",
+                )
+                .size(15.0)
+                .color(muted),
+            )
+            .wrap(),
+        );
         ui.add_space(10.0);
         let p = &mut self.data.prefs;
         row(ui, "Default duration", "Used for tasks without a time estimate.", |ui| {
@@ -297,6 +333,111 @@ impl App {
         let yes_no = [(true, "Yes".to_string()), (false, "No".to_string())];
         row(ui, "Split long tasks", "Tasks of two hours or more may be cut into several sessions.", |ui| combo(ui, "ps", &mut p.split_long_tasks, &yes_no));
         row(ui, "Schedule tasks with no due date", "", |ui| combo(ui, "pn", &mut p.plan_without_due, &yes_no));
+        divider(ui, border);
+        row(ui, "Plan into frames", "Put tasks into the frames whose filter they match.", |ui| combo(ui, "pf", &mut p.use_frames, &yes_no));
+        row(ui, "When no frame fits", "What happens to a task that no frame takes.", |ui| {
+            combo(ui, "po", &mut p.plan_outside_frames, &[(true, "Plan in working hours".into()), (false, "Leave unplanned".into())]);
+        });
+        divider(ui, border);
+        self.frame_list(ui);
+    }
+
+    /// Every frame on one line: colour, name, when, what it takes; edit or switch off.
+    fn frame_list(&mut self, ui: &mut egui::Ui) {
+        let (muted, border, side, text, accent) = (self.pal.muted, self.pal.border, self.pal.side, self.pal.text, self.pal.accent);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Frames").font(bold(20.0)));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let b = egui::Button::new(RichText::new("+ New frame").size(15.0).color(Color32::WHITE)).fill(self.pal.accent).corner_radius(8);
+                if ui.add(b).clicked() {
+                    let cal = self.data.first_own_calendar();
+                    self.open_new_frame(App::now().date(), 9 * 60, 11 * 60, cal, String::new());
+                    self.show_prefs = false;
+                }
+            });
+        });
+        ui.add_space(6.0);
+        if self.data.frames.is_empty() {
+            ui.add(
+                egui::Label::new(
+                    RichText::new("No frames yet. Make one here, from the + menu, or by right-clicking the calendar.").size(15.0).color(muted),
+                )
+                .wrap(),
+            );
+            return;
+        }
+        let p = self.data.prefs.clone();
+        let mut edit: Option<u64> = None;
+        let lines: Vec<(String, String)> = self
+            .data
+            .frames
+            .iter()
+            .map(|f| {
+                let t = |m: i64| p.fmt_time(chrono::NaiveTime::from_hms_opt((m / 60 % 24) as u32, (m % 60) as u32, 0).unwrap_or_default());
+                let end = if f.end_min >= 24 * 60 { "24:00".to_string() } else { t(f.end_min) };
+                let mut when = format!("{}, {} – {}", days_label(f.days), t(f.start_min), end);
+                if f.every_weeks > 1 {
+                    when += &format!(", every {} weeks", f.every_weeks);
+                }
+                (when, self.filter_summary(&f.filter, f.exclusive))
+            })
+            .collect();
+        for (i, (when, what)) in lines.into_iter().enumerate() {
+            let f = &self.data.frames[i];
+            let (id, name, color) = (f.id, f.name.clone(), rgb(self.data.frame_color(f)));
+            let f = &mut self.data.frames[i];
+            ui.allocate_ui_with_layout(vec2(ui.available_width(), 56.0), Layout::left_to_right(Align::Center), |ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::hover());
+                ui.painter().circle_filled(r.center(), 8.0, if f.enabled { color } else { mix(side, color, 0.35) });
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    let c = if f.enabled { text } else { muted };
+                    ui.add(egui::Label::new(RichText::new(&name).size(16.0).color(c)).truncate());
+                    ui.add(egui::Label::new(RichText::new(format!("{when}  ·  {what}")).size(13.0).color(muted)).truncate());
+                });
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    switch(ui, &mut f.enabled, accent).on_hover_text(if f.enabled { "On: the planner uses it" } else { "Off: the planner skips it" });
+                    let b = egui::Button::new(RichText::new(format!("{} Edit", icons::PEN)).size(14.0)).fill(mix(side, text, 0.07)).corner_radius(7);
+                    if ui.add(b).clicked() {
+                        edit = Some(id);
+                    }
+                });
+            });
+            let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+            ui.painter().rect_filled(r, 0.0, border);
+        }
+        if let Some(id) = edit {
+            // the editor lives in the main window
+            self.edit_frame(id);
+            self.show_prefs = false;
+        }
+    }
+
+    fn filter_summary(&self, f: &FrameFilter, exclusive: bool) -> String {
+        let mut parts: Vec<String> = vec![];
+        if !f.lists.is_empty() {
+            let names: Vec<String> = f
+                .lists
+                .iter()
+                .map(|id| if *id == 0 { "Inbox".to_string() } else { self.data.lists.iter().find(|l| l.id == *id).map(|l| l.name.clone()).unwrap_or_else(|| "?".into()) })
+                .collect();
+            parts.push(names.join(", "));
+        }
+        if !f.tags.is_empty() {
+            let tags: Vec<String> = f.tags.iter().map(|t| format!("#{t}")).collect();
+            parts.push(tags.join(if f.tags_all { " + " } else { " or " }));
+        }
+        if let Some(m) = f.max_min {
+            parts.push(format!("up to {}", fmt_duration(m)));
+        }
+        if parts.is_empty() {
+            return "any task".into();
+        }
+        let mut s = parts.join(", ");
+        if exclusive {
+            s += ", nothing else";
+        }
+        s
     }
 
     /// Manage calendars: show or hide, rename, recolour, add and remove.
