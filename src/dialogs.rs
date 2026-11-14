@@ -13,7 +13,7 @@ use eframe::egui::{self, pos2, Align, Align2, FontId, Id, Layout, Margin, RichTe
 pub fn place_beside(ctx: &egui::Context, id: Id, r: egui::Rect, size: egui::Vec2) -> egui::Pos2 {
     let size = ctx.memory(|m| m.area_rect(id)).map(|a| a.size()).unwrap_or(size);
     let (w, h, gap) = (size.x, size.y, 10.0);
-    let screen = ctx.screen_rect().shrink(8.0);
+    let screen = ctx.content_rect().shrink(8.0);
     let pos = if r.right() + gap + w <= screen.right() {
         pos2(r.right() + gap, r.top())
     } else if r.left() - gap - w >= screen.left() {
@@ -50,9 +50,9 @@ impl App {
         let muted = self.pal.muted;
         let p = self.data.prefs.clone();
         let w = 280.0;
-        let pos = place_beside(ctx, Id::new("create_popup"), c.anchor_rect, egui::vec2(w, 240.0));
+        let pos = place_beside(ctx, Id::unique("create_popup"), c.anchor_rect, egui::vec2(w, 240.0));
         egui::Window::new("create")
-            .id(Id::new("create_popup"))
+            .id(Id::unique("create_popup"))
             .title_bar(false)
             .resizable(false)
             .fixed_pos(pos)
@@ -164,7 +164,7 @@ impl App {
         lists.extend(self.data.lists.iter().map(|l| (l.id, l.name.clone(), l.color)));
         let hour12 = self.data.prefs.hour12;
         egui::Window::new(if ed.is_new { "New frame" } else { "Frame" })
-            .id(Id::new("frame_editor"))
+            .id(Id::unique("frame_editor"))
             .collapsible(false)
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, [0.0, -30.0])
@@ -466,7 +466,7 @@ impl App {
         } else {
             "Event"
         };
-        let id = Id::new("event_editor");
+        let id = Id::unique("event_editor");
         let mut win = egui::Window::new(title).id(id).collapsible(false).resizable(false);
         win = match ed.anchor_rect {
             // the width includes the window's frame around the 330 of content
@@ -629,7 +629,7 @@ impl App {
         let today = Local::now().date_naive();
         let muted = self.pal.muted;
         egui::Window::new("Task")
-            .id(Id::new("task_editor"))
+            .id(Id::unique("task_editor"))
             .collapsible(false)
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, [0.0, -40.0])
@@ -870,7 +870,7 @@ impl App {
         let (mut do_undo, mut do_move, mut dismiss) = (false, false, false);
         let fill = mix(self.pal.side, self.pal.text, 0.12);
         let border = self.pal.border;
-        egui::Area::new(Id::new("toast"))
+        egui::Area::new(Id::unique("toast"))
             .anchor(Align2::CENTER_BOTTOM, [0.0, -24.0 + (1.0 - a_in) * 16.0])
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {

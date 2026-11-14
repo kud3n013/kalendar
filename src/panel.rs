@@ -20,6 +20,25 @@ fn flat(ui: &mut egui::Ui, label: impl Into<egui::WidgetText>) -> egui::Response
     ui.add(egui::Button::new(label).frame(false))
 }
 
+/// The round tick box in front of a task. egui draws checkboxes as rounded
+/// squares, so this one is painted by hand.
+fn round_check(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
+    let s = ui.spacing().icon_width + 2.0;
+    let (r, mut resp) = ui.allocate_exact_size(vec2(s, s), Sense::click());
+    if resp.clicked() {
+        *on = !*on;
+        resp.mark_changed();
+    }
+    let v = ui.style().interact(&resp);
+    let c = r.center();
+    ui.painter().circle(c, s * 0.5, v.bg_fill, v.bg_stroke);
+    if *on {
+        let tick = vec![c + vec2(-0.26 * s, 0.0), c + vec2(-0.06 * s, 0.2 * s), c + vec2(0.27 * s, -0.22 * s)];
+        ui.painter().add(egui::Shape::line(tick, v.fg_stroke));
+    }
+    resp
+}
+
 /// A flat icon button: a Lucide glyph on a squircle that glows on hover.
 /// `c` is (side, muted, text) from the palette.
 pub fn icon_btn(ui: &mut egui::Ui, glyph: &str, size: f32, tip: &str, c: (Color32, Color32, Color32)) -> egui::Response {
@@ -49,7 +68,7 @@ pub fn due_label(d: NaiveDate, today: NaiveDate) -> String {
 impl App {
     /// The small month for jumping to a date.
     fn ui_quick_nav(&mut self, ctx: &egui::Context) {
-        let a = ctx.animate_bool_with_time(Id::new("quicknav"), self.quick_nav, ANIM_S);
+        let a = ctx.animate_bool_with_time(Id::unique("quicknav"), self.quick_nav, ANIM_S);
         if a <= 0.0 {
             return;
         }
@@ -61,7 +80,7 @@ impl App {
         let mut step = 0;
         let right = self.data.prefs.sidebar_side == PanelSide::Right;
         let (anchor, dx) = if right { (Align2::RIGHT_TOP, -14.0) } else { (Align2::LEFT_TOP, 14.0) };
-        egui::Area::new(Id::new("quicknav_area"))
+        egui::Area::new(Id::unique("quicknav_area"))
             .anchor(anchor, [dx, 96.0 + (1.0 - a) * 12.0])
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
@@ -88,7 +107,7 @@ impl App {
                         for i in 0..42 {
                             let d = start + Duration::days(i);
                             let (r, resp) = ui.allocate_exact_size(vec2(30.0, 26.0), Sense::click());
-                            let glow = ctx.animate_bool_with_time(Id::new(("qnd", i)), resp.hovered(), ANIM_FAST_S);
+                            let glow = ctx.animate_bool_with_time(Id::unique(("qnd", i)), resp.hovered(), ANIM_FAST_S);
                             if d == today {
                                 ui.painter().circle_filled(r.center(), 11.0, RED);
                             } else if glow > 0.0 {
@@ -120,13 +139,13 @@ impl App {
 
     // ------------------------------------------------------------ top bar
 
-    pub fn ui_toolbar(&mut self, ctx: &egui::Context) {
+    pub fn ui_toolbar(&mut self, ui: &mut egui::Ui) {
         let (muted, text) = (self.pal.muted, self.pal.text);
         let closed_left = !self.data.prefs.sidebar_open && self.data.prefs.sidebar_side == PanelSide::Left;
-        egui::TopBottomPanel::top("bar")
+        egui::Panel::top("bar")
             .show_separator_line(false)
             .frame(egui::Frame::new().fill(self.pal.bg).inner_margin(Margin { left: 24, right: 16, top: 12, bottom: 6 }))
-            .show(ctx, |ui| {
+            .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     // room for the floating panel handle while the panel is closed
                     if closed_left {
@@ -195,32 +214,39 @@ impl App {
         id
     }
 
-    pub fn ui_sidebar(&mut self, ctx: &egui::Context) {
+    pub fn ui_sidebar(&mut self, ui: &mut egui::Ui) {
+        let ctx = &ui.ctx().clone();
         let today = Local::now().date_naive();
         let side = self.pal.side;
         let c = (self.pal.side, self.pal.muted, self.pal.text);
         let open = self.data.prefs.sidebar_open;
         let right = self.data.prefs.sidebar_side == PanelSide::Right;
-        let panel = if right { egui::SidePanel::right("tasks") } else { egui::SidePanel::left("tasks") };
+        let panel = if right { egui::Panel::right("tasks") } else { egui::Panel::left("tasks") };
+        let mut still_open = open;
         panel
             .resizable(true)
-            .default_width(self.data.prefs.sidebar_w)
-            .width_range(280.0..=560.0)
+            .default_size(self.data.prefs.sidebar_w)
+            .size_range(280.0..=560.0)
             .show_separator_line(false)
+            .drag_to_open(false)
             .frame(egui::Frame::new().fill(side))
-            .show_animated(ctx, open, |ui| {
-                egui::TopBottomPanel::bottom(Id::new("panel_bottom"))
+            .show_collapsible(ui, &mut still_open, |ui| {
+                egui::Panel::bottom(Id::unique("panel_bottom"))
                     .show_separator_line(false)
                     .frame(egui::Frame::new().fill(side).inner_margin(Margin { left: 10, right: 10, top: 4, bottom: 8 }))
-                    .show_inside(ui, |ui| self.panel_bottom(ui, ctx, right, c));
+                    .show(ui, |ui| self.panel_bottom(ui, ctx, right, c));
                 egui::CentralPanel::default()
                     .frame(egui::Frame::new().fill(side).inner_margin(Margin { left: 14, right: 12, top: 10, bottom: 0 }))
-                    .show_inside(ui, |ui| self.panel_main(ui, ctx, right, today, c));
+                    .show(ui, |ui| self.panel_main(ui, ctx, right, today, c));
             });
+        // dragging the edge past the minimum closes the panel, like the button
+        if still_open != open {
+            self.run(ctx, Cmd::ToggleTasks);
+        }
         // while the panel is closed, a lone handle brings it back
         if !open {
             let (anchor, dx) = if right { (Align2::RIGHT_TOP, -10.0) } else { (Align2::LEFT_TOP, 10.0) };
-            egui::Area::new(Id::new("panel_handle")).anchor(anchor, [dx, 10.0]).order(egui::Order::Foreground).show(ctx, |ui| {
+            egui::Area::new(Id::unique("panel_handle")).anchor(anchor, [dx, 10.0]).order(egui::Order::Foreground).show(ctx, |ui| {
                 if icon_btn(ui, icons::MENU, 17.0, &self.tip("Show the task panel", Cmd::ToggleTasks), c).clicked() {
                     self.run(ctx, Cmd::ToggleTasks);
                 }
@@ -330,11 +356,11 @@ impl App {
                 ui.separator();
                 if ui.button("Subscribe to a calendar…").clicked() {
                     self.open_settings(crate::settings::Page::Calendars);
-                    ui.close_menu();
+                    ui.close();
                 }
                 if ui.button("Refresh").clicked() {
                     self.run(ctx, Cmd::Refresh);
-                    ui.close_menu();
+                    ui.close();
                 }
             })
             .response
@@ -352,7 +378,7 @@ impl App {
                     ui.horizontal(|ui| {
                         if ui.selectable_label(v == o, o.label()).clicked() {
                             v = o;
-                            ui.close_menu();
+                            ui.close();
                         }
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             ui.label(RichText::new(key).monospace().size(11.0).color(muted));
@@ -364,7 +390,7 @@ impl App {
                     for n in 2..=9u8 {
                         if ui.selectable_label(v == View::Days(n), format!("{n} days")).clicked() {
                             v = View::Days(n);
-                            ui.close_menu();
+                            ui.close();
                         }
                     }
                 });
@@ -374,7 +400,7 @@ impl App {
             self.view = v;
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 // undo appears while there is something to take back
-                let a = ctx.animate_bool_with_time(Id::new("undo_btn"), !self.undo.is_empty(), ANIM_S);
+                let a = ctx.animate_bool_with_time(Id::unique("undo_btn"), !self.undo.is_empty(), ANIM_S);
                 if a > 0.0 {
                     ui.scope(|ui| {
                         ui.set_opacity(a);
@@ -519,7 +545,7 @@ impl App {
         let (muted, text, side) = (self.pal.muted, self.pal.text, self.pal.side);
         let collapsed = self.collapsed.contains(key);
         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
-        let glow = ctx.animate_bool_with_time(Id::new(("sec", key)), resp.hovered(), ANIM_FAST_S);
+        let glow = ctx.animate_bool_with_time(Id::unique(("sec", key)), resp.hovered(), ANIM_FAST_S);
         if glow > 0.0 {
             fill_squircle(ui.painter(), r.expand2(vec2(6.0, 0.0)), RADIUS, mix(side, text, 0.05 * glow));
         }
@@ -539,7 +565,7 @@ impl App {
         fill_squircle(p, pill, RADIUS, mix(side, text, 0.10));
         p.text(pill.center(), Align2::CENTER_CENTER, count, FontId::proportional(11.5), muted);
         // chevron turns as the group opens
-        let turn = ctx.animate_bool_with_time(Id::new(("chev", key)), !collapsed, ANIM_S);
+        let turn = ctx.animate_bool_with_time(Id::unique(("chev", key)), !collapsed, ANIM_S);
         let c = pos2(r.right() - 10.0, r.center().y);
         let ang = std::f32::consts::PI * (1.0 - 0.5 * turn); // left when closed, down when open
         let dir = vec2(ang.cos(), ang.sin());
@@ -581,7 +607,7 @@ impl App {
                                 l.color = *col;
                             }
                             self.commit();
-                            ui.close_menu();
+                            ui.close();
                         }
                     }
                 });
@@ -593,11 +619,11 @@ impl App {
                         t.list = 0;
                     }
                     self.commit();
-                    ui.close_menu();
+                    ui.close();
                 }
             });
         }
-        let a = ctx.animate_bool_with_time(Id::new(("open", key)), !collapsed, ANIM_S);
+        let a = ctx.animate_bool_with_time(Id::unique(("open", key)), !collapsed, ANIM_S);
         if a > 0.0 {
             ui.scope(|ui| {
                 ui.set_opacity(a);
@@ -633,7 +659,7 @@ impl App {
                 ui.set_width(ui.available_width());
                 ui.horizontal(|ui| {
                     let mut d = t.done;
-                    if ui.checkbox(&mut d, "").changed() {
+                    if round_check(ui, &mut d).changed() {
                         self.toggle_task(id);
                         self.say(ctx, if d { "Task completed" } else { "Task reopened" }, true);
                     }
@@ -653,7 +679,7 @@ impl App {
                     r.context_menu(|ui| {
                         if ui.button("Edit").clicked() {
                             self.edit_task(id);
-                            ui.close_menu();
+                            ui.close();
                         }
                         ui.menu_button("Move to list", |ui| {
                             let mut options = vec![(0u64, "Inbox".to_string())];
@@ -665,13 +691,13 @@ impl App {
                                         x.list = lid;
                                     }
                                     self.commit();
-                                    ui.close_menu();
+                                    ui.close();
                                 }
                             }
                         });
                         if ui.button(RichText::new("Delete task").color(RED)).clicked() {
                             self.delete_task(ctx, id);
-                            ui.close_menu();
+                            ui.close();
                         }
                     });
                 });
@@ -707,7 +733,7 @@ impl App {
                 }
             });
             let hovered = ui.rect_contains_pointer(inner.response.rect);
-            let glow = ctx.animate_bool_with_time(Id::new(("row", salt, id)), hovered, ANIM_FAST_S);
+            let glow = ctx.animate_bool_with_time(Id::unique(("row", salt, id)), hovered, ANIM_FAST_S);
             if glow > 0.0 {
                 fill_squircle(ui.painter(), inner.response.rect.expand2(vec2(6.0, 0.0)), RADIUS, mix(side, text, 0.06).gamma_multiply(glow * 0.6));
             }

@@ -1193,7 +1193,7 @@ impl App {
                 bs.iter().any(|b| b.ctrl == global && hit(b)).then_some(*c)
             })
         };
-        let busy = dialogs || ctx.wants_keyboard_input();
+        let busy = dialogs || ctx.egui_wants_keyboard_input();
         if let Some(c) = fired(true) {
             // a few commands work from anywhere; the rest would fight with
             // text fields (undo, copy) and wait until nothing is open
@@ -1233,15 +1233,16 @@ impl App {
         let Some(path) = self.shot.clone() else { return };
         self.frames += 1;
         ctx.request_repaint();
+        // the picture arrives later, from the renderer, so it is passed back here
+        static PICTURE: std::sync::Mutex<Option<std::sync::Arc<egui::ColorImage>>> = std::sync::Mutex::new(None);
         if self.frames == 120 {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+            let c = ctx.clone();
+            ctx.request_screenshot(move |img| {
+                *PICTURE.lock().unwrap_or_else(|e| e.into_inner()) = Some(img);
+                c.request_repaint();
+            });
         }
-        let img = ctx.input(|i| {
-            i.events.iter().find_map(|e| match e {
-                egui::Event::Screenshot { image, .. } => Some(image.clone()),
-                _ => None,
-            })
-        });
+        let img = PICTURE.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(img) = img {
             if let Some(dir) = path.parent() {
                 if !dir.as_os_str().is_empty() {
@@ -1285,15 +1286,16 @@ impl eframe::App for App {
         }
     }
 
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = &ui.ctx().clone();
         ctx.set_theme(match self.data.prefs.theme {
             Theme::System => egui::ThemePreference::System,
             Theme::Light => egui::ThemePreference::Light,
             Theme::Dark => egui::ThemePreference::Dark,
         });
-        self.pal = Palette::new(ctx.style().visuals.dark_mode);
+        self.pal = Palette::new(ctx.global_style().visuals.dark_mode);
         let (bg, side, text) = (self.pal.bg, self.pal.side, self.pal.text);
-        ctx.style_mut(|s| {
+        ctx.global_style_mut(|s| {
             s.visuals.panel_fill = bg;
             s.visuals.window_fill = side;
             s.visuals.override_text_color = Some(text);
@@ -1330,13 +1332,13 @@ impl eframe::App for App {
                 "info" => Page::Info,
                 _ => Page::General,
             };
-            egui::CentralPanel::default().frame(egui::Frame::new().fill(self.pal.bg)).show(ctx, |ui| self.settings_body(ui));
+            egui::CentralPanel::default().frame(egui::Frame::new().fill(self.pal.bg)).show(ui, |ui| self.settings_body(ui));
             self.dlg_toast_public(ctx);
             return self.screenshot(ctx);
         }
         self.keys(ctx);
-        self.ui_sidebar(ctx);
-        self.ui_toolbar(ctx);
+        self.ui_sidebar(ui);
+        self.ui_toolbar(ui);
         // slide and fade when the period or the view changes
         let time = ctx.input(|i| i.time);
         let shown = (self.view, self.anchor);
@@ -1353,10 +1355,10 @@ impl eframe::App for App {
             ctx.request_repaint();
         }
         let dx = self.nav_anim.1 * (1.0 - ease) * 48.0;
-        egui::CentralPanel::default().frame(egui::Frame::new().fill(self.pal.bg)).show(ctx, |ui| {
+        egui::CentralPanel::default().frame(egui::Frame::new().fill(self.pal.bg)).show(ui, |ui| {
             let full = ui.max_rect();
             ui.set_clip_rect(full);
-            ui.allocate_new_ui(egui::UiBuilder::new().max_rect(full.translate(egui::vec2(dx, 0.0))), |ui| {
+            ui.scope_builder(egui::UiBuilder::new().max_rect(full.translate(egui::vec2(dx, 0.0))), |ui| {
                 ui.set_opacity(0.25 + 0.75 * ease);
                 match self.view {
                     View::Month => self.ui_month(ui),

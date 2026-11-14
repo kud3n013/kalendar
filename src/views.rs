@@ -211,8 +211,8 @@ impl App {
         let Some(id) = self.drag_task else { return };
         let Some(pos) = ctx.input(|i| i.pointer.latest_pos()) else { return };
         let Some(t) = self.data.task(id) else { return };
-        let misfit = ctx.data_mut(|d| d.remove_temp::<bool>(Id::new("drag_misfit"))).unwrap_or(false);
-        let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, Id::new("ghost")));
+        let misfit = ctx.data_mut(|d| d.remove_temp::<bool>(Id::unique("drag_misfit"))).unwrap_or(false);
+        let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, Id::unique("ghost")));
         let h = if misfit { 50.0 } else { 34.0 };
         let r = Rect::from_min_size(pos + vec2(10.0, 8.0), vec2(230.0, h));
         fill_squircle(&p, r, RADIUS, mix(self.pal.side, self.pal.text, 0.12));
@@ -351,7 +351,7 @@ impl App {
                 let y = hrect.top() + 47.0 + (ev_rows + k) as f32 * 22.0;
                 let r = Rect::from_min_max(pos2(x0 + i as f32 * col_w + 2.0, y), pos2(x0 + (i + 1) as f32 * col_w - 4.0, y + 20.0));
                 let over = hresp.hover_pos().map(|p| r.contains(p)).unwrap_or(false);
-                let glow = ui.ctx().animate_bool_with_time(Id::new(("due", *tid)), over, ANIM_FAST_S);
+                let glow = ui.ctx().animate_bool_with_time(Id::unique(("due", *tid)), over, ANIM_FAST_S);
                 hp.rect_filled(r, 4.0, mix(self.pal.bg, self.pal.text, 0.03 + 0.07 * glow));
                 hp.rect_stroke(r, 4.0, Stroke::new(1.0, mix(self.pal.border, self.pal.text, 0.25)), StrokeKind::Inside);
                 let c = hp.with_clip_rect(r.shrink(2.0));
@@ -380,7 +380,7 @@ impl App {
             }
         }
 
-        let mut sa = egui::ScrollArea::vertical().id_salt("grid").auto_shrink([false, false]).drag_to_scroll(false);
+        let mut sa = egui::ScrollArea::vertical().id_salt("grid").auto_shrink([false, false]).scroll_source(egui::scroll_area::ScrollSource { drag: egui::scroll_area::DragScroll::Never, ..Default::default() });
         if let Some(o) = self.scroll_to.take() {
             sa = sa.vertical_scroll_offset(o);
         }
@@ -526,7 +526,7 @@ impl App {
                 if !*draft {
                     let dragging = matches!(&self.drag, Some(Drag::Move { id, .. }) | Some(Drag::Resize { id }) if *id == e.id);
                     let secs = if dragging { ANIM_FAST_S * 0.6 } else { ANIM_S };
-                    let key = Id::new(("block", e.id, (*day - e.start.date()).num_days()));
+                    let key = Id::unique(("block", e.id, (*day - e.start.date()).num_days()));
                     let ax = ctx.animate_value_with_time(key.with("x"), target.left() - x0, secs);
                     let aw = ctx.animate_value_with_time(key.with("w"), target.width(), secs);
                     let at = ctx.animate_value_with_time(key.with("t"), target.top() - top, secs);
@@ -553,7 +553,7 @@ impl App {
         let hover_id = resp.hover_pos().and_then(|hp| items.iter().rev().find(|it| !it.draft && it.rect.contains(hp))).map(|it| it.id);
         for it in &items {
             let hovered = !it.draft && self.drag.is_none() && self.drag_task.is_none() && hover_id == Some(it.id);
-            let glow = ctx.animate_bool_with_time(Id::new(("glow", it.id)), hovered, ANIM_FAST_S);
+            let glow = ctx.animate_bool_with_time(Id::unique(("glow", it.id)), hovered, ANIM_FAST_S);
             draw_item(&painter, &self.pal, it, self.selected == Some(it.id) && !it.draft, glow);
         }
 
@@ -754,11 +754,11 @@ impl App {
                 ui.set_min_width(190.0);
                 if self.clipboard.is_some() && ui.button(format!("{}  Paste here", icons::PASTE)).clicked() {
                     self.paste_at(t, Some(false));
-                    ui.close_menu();
+                    ui.close();
                 }
                 if ui.button(format!("{}  Create new event", icons::CALENDAR_PLUS)).clicked() {
                     self.open_new_event(t, NEW_EVENT_MIN, false);
-                    ui.close_menu();
+                    ui.close();
                 }
                 let ctx = ui.ctx().clone();
                 if let Some((fid, day, name)) = &in_frame {
@@ -766,20 +766,20 @@ impl App {
                     ui.label(RichText::new(format!("Frame: {name}")).size(11.5).color(self.pal.muted));
                     if ui.button(format!("{}  Edit frame…", icons::PEN)).clicked() {
                         self.edit_frame(*fid);
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button(format!("{}  Skip this day", icons::BAN)).clicked() {
                         self.skip_frame_day(&ctx, *fid, *day);
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button(RichText::new(format!("{}  Delete frame", icons::TRASH)).color(Color32::from_rgb(0xeb, 0x62, 0x62))).clicked() {
                         self.delete_frame(&ctx, *fid);
-                        ui.close_menu();
+                        ui.close();
                     }
                 } else if ui.button(format!("{}  New frame here", icons::CALENDAR_DAYS)).clicked() {
                     let s = (t - midnight(t.date())).num_minutes();
                     self.open_new_frame(t.date(), s, (s + 60).min(24 * 60), self.data.first_own_calendar(), String::new());
-                    ui.close_menu();
+                    ui.close();
                 }
             }
         });
@@ -815,7 +815,7 @@ impl App {
                     painter.text(r.left_top() + vec2(8.0, 4.0), Align2::LEFT_TOP, p.fmt_time(start.time()), FontId::proportional(11.0), text);
                     if !fits {
                         // shown under the title by ui_drag_ghost, which runs after the grid
-                        ctx.data_mut(|d| d.insert_temp(Id::new("drag_misfit"), true));
+                        ctx.data_mut(|d| d.insert_temp(Id::unique("drag_misfit"), true));
                     }
                     if ctx.input(|i| i.pointer.any_released()) {
                         self.schedule_task(&ctx, tid, start);
@@ -831,7 +831,7 @@ impl App {
     pub fn block_menu(&mut self, ui: &mut egui::Ui, id: u64) {
         let ctx = ui.ctx().clone();
         let Some(ev) = self.data.event(id).cloned() else {
-            ui.close_menu();
+            ui.close();
             return;
         };
         let red = Color32::from_rgb(0xeb, 0x62, 0x62);
@@ -845,7 +845,7 @@ impl App {
             if ui.button("Copy event").clicked() {
                 self.selected = Some(id);
                 self.run(&ctx, Cmd::Copy);
-                ui.close_menu();
+                ui.close();
             }
             return;
         }
@@ -871,7 +871,7 @@ impl App {
                     ui.add_space(8.0);
                 }
                 let (r, resp) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
-                let grow = ctx.animate_bool_with_time(Id::new(("dot", i)), resp.hovered(), ANIM_FAST_S);
+                let grow = ctx.animate_bool_with_time(Id::unique(("dot", i)), resp.hovered(), ANIM_FAST_S);
                 ui.painter().circle_filled(r.center(), 10.0 + 2.0 * grow, rgb(*col));
                 if ev.color == Some(*col) {
                     ui.painter().circle_stroke(r.center(), 13.0, Stroke::new(1.5, self.pal.text));
@@ -887,7 +887,7 @@ impl App {
                 e.color = c;
             }
             self.commit();
-            ui.close_menu();
+            ui.close();
         }
         ui.separator();
         let big = |t: &str| RichText::new(t).size(15.0);
@@ -895,7 +895,7 @@ impl App {
             if ui.button(big(&format!("{}   Copy task session", icons::COPY))).clicked() {
                 self.selected = Some(id);
                 self.run(&ctx, Cmd::Copy);
-                ui.close_menu();
+                ui.close();
             }
             ui.separator();
             ui.horizontal(|ui| {
@@ -916,20 +916,20 @@ impl App {
                 };
                 if row(ui, "Reschedule this session", "Shift+R", true) {
                     self.reschedule_session(&ctx, id);
-                    ui.close_menu();
+                    ui.close();
                 }
                 if row(ui, "Complete & schedule more time", "Shift+F", true) {
                     self.follow_up(&ctx, id);
-                    ui.close_menu();
+                    ui.close();
                 }
                 if row(ui, "Split & reschedule remaining time", "Shift+S", self.split_time(id).is_some()) {
                     self.split_session(&ctx, id);
-                    ui.close_menu();
+                    ui.close();
                 }
                 ui.separator();
                 if row(ui, "Unschedule session", "Del", true) {
                     self.delete_event(&ctx, id);
-                    ui.close_menu();
+                    ui.close();
                 }
             });
             let mut flexible = self.data.task(tid).map(|t| t.flexible).unwrap_or(false);
@@ -953,22 +953,22 @@ impl App {
             ui.separator();
             if ui.button(big(&format!("{}   Unschedule session", icons::X)).color(red)).clicked() {
                 self.delete_event(&ctx, id);
-                ui.close_menu();
+                ui.close();
             }
             if ui.button(big(&format!("{}   Unschedule and delete task", icons::TRASH)).color(red)).clicked() {
                 self.delete_task(&ctx, tid);
-                ui.close_menu();
+                ui.close();
             }
         } else {
             if ui.button(big(&format!("{}   Copy event", icons::COPY))).clicked() {
                 self.selected = Some(id);
                 self.run(&ctx, Cmd::Copy);
-                ui.close_menu();
+                ui.close();
             }
             ui.separator();
             if ui.button(big(&format!("{}   Delete event", icons::TRASH)).color(red)).clicked() {
                 self.delete_event(&ctx, id);
-                ui.close_menu();
+                ui.close();
             }
         }
         ui.add_space(2.0);

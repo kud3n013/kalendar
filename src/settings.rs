@@ -29,7 +29,7 @@ fn bold(size: f32) -> FontId {
 /// One settings line: the name on the left, its control in a wide box on the right.
 fn row(ui: &mut egui::Ui, label: &str, tip: &str, add: impl FnOnce(&mut egui::Ui)) {
     let cw = (ui.available_width() * 0.42).clamp(170.0, CONTROL_W);
-    ui.data_mut(|d| d.insert_temp(egui::Id::new("control_w"), cw));
+    ui.data_mut(|d| d.insert_temp(egui::Id::unique("control_w"), cw));
     ui.allocate_ui_with_layout(vec2(ui.available_width(), ROW_H), Layout::left_to_right(Align::Center), |ui| {
         ui.add(egui::Label::new(RichText::new(label).size(17.0)).truncate());
         if !tip.is_empty() {
@@ -48,7 +48,7 @@ fn row(ui: &mut egui::Ui, label: &str, tip: &str, add: impl FnOnce(&mut egui::Ui
 
 fn combo<T: PartialEq + Copy>(ui: &mut egui::Ui, id: &str, value: &mut T, options: &[(T, String)]) {
     let current = options.iter().find(|(v, _)| v == value).map(|(_, l)| l.clone()).unwrap_or_default();
-    let cw = ui.data(|d| d.get_temp::<f32>(egui::Id::new("control_w"))).unwrap_or(CONTROL_W);
+    let cw = ui.data(|d| d.get_temp::<f32>(egui::Id::unique("control_w"))).unwrap_or(CONTROL_W);
     egui::ComboBox::from_id_salt(id).width(cw).selected_text(current).show_ui(ui, |ui| {
         for (v, l) in options {
             ui.selectable_value(value, *v, l);
@@ -129,19 +129,18 @@ impl App {
             .with_app_id("kalendar")
             .with_inner_size([1060.0, 820.0])
             .with_min_inner_size([760.0, 480.0]);
-        ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("settings"), builder, |ctx, class| {
-            if class == egui::ViewportClass::Embedded {
-                // this system can't open a second window: fall back to one inside the app
-                let mut open = true;
-                egui::Window::new("Settings").open(&mut open).default_size([900.0, 640.0]).show(ctx, |ui| self.settings_body(ui));
-                if !open {
-                    self.show_prefs = false;
-                }
+        ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("settings"), builder, |ui, class| {
+            if class == egui::ViewportClass::EmbeddedWindow {
+                // this system can't open a second window: egui shows this one
+                // inside the app, and the page's own close button closes it
+                ui.set_min_size(vec2(900.0, 640.0));
+                self.settings_body(ui);
                 return;
             }
-            egui::CentralPanel::default().frame(egui::Frame::new().fill(self.pal.bg)).show(ctx, |ui| self.settings_body(ui));
+            let ctx = ui.ctx().clone();
+            egui::CentralPanel::default().frame(egui::Frame::new().fill(self.pal.bg)).show(ui, |ui| self.settings_body(ui));
             let (close, esc) = ctx.input(|i| (i.viewport().close_requested(), i.key_pressed(egui::Key::Escape)));
-            if close || (esc && !ctx.wants_keyboard_input() && self.recording.is_none()) {
+            if close || (esc && !ctx.egui_wants_keyboard_input() && self.recording.is_none()) {
                 self.show_prefs = false;
             }
         });
@@ -159,7 +158,7 @@ impl App {
         ui.painter().line_segment([nav_rect.right_top(), nav_rect.right_bottom()], Stroke::new(1.0, border));
 
         // page list
-        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(nav_rect.shrink2(vec2(10.0, 0.0))), |ui| {
+        ui.scope_builder(egui::UiBuilder::new().max_rect(nav_rect.shrink2(vec2(10.0, 0.0))), |ui| {
             egui::ScrollArea::vertical().id_salt("nav").show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
                 ui.add_space(26.0);
@@ -185,7 +184,7 @@ impl App {
                     for (page, icon, name) in pages {
                         let on = self.settings_page == page;
                         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::click());
-                        let glow = ui.ctx().animate_bool_with_time(ui.id().with(("nav", name)), resp.hovered() || on, ANIM_FAST_S);
+                        let glow = ui.ctx().animate_bool_with_time(ui.scope_id().with(("nav", name)), resp.hovered() || on, ANIM_FAST_S);
                         if glow > 0.0 {
                             ui.painter().rect_filled(r, 9.0, mix(side, text, if on { 0.10 } else { 0.05 } * glow));
                         }
@@ -202,10 +201,10 @@ impl App {
 
         // the page
         let ctx = ui.ctx().clone();
-        ui.allocate_new_ui(egui::UiBuilder::new().max_rect(page_rect), |ui| {
+        ui.scope_builder(egui::UiBuilder::new().max_rect(page_rect), |ui| {
             // close button in the corner
             let x = egui::Rect::from_min_size(page_rect.right_top() + vec2(-44.0, 10.0), vec2(30.0, 30.0));
-            let resp = ui.interact(x, ui.id().with("close"), Sense::click());
+            let resp = ui.interact(x, ui.scope_id().with("close"), Sense::click());
             let c = if resp.hovered() { text } else { muted };
             ui.painter().line_segment([x.center() + vec2(-6.0, -6.0), x.center() + vec2(6.0, 6.0)], Stroke::new(1.6, c));
             ui.painter().line_segment([x.center() + vec2(-6.0, 6.0), x.center() + vec2(6.0, -6.0)], Stroke::new(1.6, c));
@@ -486,11 +485,8 @@ impl App {
                 // colour: a dot that opens the palette
                 let (r, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
                 ui.painter().circle_filled(r.center(), 9.0, rgb(c.color));
-                let popup = ui.make_persistent_id(("calcolor", i));
-                if resp.on_hover_text("Colour").clicked() {
-                    ui.memory_mut(|m| m.toggle_popup(popup));
-                }
-                egui::popup_below_widget(ui, popup, &ui.interact(r, ui.id().with(("cc", i)), Sense::hover()), egui::PopupCloseBehavior::CloseOnClick, |ui| {
+                let resp = resp.on_hover_text("Colour");
+                egui::Popup::from_toggle_button_response(&resp).close_behavior(egui::PopupCloseBehavior::CloseOnClick).show(|ui| {
                     ui.set_min_width(200.0);
                     ui.horizontal_wrapped(|ui| {
                         for (col, name) in EVENT_COLORS.iter() {
@@ -624,11 +620,11 @@ impl App {
                     ui.menu_button(RichText::new(icons::ELLIPSIS).size(18.0).color(muted), |ui| {
                         if ui.button("Refresh").clicked() {
                             refresh = Some(url.clone());
-                            ui.close_menu();
+                            ui.close();
                         }
                         if ui.button(RichText::new("Unsubscribe").color(RED)).clicked() {
                             remove = Some(i);
-                            ui.close_menu();
+                            ui.close();
                         }
                     });
                     ui.add_space(60.0);
@@ -771,7 +767,7 @@ impl App {
                             chips(ui, &keys);
                         }
                     });
-                    let r = ui.interact(inner.response.rect, ui.id().with(("bind", cmd.id())), Sense::click());
+                    let r = ui.interact(inner.response.rect, ui.scope_id().with(("bind", cmd.id())), Sense::click());
                     if r.hovered() {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
