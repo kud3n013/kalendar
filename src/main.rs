@@ -237,7 +237,7 @@ pub const COMMANDS: &[(Cmd, &str, &str, &str)] = &[
     (Cmd::Undo, "Undo", "Ctrl+Z", "General"),
     (Cmd::CommandBar, "Toggle command bar", "Ctrl+K", "General"),
     (Cmd::Search, "Open search", "Ctrl+F", "General"),
-    (Cmd::ToggleTasks, "Toggle the task panel", "Space", "General"),
+    (Cmd::ToggleTasks, "Collapse or expand the task panel", "Ctrl+S", "General"),
     (Cmd::ToggleTheme, "Toggle dark/light themes", "\\", "General"),
     (Cmd::FinerGrid, "Increase calendar time resolution", "]", "General"),
     (Cmd::CoarserGrid, "Reduce calendar time resolution", "[", "General"),
