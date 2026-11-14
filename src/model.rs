@@ -317,6 +317,118 @@ impl Repeat {
     }
 }
 
+/// Which tasks a frame takes. Empty parts mean "any".
+#[derive(Clone, Serialize, Deserialize, Default, PartialEq, Debug)]
+#[serde(default)]
+pub struct FrameFilter {
+    /// task lists it takes; 0 is the Inbox
+    pub lists: Vec<u64>,
+    pub tags: Vec<String>,
+    /// all tags must be on the task, not just one of them
+    pub tags_all: bool,
+    /// longest task it takes, in minutes
+    pub max_min: Option<i64>,
+}
+
+impl FrameFilter {
+    pub fn is_empty(&self) -> bool {
+        self.lists.is_empty() && self.tags.is_empty() && self.max_min.is_none()
+    }
+    /// How many conditions it sets; the more, the more specific.
+    pub fn specificity(&self) -> usize {
+        usize::from(!self.lists.is_empty()) + usize::from(!self.tags.is_empty()) + usize::from(self.max_min.is_some())
+    }
+}
+
+/// A recurring block of time reserved for a kind of work. Frames are never
+/// busy time; the planner puts matching tasks inside them.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Debug)]
+#[serde(default)]
+pub struct Frame {
+    pub id: u64,
+    pub name: String,
+    /// one of one's own calendars, never a subscribed one
+    pub calendar: usize,
+    pub color: Option<[u8; 3]>,
+    /// minutes from midnight; the frame ends on the same day
+    pub start_min: i64,
+    pub end_min: i64,
+    /// bit 0 = Monday ... bit 6 = Sunday
+    pub days: u8,
+    pub every_weeks: u8,
+    pub from: NaiveDate,
+    pub until: Option<NaiveDate>,
+    /// single days left out
+    pub skip: Vec<NaiveDate>,
+    pub filter: FrameFilter,
+    /// tasks outside the filter are kept out of it
+    pub exclusive: bool,
+    pub enabled: bool,
+}
+
+impl Default for Frame {
+    fn default() -> Self {
+        Frame {
+            id: 0,
+            name: String::new(),
+            calendar: 0,
+            color: None,
+            start_min: 9 * 60,
+            end_min: 11 * 60,
+            days: FRAME_WEEKDAYS,
+            every_weeks: 1,
+            from: NaiveDate::default(),
+            until: None,
+            skip: vec![],
+            filter: FrameFilter::default(),
+            exclusive: true,
+            enabled: true,
+        }
+    }
+}
+
+/// Monday to Friday as frame day bits.
+pub const FRAME_WEEKDAYS: u8 = 0b001_1111;
+
+/// Day bit of a date: Monday is bit 0.
+pub fn day_bit(d: NaiveDate) -> u8 {
+    1 << d.weekday().num_days_from_monday()
+}
+
+impl Frame {
+    /// Whether the planner may put this task here. Tags compare without case.
+    pub fn matches(&self, t: &Task, default_min: i64) -> bool {
+        let f = &self.filter;
+        if !f.lists.is_empty() && !f.lists.contains(&t.list) {
+            return false;
+        }
+        if !f.tags.is_empty() {
+            let has = |g: &String| t.tags.iter().any(|x| x.to_lowercase() == g.to_lowercase());
+            let ok = if f.tags_all { f.tags.iter().all(has) } else { f.tags.iter().any(has) };
+            if !ok {
+                return false;
+            }
+        }
+        if let Some(max) = f.max_min {
+            if t.duration_min.unwrap_or(default_min) > max {
+                return false;
+            }
+        }
+        true
+    }
+    pub fn minutes(&self) -> i64 {
+        self.end_min - self.start_min
+    }
+}
+
+/// One day's stretch of a frame.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct FrameOcc {
+    pub frame: u64,
+    pub start: NaiveDateTime,
+    pub end: NaiveDateTime,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TaskList {
     pub id: u64,
@@ -415,6 +527,8 @@ pub struct Data {
     pub calendars: Vec<Calendar>,
     #[serde(default)]
     pub lists: Vec<TaskList>,
+    #[serde(default)]
+    pub frames: Vec<Frame>,
     /// settings live in config.json; this stays readable for old data files
     #[serde(default, skip_serializing)]
     pub prefs: Prefs,
@@ -549,7 +663,52 @@ impl Data {
         for e in self.events.iter_mut().filter(|e| e.calendar > cal) {
             e.calendar -= 1;
         }
+        self.frames.retain(|f| f.calendar != cal);
+        for f in self.frames.iter_mut().filter(|f| f.calendar > cal) {
+            f.calendar -= 1;
+        }
         self.calendars.remove(cal);
+    }
+    pub fn frame(&self, id: u64) -> Option<&Frame> {
+        self.frames.iter().find(|f| f.id == id)
+    }
+    pub fn frame_mut(&mut self, id: u64) -> Option<&mut Frame> {
+        self.frames.iter_mut().find(|f| f.id == id)
+    }
+    pub fn frame_color(&self, f: &Frame) -> [u8; 3] {
+        f.color.unwrap_or_else(|| self.calendar_color(f.calendar))
+    }
+    /// Whether a frame runs on a day, ignoring calendar visibility.
+    pub fn frame_occurs_on(f: &Frame, day: NaiveDate) -> bool {
+        if !f.enabled || day < f.from || f.until.is_some_and(|u| day > u) {
+            return false;
+        }
+        if f.days & day_bit(day) == 0 || f.skip.contains(&day) {
+            return false;
+        }
+        let anchor = f.from - Duration::days(f.from.weekday().num_days_from_monday() as i64);
+        let weeks = (day - anchor).num_days() / 7;
+        weeks % f.every_weeks.max(1) as i64 == 0
+    }
+    /// Frames on a day, on visible calendars of one's own, by start time.
+    pub fn frames_on(&self, day: NaiveDate) -> Vec<FrameOcc> {
+        let midnight = day.and_hms_opt(0, 0, 0).unwrap();
+        let mut v: Vec<FrameOcc> = self
+            .frames
+            .iter()
+            .filter(|f| {
+                self.calendars.get(f.calendar).is_some_and(|c| c.visible && c.url.is_none())
+                    && f.end_min > f.start_min
+                    && Self::frame_occurs_on(f, day)
+            })
+            .map(|f| FrameOcc {
+                frame: f.id,
+                start: midnight + Duration::minutes(f.start_min.clamp(0, 24 * 60)),
+                end: midnight + Duration::minutes(f.end_min.clamp(0, 24 * 60)),
+            })
+            .collect();
+        v.sort_by_key(|o| (o.start, o.end));
+        v
     }
     pub fn calendar_color(&self, i: usize) -> [u8; 3] {
         self.calendars.get(i).map(|c| c.color).unwrap_or([66, 133, 244])
@@ -583,6 +742,7 @@ impl Data {
                 Calendar { name: "Family".into(), color: [0xe8, 0xae, 0x26], visible: true, ..Default::default() },
                 Calendar { name: "Tasks".into(), color: [0x38, 0xc2, 0xc7], visible: true, ..Default::default() },
             ],
+            frames: vec![],
             prefs: Prefs::default(),
             next_id: 10,
         };
@@ -900,5 +1060,116 @@ mod tests {
         let again = Data::load_or_sample(today);
         assert_eq!(again.prefs.keybinds.get("settings").map(|s| s.as_str()), Some("Ctrl+P"));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    fn ymd(m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, m, d).unwrap()
+    }
+
+    /// Two own calendars, no events; 2026-11-16 is a Monday.
+    fn empty() -> Data {
+        let mut d = Data::sample(ymd(11, 16));
+        d.events.clear();
+        d.tasks.clear();
+        d.frames.clear();
+        d
+    }
+
+    fn frame(id: u64, cal: usize) -> Frame {
+        Frame { id, name: format!("F{id}"), calendar: cal, from: ymd(11, 16), ..Default::default() }
+    }
+
+    #[test]
+    fn old_data_loads_and_saves_frames() {
+        let mut v = serde_json::to_value(Data::sample(ymd(11, 16))).unwrap();
+        v.as_object_mut().unwrap().remove("frames");
+        let d: Data = serde_json::from_value(v).expect("old data.json without frames");
+        assert!(d.frames.is_empty());
+        let out = serde_json::to_value(&d).unwrap();
+        assert_eq!(out["frames"], serde_json::json!([]));
+        // a frame written with only a few fields still loads
+        let f: Frame = serde_json::from_str(r#"{"id":3,"name":"Deep work"}"#).unwrap();
+        assert_eq!((f.every_weeks, f.days, f.enabled, f.exclusive), (1, FRAME_WEEKDAYS, true, true));
+    }
+
+    #[test]
+    fn frame_weekday_bits() {
+        let mut f = frame(1, 0);
+        f.days = 0b000_0101; // Monday and Wednesday
+        assert!(Data::frame_occurs_on(&f, ymd(11, 16)));
+        assert!(!Data::frame_occurs_on(&f, ymd(11, 17)));
+        assert!(Data::frame_occurs_on(&f, ymd(11, 18)));
+        f.days = 1 << 6; // Sunday
+        assert!(Data::frame_occurs_on(&f, ymd(11, 22)));
+        assert!(!Data::frame_occurs_on(&f, ymd(11, 21)));
+    }
+
+    #[test]
+    fn frame_every_two_weeks_from_until_skip() {
+        let mut f = frame(1, 0);
+        f.from = ymd(11, 18); // a Wednesday; its week starts on 11-16
+        f.every_weeks = 2;
+        assert!(!Data::frame_occurs_on(&f, ymd(11, 16)), "before from");
+        assert!(Data::frame_occurs_on(&f, ymd(11, 18)));
+        assert!(!Data::frame_occurs_on(&f, ymd(11, 23)), "odd week");
+        assert!(Data::frame_occurs_on(&f, ymd(11, 30)));
+        f.until = Some(ymd(11, 30));
+        assert!(Data::frame_occurs_on(&f, ymd(11, 30)), "until is inclusive");
+        assert!(!Data::frame_occurs_on(&f, ymd(12, 14)));
+        f.skip.push(ymd(11, 30));
+        assert!(!Data::frame_occurs_on(&f, ymd(11, 30)));
+        f.enabled = false;
+        assert!(!Data::frame_occurs_on(&f, ymd(11, 18)));
+    }
+
+    #[test]
+    fn frames_on_hides_hidden_calendars_and_sorts() {
+        let mut d = empty();
+        let mut a = frame(1, 0);
+        a.start_min = 14 * 60;
+        a.end_min = 15 * 60;
+        let b = frame(2, 1);
+        d.frames = vec![a, b];
+        let on: Vec<u64> = d.frames_on(ymd(11, 16)).iter().map(|o| o.frame).collect();
+        assert_eq!(on, vec![2, 1]);
+        let o = d.frames_on(ymd(11, 16))[0];
+        assert_eq!((o.start, o.end), (ymd(11, 16).and_hms_opt(9, 0, 0).unwrap(), ymd(11, 16).and_hms_opt(11, 0, 0).unwrap()));
+        d.calendars[1].visible = false;
+        assert_eq!(d.frames_on(ymd(11, 16)).len(), 1);
+        assert!(d.frames_on(ymd(11, 21)).is_empty(), "Saturday");
+    }
+
+    #[test]
+    fn frame_filter_matching() {
+        let mut f = frame(1, 0);
+        let t = Task { list: 1, tags: vec!["Deep-Work".into(), "x".into()], duration_min: Some(45), ..Default::default() };
+        assert!(f.matches(&t, 60), "empty filter takes all");
+        f.filter.lists = vec![0];
+        assert!(!f.matches(&t, 60));
+        f.filter.lists = vec![0, 1];
+        assert!(f.matches(&t, 60));
+        f.filter.tags = vec!["deep-work".into(), "y".into()];
+        assert!(f.matches(&t, 60), "any tag, case does not matter");
+        f.filter.tags_all = true;
+        assert!(!f.matches(&t, 60));
+        f.filter.tags = vec!["DEEP-WORK".into(), "x".into()];
+        assert!(f.matches(&t, 60));
+        f.filter.max_min = Some(30);
+        assert!(!f.matches(&t, 60));
+        f.filter.max_min = Some(45);
+        assert!(f.matches(&t, 60));
+        let no_len = Task { duration_min: None, ..t.clone() };
+        assert!(!f.matches(&no_len, 60), "default length counts");
+        assert!(f.matches(&no_len, 30));
+        assert_eq!(f.filter.specificity(), 3);
+    }
+
+    #[test]
+    fn removing_a_calendar_reindexes_frames() {
+        let mut d = empty();
+        d.frames = vec![frame(1, 0), frame(2, 1), frame(3, 3)];
+        d.remove_calendar(1);
+        let v: Vec<(u64, usize)> = d.frames.iter().map(|f| (f.id, f.calendar)).collect();
+        assert_eq!(v, vec![(1, 0), (3, 2)]);
     }
 }
