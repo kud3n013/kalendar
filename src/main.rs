@@ -380,6 +380,8 @@ pub struct App {
     pub toast: Option<Toast>,
     pub show_prefs: bool,
     pub settings_page: settings::Page,
+    pub settings_query: String,
+    pub shortcut_query: String,
     pub sub_kind: u8,
     pub new_cal_name: String,
     pub confirm_remove: Option<usize>,
@@ -440,6 +442,8 @@ impl App {
             toast: None,
             show_prefs: false,
             settings_page: settings::Page::General,
+            settings_query: String::new(),
+            shortcut_query: String::new(),
             sub_kind: 0,
             new_cal_name: String::new(),
             confirm_remove: None,
@@ -1331,6 +1335,12 @@ impl eframe::App for App {
                 "info" => Page::Info,
                 _ => Page::General,
             };
+            if let Ok(q) = std::env::var("KALENDAR_SETTINGS_QUERY") {
+                self.settings_query = q;
+            }
+            if let Ok(q) = std::env::var("KALENDAR_SHORTCUT_QUERY") {
+                self.shortcut_query = q;
+            }
             egui::CentralPanel::default().frame(egui::Frame::new().fill(self.pal.bg)).show(ui, |ui| self.settings_body(ui));
             self.dlg_toast_public(ctx);
             return self.screenshot(ctx);

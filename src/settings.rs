@@ -26,8 +26,119 @@ fn bold(size: f32) -> FontId {
     FontId::new(size, egui::FontFamily::Name("bold".into()))
 }
 
+/// The order pages are listed in search results.
+const SEARCH_ORDER: [(Page, &str); 7] = [
+    (Page::General, "General"),
+    (Page::Appearance, "Appearance"),
+    (Page::ActiveCalendars, "Active calendars"),
+    (Page::Planner, "Planner"),
+    (Page::Calendars, "Calendars"),
+    (Page::Info, "Info"),
+    (Page::Shortcuts, "Shortcuts"),
+];
+
+/// A settings search in progress: the words looked for, the page heading
+/// still to draw before that page's first match, how many matched, and the
+/// page to open when a result heading is clicked.
+#[derive(Clone, Default)]
+struct Find {
+    words: Vec<String>,
+    head: Option<(Page, &'static str)>,
+    hits: usize,
+    jump: Option<Page>,
+}
+
+fn find_id() -> egui::Id {
+    egui::Id::unique("settings_find")
+}
+
+fn finding(ui: &egui::Ui) -> bool {
+    ui.data(|d| d.get_temp::<Find>(find_id()).is_some())
+}
+
+pub fn search_words(q: &str) -> Vec<String> {
+    q.to_lowercase().split_whitespace().map(String::from).collect()
+}
+
+/// Whether every word appears somewhere in `texts`, ignoring case.
+pub fn search_hit(words: &[String], texts: &[&str]) -> bool {
+    let hay = texts.join(" ").to_lowercase();
+    words.iter().all(|w| hay.contains(w.as_str()))
+}
+
+/// While searching: whether this item matches, drawing its page's heading
+/// before the first match on that page. Outside a search everything shows.
+fn shown(ui: &mut egui::Ui, texts: &[&str]) -> bool {
+    let Some(mut f) = ui.data(|d| d.get_temp::<Find>(find_id())) else { return true };
+    if !search_hit(&f.words, texts) {
+        return false;
+    }
+    let head = f.head.take();
+    let first = f.hits == 0;
+    f.hits += 1;
+    ui.data_mut(|d| d.insert_temp(find_id(), f));
+    if let Some((page, name)) = head {
+        if !first {
+            ui.add_space(22.0);
+        }
+        let r = ui.add(egui::Label::new(RichText::new(name).font(bold(20.0))).sense(Sense::click()));
+        if r.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if r.on_hover_text("Open this page").clicked() {
+            ui.data_mut(|d| d.get_temp_mut_or_default::<Find>(find_id()).jump = Some(page));
+        }
+        ui.add_space(4.0);
+    }
+    true
+}
+
+/// A search result that stands for a whole page: its title and what is
+/// there, opening the page when clicked.
+fn page_result(ui: &mut egui::Ui, page: Page, title: &str, desc: &str, extra: &[&str]) {
+    let texts: Vec<&str> = [title, desc].into_iter().chain(extra.iter().copied()).collect();
+    if !shown(ui, &texts) {
+        return;
+    }
+    let (muted, text) = (ui.visuals().weak_text_color(), ui.visuals().text_color());
+    let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), Sense::click());
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        ui.painter().rect_filled(r, 8.0, mix(ui.visuals().panel_fill, text, 0.05));
+    }
+    let p = ui.painter();
+    p.text(r.left_center() + vec2(0.0, -9.0), egui::Align2::LEFT_CENTER, title, FontId::proportional(17.0), text);
+    p.text(r.left_center() + vec2(0.0, 12.0), egui::Align2::LEFT_CENTER, desc, FontId::proportional(14.0), muted);
+    p.text(r.right_center() - vec2(10.0, 0.0), egui::Align2::RIGHT_CENTER, icons::CHEVRON_RIGHT, FontId::proportional(16.0), muted);
+    if resp.clicked() {
+        ui.data_mut(|d| d.get_temp_mut_or_default::<Find>(find_id()).jump = Some(page));
+    }
+}
+
+/// A search field: icon, hint, and Esc clears what was typed.
+fn search_field(ui: &mut egui::Ui, text: &mut String, hint: &str, width: f32) {
+    // the dropdowns' fill, so the field shows on the sidebar in both themes
+    let fill = ui.visuals().widgets.inactive.bg_fill;
+    let r = ui.add(
+        egui::TextEdit::singleline(text)
+            .background_color(fill)
+            .hint_text(format!("{}   {hint}", icons::SEARCH))
+            .font(FontId::proportional(15.0))
+            .margin(Margin::symmetric(10, 8))
+            .desired_width(width),
+    );
+    if r.lost_focus() && ui.input(|i| i.key_pressed(Key::Escape)) {
+        // the first Esc empties the field; only the next one closes settings
+        text.clear();
+        ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, Key::Escape));
+    }
+}
+
 /// One settings line: the name on the left, its control in a wide box on the right.
 fn row(ui: &mut egui::Ui, label: &str, tip: &str, add: impl FnOnce(&mut egui::Ui)) {
+    if !shown(ui, &[label, tip]) {
+        return;
+    }
     let cw = (ui.available_width() * 0.42).clamp(170.0, CONTROL_W);
     ui.data_mut(|d| d.insert_temp(egui::Id::unique("control_w"), cw));
     ui.allocate_ui_with_layout(vec2(ui.available_width(), ROW_H), Layout::left_to_right(Align::Center), |ui| {
@@ -57,6 +168,9 @@ fn combo<T: PartialEq + Copy>(ui: &mut egui::Ui, id: &str, value: &mut T, option
 }
 
 fn divider(ui: &mut egui::Ui, color: Color32) {
+    if finding(ui) {
+        return;
+    }
     ui.add_space(8.0);
     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
     ui.painter().rect_filled(r, 0.0, color);
@@ -64,6 +178,9 @@ fn divider(ui: &mut egui::Ui, color: Color32) {
 }
 
 fn heading(ui: &mut egui::Ui, text: &str) {
+    if finding(ui) {
+        return;
+    }
     ui.add_space(6.0);
     ui.label(RichText::new(text).font(bold(20.0)));
     ui.add_space(6.0);
@@ -118,7 +235,8 @@ impl App {
 
     /// Shows the settings in a window of their own while they are open.
     pub fn ui_settings_window(&mut self, ctx: &egui::Context) {
-        if !self.show_prefs || self.settings_page != Page::Shortcuts {
+        // shortcuts can also be changed from the search results
+        if !self.show_prefs || (self.settings_page != Page::Shortcuts && self.settings_query.trim().is_empty()) {
             self.recording = None;
         }
         if !self.show_prefs {
@@ -161,7 +279,10 @@ impl App {
         ui.scope_builder(egui::UiBuilder::new().max_rect(nav_rect.shrink2(vec2(10.0, 0.0))), |ui| {
             egui::ScrollArea::vertical().id_salt("nav").show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
-                ui.add_space(26.0);
+                ui.add_space(22.0);
+                search_field(ui, &mut self.settings_query, "Search settings", ui.available_width());
+                ui.add_space(20.0);
+                let searching = !self.settings_query.trim().is_empty();
                 for (group, pages) in [
                     ("Explore", vec![(Page::Shortcuts, icons::KEYBOARD, "Shortcuts")]),
                     ("Integrations", vec![(Page::Calendars, icons::CALENDAR, "Calendars")]),
@@ -182,7 +303,7 @@ impl App {
                     });
                     ui.add_space(6.0);
                     for (page, icon, name) in pages {
-                        let on = self.settings_page == page;
+                        let on = self.settings_page == page && !searching;
                         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::click());
                         let glow = ui.ctx().animate_bool_with_time(ui.scope_id().with(("nav", name)), resp.hovered() || on, ANIM_FAST_S);
                         if glow > 0.0 {
@@ -192,6 +313,7 @@ impl App {
                         ui.painter().text(r.left_center() + vec2(52.0, 0.0), egui::Align2::LEFT_CENTER, name, FontId::proportional(17.0), text);
                         if resp.clicked() {
                             self.settings_page = page;
+                            self.settings_query.clear();
                         }
                     }
                     ui.add_space(20.0);
@@ -211,10 +333,16 @@ impl App {
             if resp.clicked() {
                 self.show_prefs = false;
             }
-            egui::ScrollArea::vertical().id_salt(("page", self.settings_page as u8)).auto_shrink([false, false]).show(ui, |ui| {
+            let words = search_words(&self.settings_query);
+            let salt = if words.is_empty() { self.settings_page as u8 } else { u8::MAX };
+            egui::ScrollArea::vertical().id_salt(("page", salt)).auto_shrink([false, false]).show(ui, |ui| {
                 egui::Frame::new().inner_margin(Margin { left: 44, right: 56, top: 30, bottom: 30 }).show(ui, |ui| {
                     let w = ui.available_width().min(980.0);
                     ui.set_max_width(w);
+                    if !words.is_empty() {
+                        self.search_results(ui, &ctx, words);
+                        return;
+                    }
                     match self.settings_page {
                         Page::General => self.page_general(ui),
                         Page::Appearance => self.page_appearance(ui),
@@ -229,6 +357,35 @@ impl App {
         });
         if before != serde_json::to_string(&(&self.data.prefs, &self.data.calendars, &self.data.frames)).unwrap_or_default() {
             self.commit();
+        }
+    }
+
+    /// Every page's settings that match the search, under their page's name,
+    /// with their controls working as on the page itself.
+    fn search_results(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, words: Vec<String>) {
+        ui.data_mut(|d| d.insert_temp(find_id(), Find { words, ..Default::default() }));
+        for (page, name) in SEARCH_ORDER {
+            ui.data_mut(|d| d.get_temp_mut_or_default::<Find>(find_id()).head = Some((page, name)));
+            ui.push_id(("found", page as u8), |ui| match page {
+                Page::General => self.page_general(ui),
+                Page::Appearance => self.page_appearance(ui),
+                Page::Planner => self.page_planner(ui),
+                Page::ActiveCalendars => self.page_active(ui),
+                Page::Calendars => self.page_calendars(ui, ctx),
+                Page::Shortcuts => self.page_shortcuts(ui),
+                Page::Info => self.page_info(ui),
+            });
+        }
+        let found = ui.data_mut(|d| d.remove_temp::<Find>(find_id())).unwrap_or_default();
+        if found.hits == 0 {
+            ui.add_space(40.0);
+            ui.vertical_centered(|ui| {
+                ui.label(RichText::new(format!("No settings match \"{}\"", self.settings_query.trim())).size(17.0).color(self.pal.muted));
+            });
+        }
+        if let Some(page) = found.jump {
+            self.settings_page = page;
+            self.settings_query.clear();
         }
     }
 
@@ -312,25 +469,28 @@ impl App {
     fn page_planner(&mut self, ui: &mut egui::Ui) {
         let (muted, border) = (self.pal.muted, self.pal.border);
         heading(ui, "Planner");
-        ui.add(
-            egui::Label::new(
-                RichText::new(
-                    "\"Plan my tasks\" fits open tasks into your frames: blocks of time set aside for certain kinds of work. \
-                     Without frames, or when none fits, it uses free time on working days, 08:00 to 18:00.",
+        let searching = finding(ui);
+        if !searching {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(
+                        "\"Plan my tasks\" fits open tasks into your frames: blocks of time set aside for certain kinds of work. \
+                         Without frames, or when none fits, it uses free time on working days, 08:00 to 18:00.",
+                    )
+                    .size(15.0)
+                    .color(muted),
                 )
-                .size(15.0)
-                .color(muted),
-            )
-            .wrap(),
-        );
-        ui.add_space(10.0);
+                .wrap(),
+            );
+            ui.add_space(10.0);
+        }
         let p = &mut self.data.prefs;
         row(ui, "Default duration", "Used for tasks without a time estimate.", |ui| {
             let opts: Vec<(i64, String)> = [15, 30, 45, 60, 90, 120].iter().map(|m| (*m, fmt_duration(*m))).collect();
             combo(ui, "pd", &mut p.default_task_min, &opts);
         });
         let yes_no = [(true, "Yes".to_string()), (false, "No".to_string())];
-        row(ui, "Split long tasks", "Tasks of two hours or more may be cut into several sessions.", |ui| combo(ui, "ps", &mut p.split_long_tasks, &yes_no));
+        row(ui, "Split long tasks", "Tasks of two hours or more may be cut into several sessions.", |ui| combo(ui, "sp", &mut p.split_long_tasks, &yes_no));
         row(ui, "Schedule tasks with no due date", "", |ui| combo(ui, "pn", &mut p.plan_without_due, &yes_no));
         divider(ui, border);
         row(ui, "Plan into frames", "Put tasks into the frames whose filter they match.", |ui| combo(ui, "pf", &mut p.use_frames, &yes_no));
@@ -338,6 +498,11 @@ impl App {
             combo(ui, "po", &mut p.plan_outside_frames, &[(true, "Plan in working hours".into()), (false, "Leave unplanned".into())]);
         });
         divider(ui, border);
+        if searching {
+            let names: Vec<&str> = self.data.frames.iter().map(|f| f.name.as_str()).collect();
+            page_result(ui, Page::Planner, "Frames", "Blocks of time set aside for certain kinds of work", &[&["time block", "deep work"][..], &names].concat());
+            return;
+        }
         self.frame_list(ui);
     }
 
@@ -441,6 +606,12 @@ impl App {
 
     /// Manage calendars: show or hide, rename, recolour, add and remove.
     fn page_active(&mut self, ui: &mut egui::Ui) {
+        if finding(ui) {
+            let names: Vec<&str> = self.data.calendars.iter().map(|c| c.name.as_str()).collect();
+            let words = [&["show", "hide", "colour", "color", "rename", "add", "remove", "delete", "new calendar"][..], &names].concat();
+            page_result(ui, Page::ActiveCalendars, "Manage calendars", "Show or hide calendars, rename, recolour, add or remove them", &words);
+            return;
+        }
         let ctx = ui.ctx().clone();
         let (muted, border, side, text) = (self.pal.muted, self.pal.border, self.pal.side, self.pal.text);
         heading(ui, "Active calendars");
@@ -541,6 +712,12 @@ impl App {
     }
 
     fn page_calendars(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        if finding(ui) {
+            let names: Vec<&str> = self.data.calendars.iter().filter(|c| c.url.is_some()).map(|c| c.name.as_str()).collect();
+            let words = [&["integration", "subscription", "link", "url", "ics", "webcal", "feed", "proton", "import", "refresh", "unsubscribe"][..], &names].concat();
+            page_result(ui, Page::Calendars, "Subscribe to a calendar", "Bring other calendars in by their link, such as Proton Calendar", &words);
+            return;
+        }
         let (muted, border, side, text) = (self.pal.muted, self.pal.border, self.pal.side, self.pal.text);
         heading(ui, "Integrate your calendars");
         ui.label(RichText::new("Bring other calendars in by subscribing to their link. Subscribed calendars are read-only.").size(16.0).color(muted));
@@ -721,21 +898,45 @@ impl App {
             ui.painter().rect_filled(r, 0.0, muted);
             ui.add_space(10.0);
         };
-        ui.label(RichText::new("Click a shortcut to change it, then press the new keys. Esc cancels.").size(15.0).color(muted));
-        ui.add_space(10.0);
+        // in the settings search the matches come without section headings,
+        // under the page's own; on the page a field narrows the list
+        let searching = finding(ui);
+        let words = search_words(&self.shortcut_query);
+        if !searching {
+            ui.horizontal(|ui| {
+                search_field(ui, &mut self.shortcut_query, "Search shortcuts", (ui.available_width() * 0.5).clamp(220.0, 360.0));
+                ui.add_space(12.0);
+                ui.label(RichText::new("Click a shortcut to change it, then press the new keys. Esc cancels.").size(15.0).color(muted));
+            });
+            ui.add_space(10.0);
+        }
+        // a section name only counts on this page, where the sections show;
+        // across all settings "calendar" would otherwise list half of them
+        let wanted = |ui: &mut egui::Ui, label: &str, keys: &str, sec: &str| {
+            if searching {
+                shown(ui, &[label, keys])
+            } else {
+                search_hit(&words, &[label, keys, sec])
+            }
+        };
         // every command's keys, to warn when two share one
         let all: Vec<(Cmd, &str, Vec<KeyBind>)> = COMMANDS.iter().map(|c| (c.0, c.1, self.binds(c.0))).collect();
         let mut section = "";
+        let mut rows = 0;
         for (cmd, label, default, sec) in COMMANDS {
             if *cmd == Cmd::Paste {
                 // pasting is done with the mouse
                 continue;
             }
-            if *sec != section {
+            let keys = self.bind_text(*cmd);
+            if !wanted(ui, label, &keys, sec) {
+                continue;
+            }
+            rows += 1;
+            if *sec != section && !searching {
                 section_head(ui, sec, section.is_empty());
                 section = sec;
             }
-            let keys = self.bind_text(*cmd);
             let custom = self.data.prefs.keybinds.contains_key(cmd.id());
             let mine = parse_bind(&keys);
             let clash: Vec<&str> =
@@ -784,18 +985,39 @@ impl App {
                 self.data.prefs.keybinds.insert(cmd.id().to_string(), String::new());
             }
         }
-        section_head(ui, "Fixed", false);
-        fixed_row(ui, "Paste here", "Right-click");
-        fixed_row(ui, "Discard the creation of an event", "Esc");
-        fixed_row(ui, "Save changes", "Ctrl+Enter");
-        fixed_row(ui, "Zoom the hours", "Ctrl+Wheel");
-        fixed_row(ui, "Move sideways by days", "Shift+Wheel");
+        let mut fixed_head = false;
+        for (label, keys) in [
+            ("Paste here", "Right-click"),
+            ("Discard the creation of an event", "Esc"),
+            ("Save changes", "Ctrl+Enter"),
+            ("Zoom the hours", "Ctrl+Wheel"),
+            ("Move sideways by days", "Shift+Wheel"),
+        ] {
+            if !wanted(ui, label, keys, "Fixed") {
+                continue;
+            }
+            rows += 1;
+            if !fixed_head && !searching {
+                section_head(ui, "Fixed", section.is_empty());
+                fixed_head = true;
+            }
+            fixed_row(ui, label, keys);
+        }
+        if rows == 0 && !searching {
+            ui.add_space(30.0);
+            ui.label(RichText::new(format!("No shortcuts match \"{}\"", self.shortcut_query.trim())).size(16.0).color(muted));
+        }
         if self.recording.is_some() {
             ctx.request_repaint();
         }
     }
 
     fn page_info(&mut self, ui: &mut egui::Ui) {
+        if finding(ui) {
+            let words = ["about", "kalendar", "version", env!("CARGO_PKG_VERSION"), "data", "file", "folder", "path", "location", "config", "json", "privacy"];
+            page_result(ui, Page::Info, "Version and data files", "Where your calendars, tasks and settings are kept", &words);
+            return;
+        }
         let muted = self.pal.muted;
         heading(ui, "Kalendar");
         ui.label(RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).size(16.0));
@@ -811,5 +1033,19 @@ impl App {
                 .size(15.0)
                 .color(muted),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn search_matches_every_word_in_any_order() {
+        let w = search_words("  GRID  time ");
+        assert!(search_hit(&w, &["Time grid start", ""]));
+        assert!(!search_hit(&w, &["Time format", ""]));
+        assert!(search_hit(&search_words("ctrl+t"), &["Create a new task", "Events and tasks", "Ctrl+T"]));
+        assert!(search_hit(&search_words(""), &["anything"]));
     }
 }
