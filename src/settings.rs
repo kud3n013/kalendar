@@ -992,6 +992,7 @@ impl App {
             ("Save changes", "Ctrl+Enter"),
             ("Zoom the hours", "Ctrl+Wheel"),
             ("Move sideways by days", "Shift+Wheel"),
+            ("Move back or forward (a day in day views)", "Mouse 4 / Mouse 5"),
         ] {
             if !wanted(ui, label, keys, "Fixed") {
                 continue;

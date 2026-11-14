@@ -1176,6 +1176,32 @@ impl App {
         }
     }
 
+    /// The mouse's back and forward buttons (4 and 5) move the view: a week
+    /// or a month at a time, and a single day in the day views.
+    fn mouse_nav(&mut self, ctx: &egui::Context) {
+        let open = self.show_prefs
+            || self.editor.is_some()
+            || self.task_editor.is_some()
+            || self.command_bar.is_some()
+            || self.create.is_some()
+            || self.frame_editor.is_some();
+        if open {
+            return;
+        }
+        let (back, fwd) = ctx.input(|i| {
+            (i.pointer.button_pressed(egui::PointerButton::Extra1), i.pointer.button_pressed(egui::PointerButton::Extra2))
+        });
+        let dir = match (back, fwd) {
+            (true, false) => -1,
+            (false, true) => 1,
+            _ => return,
+        };
+        match self.view {
+            View::Days(_) => self.anchor += Duration::days(dir),
+            _ => self.step(dir),
+        }
+    }
+
     fn keys(&mut self, ctx: &egui::Context) {
         let dialogs = self.editor.is_some()
             || self.task_editor.is_some()
@@ -1346,6 +1372,7 @@ impl eframe::App for App {
             return self.screenshot(ctx);
         }
         self.keys(ctx);
+        self.mouse_nav(ctx);
         self.ui_sidebar(ui);
         self.ui_toolbar(ui);
         // slide and fade when the period or the view changes
