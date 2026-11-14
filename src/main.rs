@@ -490,6 +490,11 @@ impl App {
             let start = today.and_hms_opt(10, 0, 0).unwrap();
             app.open_create(start, 60, egui::Rect::from_min_size(egui::pos2(700.0, 300.0), egui::vec2(150.0, 100.0)));
         }
+        // KALENDAR_DRAG="title@x,y": hold the task with that title as if it
+        // were being dragged, with the pointer at x,y
+        if let Some(title) = app.shot.as_ref().and(drag_aid()).map(|d| d.0) {
+            app.drag_task = app.data.tasks.iter().find(|t| t.title.contains(&title)).map(|t| t.id);
+        }
         if app.shot.is_some() && std::env::var("KALENDAR_SHOW_FRAME").is_ok() {
             if let Some(id) = app.data.frames.first().map(|f| f.id) {
                 app.edit_frame(id);
@@ -1265,7 +1270,21 @@ impl App {
     }
 }
 
+/// The picture-mode drag aid, KALENDAR_DRAG="title@x,y".
+fn drag_aid() -> Option<(String, egui::Pos2)> {
+    let v = std::env::var("KALENDAR_DRAG").ok()?;
+    let (title, at) = v.rsplit_once('@')?;
+    let (x, y) = at.split_once(',')?;
+    Some((title.to_string(), egui::pos2(x.trim().parse().ok()?, y.trim().parse().ok()?)))
+}
+
 impl eframe::App for App {
+    fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
+        if let Some((_, pos)) = self.shot.as_ref().and(drag_aid()) {
+            raw_input.events.push(egui::Event::PointerMoved(pos));
+        }
+    }
+
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.set_theme(match self.data.prefs.theme {
             Theme::System => egui::ThemePreference::System,
@@ -1356,7 +1375,8 @@ impl eframe::App for App {
             }
         }
         self.ui_drag_ghost(ctx);
-        if !ctx.input(|i| i.pointer.any_down()) {
+        let drag_aid_on = self.shot.is_some() && drag_aid().is_some();
+        if !ctx.input(|i| i.pointer.any_down()) && !drag_aid_on {
             self.drag_task = None;
         }
         // keep the clock line moving
