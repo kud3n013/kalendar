@@ -59,22 +59,27 @@ pub fn default_name(url: &str) -> String {
 
 /// Downloads a feed and reads it. Runs on a background thread.
 pub fn fetch(url: &str, now: NaiveDateTime) -> Result<Feed, String> {
-    let resp = ureq::get(url)
-        .timeout(std::time::Duration::from_secs(25))
-        .set("User-Agent", "kalendar")
-        .set("Accept", "text/calendar, text/plain, */*")
+    let mut resp = ureq::get(url)
+        .config()
+        .timeout_global(Some(std::time::Duration::from_secs(25)))
+        .build()
+        .header("User-Agent", "kalendar")
+        .header("Accept", "text/calendar, text/plain, */*")
         .call()
         .map_err(|e| match e {
-            ureq::Error::Status(403, _) | ureq::Error::Status(401, _) => {
+            ureq::Error::StatusCode(401 | 403) => {
                 "The link was refused. Check that sharing is still on and the whole link was pasted.".to_string()
             }
-            ureq::Error::Status(404, _) => "Nothing was found at this link.".to_string(),
-            ureq::Error::Status(code, _) => format!("The server answered with error {code}."),
-            ureq::Error::Transport(t) => format!("Could not reach the server ({}).", t.kind()),
+            ureq::Error::StatusCode(404) => "Nothing was found at this link.".to_string(),
+            ureq::Error::StatusCode(code) => format!("The server answered with error {code}."),
+            other => format!("Could not reach the server ({other})."),
         })?;
-    let mut text = String::new();
-    use std::io::Read;
-    resp.into_reader().take(20 * 1024 * 1024).read_to_string(&mut text).map_err(|_| "The answer could not be read.".to_string())?;
+    let text = resp
+        .body_mut()
+        .with_config()
+        .limit(20 * 1024 * 1024)
+        .read_to_string()
+        .map_err(|_| "The answer could not be read.".to_string())?;
     parse(&text, now)
 }
 
