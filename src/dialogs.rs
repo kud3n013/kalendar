@@ -1,18 +1,176 @@
 //! Pop-up windows: editors, preferences, shortcuts, command bar, messages.
 
+use crate::icons;
 use crate::model::*;
 use crate::views::midnight;
 use crate::{mix, rgb, App, Cmd, COMMANDS};
 use chrono::{Duration, Local, NaiveDate, Timelike};
-use eframe::egui::{self, Color32, Align, Align2, FontId, Id, Layout, Margin, RichText, Stroke};
+use eframe::egui::{self, pos2, Align, Align2, FontId, Id, Layout, Margin, RichText, Stroke};
 
 impl App {
     pub fn ui_dialogs(&mut self, ctx: &egui::Context) {
+        self.dlg_create(ctx);
         self.dlg_event(ctx);
         self.dlg_task(ctx);
         self.ui_settings_window(ctx);
         self.dlg_command(ctx);
+        self.dlg_new_task(ctx);
         self.dlg_toast(ctx);
+    }
+
+    /// The small window beside a block drawn on the calendar: it saves the
+    /// block as a task session (the default) or as a plain event, into one
+    /// chosen calendar.
+    fn dlg_create(&mut self, ctx: &egui::Context) {
+        let Some(mut c) = self.create.take() else { return };
+        let (mut save, mut cancel) = (false, false);
+        let muted = self.pal.muted;
+        let p = self.data.prefs.clone();
+        // beside the block: right of it, else left, else below, else above
+        let (w, h, gap) = (280.0, 240.0, 10.0);
+        let screen = ctx.screen_rect().shrink(8.0);
+        let r = c.anchor_rect;
+        let pos = if r.right() + gap + w <= screen.right() {
+            pos2(r.right() + gap, r.top())
+        } else if r.left() - gap - w >= screen.left() {
+            pos2(r.left() - gap - w, r.top())
+        } else if r.bottom() + gap + h <= screen.bottom() {
+            pos2(r.center().x - w / 2.0, r.bottom() + gap)
+        } else {
+            pos2(r.center().x - w / 2.0, r.top() - gap - h)
+        };
+        let pos = pos2(pos.x.clamp(screen.left(), screen.right() - w), pos.y.clamp(screen.top(), screen.bottom() - h));
+        egui::Window::new("create")
+            .id(Id::new("create_popup"))
+            .title_bar(false)
+            .resizable(false)
+            .fixed_pos(pos)
+            .show(ctx, |ui| {
+                ui.set_width(w);
+                // what the block becomes: a task session or a plain event
+                ui.horizontal(|ui| {
+                    for (on, label) in [(true, "Task"), (false, "Event")] {
+                        if ui.selectable_label(c.as_task == on, RichText::new(label).size(13.5)).clicked() {
+                            c.as_task = on;
+                        }
+                    }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.label(RichText::new(format!("{} – {}", p.fmt_time(c.ev.start.time()), p.fmt_time(c.ev.end.time()))).size(12.0).color(muted));
+                    });
+                });
+                let hint = if c.as_task { "New Task" } else { "New Event" };
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut c.ev.title)
+                        .hint_text(hint)
+                        .font(FontId::proportional(16.0))
+                        .desired_width(f32::INFINITY),
+                );
+                if c.focus {
+                    resp.request_focus();
+                    c.focus = false;
+                }
+                if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    save = true;
+                }
+                ui.add_space(2.0);
+                ui.label(RichText::new(c.ev.start.format("%a, %b %-d").to_string()).size(12.5).color(muted));
+                ui.add_space(2.0);
+                // one calendar, picked with a box per calendar
+                ui.label(RichText::new("Calendar").size(12.0).color(muted));
+                for (i, cal) in self.data.calendars.iter().enumerate().filter(|(_, cal)| cal.url.is_none()) {
+                    let mut on = c.ev.calendar == i;
+                    if ui.checkbox(&mut on, RichText::new(format!("{} {}", icons::CIRCLE, cal.name)).color(rgb(cal.color))).changed() && on {
+                        c.ev.calendar = i;
+                    }
+                }
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    if ui.button(RichText::new("Save").strong()).on_hover_text("Enter").clicked() {
+                        save = true;
+                    }
+                    if ui.button("Cancel").on_hover_text("Esc").clicked() {
+                        cancel = true;
+                    }
+                });
+                if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter)) {
+                    save = true;
+                }
+            });
+        if save {
+            self.snapshot();
+            let mut ev = c.ev.clone();
+            if ev.end <= ev.start {
+                ev.end = ev.start + Duration::minutes(self.data.prefs.snap_min);
+            }
+            let id = ev.id;
+            let day = ev.start.date();
+            if c.as_task {
+                // the block becomes a session of a new task
+                let task_id = self.data.new_id();
+                self.data.tasks.insert(
+                    0,
+                    Task {
+                        id: task_id,
+                        title: ev.title.clone(),
+                        duration_min: Some(ev.minutes()),
+                        ..Default::default()
+                    },
+                );
+                ev.task_id = Some(task_id);
+                self.data.events.push(ev);
+                self.after_task_scheduled(ctx, task_id, day);
+            } else {
+                self.data.events.push(ev);
+            }
+            self.selected = Some(id);
+            self.commit();
+        } else if !cancel {
+            self.create = Some(c);
+        }
+    }
+
+    /// Ctrl+T: a bar in the middle, like the command bar, for a new task.
+    fn dlg_new_task(&mut self, ctx: &egui::Context) {
+        if !self.new_task_open {
+            return;
+        }
+        let muted = self.pal.muted;
+        let focus = std::mem::take(&mut self.new_task_focus);
+        let mut close = false;
+        egui::Window::new("newtask")
+            .title_bar(false)
+            .resizable(false)
+            .anchor(Align2::CENTER_TOP, [0.0, 90.0])
+            .show(ctx, |ui| {
+                ui.set_width(520.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(icons::SQUARE_CHECK).size(16.0).color(muted));
+                    let r = ui.add(
+                        egui::TextEdit::singleline(&mut self.new_task_text)
+                            .hint_text("New task   #tag  !high  >list  30m  .tomorrow")
+                            .font(FontId::proportional(16.0))
+                            .desired_width(f32::INFINITY),
+                    );
+                    if focus {
+                        r.request_focus();
+                    }
+                    if r.lost_focus() {
+                        if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            let t = std::mem::take(&mut self.new_task_text);
+                            if !t.trim().is_empty() {
+                                self.add_task(&t, 0);
+                                close = true;
+                            }
+                        } else if ui.input(|i| i.pointer.any_click()) {
+                            close = true;
+                        }
+                    }
+                });
+                ui.label(RichText::new("Enter adds the task to your Inbox  ·  Esc closes").size(11.5).color(muted));
+            });
+        if close {
+            self.new_task_open = false;
+        }
     }
 
     fn dlg_event(&mut self, ctx: &egui::Context) {
@@ -59,12 +217,12 @@ impl App {
                     ed.ev.end = ed.ev.start + Duration::minutes(NEW_EVENT_MIN);
                 }
                 ui.horizontal(|ui| {
-                    if ui.small_button("◀").clicked() {
+                    if ui.small_button(icons::CHEVRON_LEFT).clicked() {
                         ed.ev.start -= Duration::days(1);
                         ed.ev.end -= Duration::days(1);
                     }
                     ui.label(ed.ev.start.format("%a, %b %-d %Y").to_string());
-                    if ui.small_button("▶").clicked() {
+                    if ui.small_button(icons::CHEVRON_RIGHT).clicked() {
                         ed.ev.start += Duration::days(1);
                         ed.ev.end += Duration::days(1);
                     }
@@ -128,7 +286,7 @@ impl App {
                     let name = self.data.calendars.get(ed.ev.calendar).map(|c| c.name.clone()).unwrap_or_default();
                     egui::ComboBox::from_id_salt("cal").selected_text(name).show_ui(ui, |ui| {
                         for (i, c) in self.data.calendars.iter().enumerate().filter(|(_, c)| c.url.is_none()) {
-                            ui.selectable_value(&mut ed.ev.calendar, i, RichText::new(format!("● {}", c.name)).color(rgb(c.color)));
+                            ui.selectable_value(&mut ed.ev.calendar, i, RichText::new(format!("{} {}", icons::CIRCLE, c.name)).color(rgb(c.color)));
                         }
                     });
                 });
@@ -356,14 +514,14 @@ impl App {
                 egui::ScrollArea::vertical().max_height(380.0).show(ui, |ui| {
                     if !ql.is_empty() {
                         for e in self.data.events.iter().filter(|e| e.title.to_lowercase().contains(&ql)).take(6) {
-                            let label = format!("📅  {}   —   {}", e.title, e.start.format("%a, %b %-d"));
+                            let label = format!("{}  {}   —   {}", icons::CALENDAR, e.title, e.start.format("%a, %b %-d"));
                             if ui.selectable_label(false, label).clicked() || (enter && first) {
                                 goto = Some((e.id, e.start.date()));
                             }
                             first = false;
                         }
                         for t in self.data.tasks.iter().filter(|t| t.title.to_lowercase().contains(&ql)).take(6) {
-                            if ui.selectable_label(false, format!("☑  {}", t.title)).clicked() || (enter && first) {
+                            if ui.selectable_label(false, format!("{}  {}", icons::SQUARE_CHECK, t.title)).clicked() || (enter && first) {
                                 open_task = Some(t.id);
                             }
                             first = false;

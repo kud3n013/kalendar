@@ -1,7 +1,8 @@
 //! What is drawn in the main window: toolbar, task list and calendar views.
 
+use crate::icons;
 use crate::model::*;
-use crate::{mix, rgb, App, Cmd, Drag, EventEdit, Palette};
+use crate::{fill_squircle, mix, rgb, stroke_squircle, App, Cmd, CreateEdit, Drag, Palette};
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, Timelike};
 use eframe::egui::{
     self, pos2, vec2, Align, Align2, Color32, FontId, Id, Layout, Margin, PointerButton, Pos2, Rect, RichText, Sense,
@@ -36,9 +37,9 @@ fn draw_item(p: &egui::Painter, pal: &Palette, it: &Item, selected: bool, hover:
         let ink = Color32::from_rgb(0x10, 0x20, 0x26);
         (mix(base, it.color, 0.5 * hover), ink, mix(ink, base, 0.25))
     };
-    p.rect_filled(r, 5.0, fill);
+    fill_squircle(p, r, RADIUS, fill);
     let edge = if selected { pal.text } else if is_task { mix(pal.bg, it.color, 0.75) } else { fill };
-    p.rect_stroke(r, 5.0, Stroke::new(if selected { 1.5 } else { 1.0 }, edge), StrokeKind::Inside);
+    stroke_squircle(p, r.shrink(0.5), RADIUS, Stroke::new(if selected { 1.5 } else { 1.0 }, edge));
     let mut x = r.left() + 6.0;
     let tall = r.height() >= 36.0;
     if is_task {
@@ -202,8 +203,8 @@ impl App {
         let Some(t) = self.data.task(id) else { return };
         let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, Id::new("ghost")));
         let r = Rect::from_min_size(pos + vec2(10.0, 8.0), vec2(230.0, 34.0));
-        p.rect_filled(r, 8.0, mix(self.pal.side, self.pal.text, 0.12));
-        p.rect_stroke(r, 8.0, Stroke::new(1.0, self.pal.accent), StrokeKind::Inside);
+        fill_squircle(&p, r, RADIUS, mix(self.pal.side, self.pal.text, 0.12));
+        stroke_squircle(&p, r.shrink(0.5), RADIUS, Stroke::new(1.0, self.pal.accent));
         p.with_clip_rect(r.shrink(4.0)).text(
             r.left_center() + vec2(10.0, 0.0),
             Align2::LEFT_CENTER,
@@ -337,7 +338,7 @@ impl App {
                 hp.rect_filled(r, 4.0, mix(self.pal.bg, self.pal.text, 0.03 + 0.07 * glow));
                 hp.rect_stroke(r, 4.0, Stroke::new(1.0, mix(self.pal.border, self.pal.text, 0.25)), StrokeKind::Inside);
                 let c = hp.with_clip_rect(r.shrink(2.0));
-                c.text(r.left_center() + vec2(5.0, 0.0), Align2::LEFT_CENTER, "⚑", FontId::proportional(12.0), self.pal.text);
+                c.text(r.left_center() + vec2(5.0, 0.0), Align2::LEFT_CENTER, icons::FLAG, FontId::proportional(12.0), self.pal.text);
                 c.text(r.left_center() + vec2(22.0, 0.0), Align2::LEFT_CENTER, title, FontId::new(12.5, egui::FontFamily::Name("bold".into())), self.pal.text);
                 due_chips.push((*tid, r));
             }
@@ -434,6 +435,11 @@ impl App {
             if let Some(ed) = &self.editor {
                 if ed.is_new && !ed.ev.all_day && ed.ev.start < d1 && ed.ev.end > d0 {
                     evs.push((ed.ev.clone(), true));
+                }
+            }
+            if let Some(cr) = &self.create {
+                if !cr.ev.all_day && cr.ev.start < d1 && cr.ev.end > d0 {
+                    evs.push((cr.ev.clone(), true));
                 }
             }
             if let Some(Drag::Create { draft, .. }) = &self.drag {
@@ -554,6 +560,7 @@ impl App {
                 } else if o.x >= x0 {
                     let anchor = snap_dt(pos_to(o), snap, -1);
                     self.editor = None;
+                    self.create = None;
                     self.selected = None;
                     self.drag = Some(Drag::Create {
                         anchor,
@@ -610,7 +617,14 @@ impl App {
             match self.drag.take() {
                 Some(Drag::Create { mut draft, .. }) => {
                     draft.id = self.data.new_id();
-                    self.editor = Some(EventEdit { ev: draft, is_new: true, focus: true });
+                    // the create window sits beside the drawn block
+                    let anchor = items
+                        .iter()
+                        .filter(|it| it.draft && it.id == 0)
+                        .map(|it| it.rect)
+                        .reduce(|a, b| a.union(b))
+                        .unwrap_or_else(|| Rect::from_center_size(rect.center(), vec2(120.0, 40.0)));
+                    self.create = Some(CreateEdit { ev: draft, as_task: true, anchor_rect: anchor, focus: true });
                 }
                 Some(Drag::Move { id, .. }) => {
                     let sched = self.data.event(id).and_then(|e| e.task_id.map(|t| (t, e.start.date())));
@@ -634,13 +648,21 @@ impl App {
                         }
                         _ => self.selected = Some(id),
                     }
-                } else if self.editor.is_some() {
+                } else if self.editor.is_some() || self.create.is_some() {
                     self.editor = None;
+                    self.create = None;
                 } else if self.selected.is_some() {
                     self.selected = None;
                 } else if pos.x >= x0 {
                     // one click makes a draft one grid slot long
-                    self.open_new_event(snap_dt(pos_to(pos), snap, -1), p.slot_min, false);
+                    let start = snap_dt(pos_to(pos), snap, -1);
+                    let di = days.iter().position(|d| *d == start.date()).unwrap_or(0);
+                    let s = (start - midnight(start.date())).num_minutes();
+                    let block = Rect::from_min_max(
+                        pos2(x0 + di as f32 * col_w, y_of(s)),
+                        pos2(x0 + (di + 1) as f32 * col_w - 8.0, y_of(s + p.slot_min)),
+                    );
+                    self.open_create(start, p.slot_min, block);
                 }
             }
         }
@@ -664,11 +686,11 @@ impl App {
                 self.block_menu(ui, id);
             } else if let Some(t) = at {
                 ui.set_min_width(190.0);
-                if self.clipboard.is_some() && ui.button("🗐  Paste here").clicked() {
+                if self.clipboard.is_some() && ui.button(format!("{}  Paste here", icons::PASTE)).clicked() {
                     self.paste_at(t, Some(false));
                     ui.close_menu();
                 }
-                if ui.button("➕  Create new event").clicked() {
+                if ui.button(format!("{}  Create new event", icons::CALENDAR_PLUS)).clicked() {
                     self.open_new_event(t, NEW_EVENT_MIN, false);
                     ui.close_menu();
                 }
@@ -687,8 +709,8 @@ impl App {
                         pos2(x0 + di as f32 * col_w, y_of(s)),
                         pos2(x0 + (di + 1) as f32 * col_w - 8.0, y_of(s + mins)),
                     );
-                    painter.rect_filled(r, 5.0, mix(self.pal.bg, self.pal.accent, 0.25));
-                    painter.rect_stroke(r, 5.0, Stroke::new(1.0, self.pal.accent), StrokeKind::Inside);
+                    fill_squircle(&painter, r, RADIUS, mix(self.pal.bg, self.pal.accent, 0.25));
+                    stroke_squircle(&painter, r.shrink(0.5), RADIUS, Stroke::new(1.0, self.pal.accent));
                     painter.text(
                         r.left_top() + vec2(8.0, 4.0),
                         Align2::LEFT_TOP,
@@ -771,7 +793,7 @@ impl App {
         ui.separator();
         let big = |t: &str| RichText::new(t).size(15.0);
         if let Some(tid) = ev.task_id {
-            if ui.button(big("🗐   Copy task session")).clicked() {
+            if ui.button(big(&format!("{}   Copy task session", icons::COPY))).clicked() {
                 self.selected = Some(id);
                 self.run(&ctx, Cmd::Copy);
                 ui.close_menu();
@@ -781,7 +803,7 @@ impl App {
                 ui.add_space(10.0);
                 ui.label(RichText::new("Planner").size(14.0).color(muted));
             });
-            ui.menu_button(big("⟲   Replan session"), |ui| {
+            ui.menu_button(big(&format!("{}   Replan session", icons::REFRESH)), |ui| {
                 ui.set_min_width(300.0);
                 let row = |ui: &mut egui::Ui, label: &str, keys: &str, enabled: bool| -> bool {
                     let mut hit = false;
@@ -814,7 +836,7 @@ impl App {
             let mut flexible = self.data.task(tid).map(|t| t.flexible).unwrap_or(false);
             ui.horizontal(|ui| {
                 ui.add_space(10.0);
-                ui.label(big("🔀   Flexible task"));
+                ui.label(big(&format!("{}   Flexible task", icons::SHUFFLE)));
                 ui.label(RichText::new("(i)").size(11.0).color(muted)).on_hover_text(
                     "The planner may move flexible tasks to make room for more important ones.",
                 );
@@ -830,22 +852,22 @@ impl App {
                 });
             });
             ui.separator();
-            if ui.button(big("✖   Unschedule session").color(red)).clicked() {
+            if ui.button(big(&format!("{}   Unschedule session", icons::X)).color(red)).clicked() {
                 self.delete_event(&ctx, id);
                 ui.close_menu();
             }
-            if ui.button(big("🗑   Unschedule and delete task").color(red)).clicked() {
+            if ui.button(big(&format!("{}   Unschedule and delete task", icons::TRASH)).color(red)).clicked() {
                 self.delete_task(&ctx, tid);
                 ui.close_menu();
             }
         } else {
-            if ui.button(big("🗐   Copy event")).clicked() {
+            if ui.button(big(&format!("{}   Copy event", icons::COPY))).clicked() {
                 self.selected = Some(id);
                 self.run(&ctx, Cmd::Copy);
                 ui.close_menu();
             }
             ui.separator();
-            if ui.button(big("🗑   Delete event").color(red)).clicked() {
+            if ui.button(big(&format!("{}   Delete event", icons::TRASH)).color(red)).clicked() {
                 self.delete_event(&ctx, id);
                 ui.close_menu();
             }

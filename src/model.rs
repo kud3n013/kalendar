@@ -50,6 +50,7 @@ pub const ZOOM_STEP: f32 = 1.1; // one wheel notch while zooming
 pub const SYNC_EVERY_S: f64 = 900.0; // subscribed calendars refresh every 15 minutes
 pub const NEW_EVENT_MIN: i64 = 60; // new events are one hour long
 pub const NEW_EVENT_NOON_H: i64 = 12; // on a later day they start at 12:00
+pub const RADIUS: f32 = 8.0; // the one corner radius used across the UI
 
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
 pub enum View {
@@ -95,6 +96,13 @@ pub enum DueMove {
     Never,
 }
 
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug, Default)]
+pub enum PanelSide {
+    #[default]
+    Left,
+    Right,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Prefs {
@@ -112,6 +120,7 @@ pub struct Prefs {
     pub grid_end_h: i64,
     pub sidebar_open: bool,
     pub sidebar_w: f32,
+    pub sidebar_side: PanelSide,
     pub show_scheduled_tasks: bool,
     pub undo_grace_s: u32,
     pub auto_due: bool,
@@ -144,6 +153,7 @@ impl Default for Prefs {
             grid_end_h: 24,
             sidebar_open: true,
             sidebar_w: 410.0,
+            sidebar_side: PanelSide::Left,
             show_scheduled_tasks: false,
             undo_grace_s: 10,
             auto_due: true,

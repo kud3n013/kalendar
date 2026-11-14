@@ -1,10 +1,11 @@
-//! The left rail, the task panel and the bar above the calendar.
+//! The task panel (left or right) and the bar above the calendar.
 
+use crate::icons;
 use crate::model::*;
-use crate::{mix, rgb, App, Cmd};
+use crate::{fill_squircle, mix, rgb, App, Cmd};
 use chrono::{Datelike, Duration, Local, NaiveDate};
 use eframe::egui::{
-    self, pos2, vec2, Align, Align2, Color32, FontId, Id, Layout, Margin, Rect, RichText, Sense, Stroke, StrokeKind,
+    self, pos2, vec2, Align, Align2, Color32, FontId, Id, Layout, Margin, Rect, RichText, Sense, Stroke,
 };
 
 const RED: Color32 = Color32::from_rgb(0xeb, 0x62, 0x62);
@@ -19,6 +20,23 @@ fn flat(ui: &mut egui::Ui, label: impl Into<egui::WidgetText>) -> egui::Response
     ui.add(egui::Button::new(label).frame(false))
 }
 
+/// A flat icon button: a Lucide glyph on a squircle that glows on hover.
+/// `c` is (side, muted, text) from the palette.
+pub fn icon_btn(ui: &mut egui::Ui, glyph: &str, size: f32, tip: &str, c: (Color32, Color32, Color32)) -> egui::Response {
+    let (side, muted, text) = c;
+    let (r, resp) = ui.allocate_exact_size(vec2(size + 12.0, size + 12.0), Sense::click());
+    let glow = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), ANIM_FAST_S);
+    if glow > 0.0 {
+        fill_squircle(ui.painter(), r, RADIUS, mix(side, text, 0.08 * glow));
+    }
+    ui.painter().text(r.center(), Align2::CENTER_CENTER, glyph, FontId::proportional(size), mix(muted, text, 0.6 * glow));
+    if tip.is_empty() {
+        resp
+    } else {
+        resp.on_hover_text(tip)
+    }
+}
+
 pub fn due_label(d: NaiveDate, today: NaiveDate) -> String {
     match (d - today).num_days() {
         -1 => "Yesterday".into(),
@@ -29,63 +47,6 @@ pub fn due_label(d: NaiveDate, today: NaiveDate) -> String {
 }
 
 impl App {
-    pub fn ui_rail(&mut self, ctx: &egui::Context) {
-        let (bg, muted, text, accent) = (self.pal.rail, self.pal.muted, self.pal.text, self.pal.accent);
-        egui::SidePanel::left("rail")
-            .exact_width(52.0)
-            .resizable(false)
-            .frame(egui::Frame::new().fill(bg).inner_margin(Margin::symmetric(0, 12)))
-            .show(ctx, |ui| {
-                ui.vertical_centered(|ui| {
-                    ui.spacing_mut().item_spacing.y = 14.0;
-                    ui.add_space(46.0);
-                    let open = self.data.prefs.sidebar_open;
-                    // tasks: a ticked box, filled while the panel is open
-                    let (r, resp) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
-                    let b = r.shrink(3.0);
-                    if open {
-                        ui.painter().rect_filled(b, 4.0, text);
-                    } else {
-                        ui.painter().rect_stroke(b, 4.0, Stroke::new(1.5, muted), StrokeKind::Inside);
-                    }
-                    let tick = if open { bg } else { muted };
-                    let mid = b.center_bottom() + vec2(-2.0, -5.0);
-                    ui.painter().line_segment([b.left_center() + vec2(4.0, 1.0), mid], Stroke::new(1.8, tick));
-                    ui.painter().line_segment([mid, b.right_top() + vec2(-4.0, 5.0)], Stroke::new(1.8, tick));
-                    if resp.on_hover_text("Tasks (Space)").clicked() {
-                        self.run(ctx, Cmd::ToggleTasks);
-                    }
-                    // quick navigation: a small month
-                    let (r, resp) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
-                    let b = r.shrink(3.0);
-                    let c = if self.quick_nav { text } else { muted };
-                    ui.painter().rect_stroke(b, 4.0, Stroke::new(1.5, c), StrokeKind::Inside);
-                    ui.painter().line_segment([b.left_top() + vec2(0.0, 5.5), b.right_top() + vec2(0.0, 5.5)], Stroke::new(1.5, c));
-                    ui.painter().circle_filled(b.center() + vec2(0.0, 3.0), 1.8, c);
-                    if resp.on_hover_text("Go to a date").clicked() {
-                        self.quick_nav = !self.quick_nav;
-                    }
-                    if flat(ui, RichText::new("🔀").size(17.0).color(muted)).on_hover_text("Plan my tasks").clicked() {
-                        self.run(ctx, Cmd::Plan);
-                    }
-                    ui.with_layout(Layout::bottom_up(Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing.y = 14.0;
-                        ui.add_space(4.0);
-                        if flat(ui, RichText::new("⚙").size(18.0).color(muted)).on_hover_text("Preferences (P)").clicked() {
-                            self.open_settings(crate::settings::Page::General);
-                        }
-                        if flat(ui, RichText::new("?").size(18.0).color(muted)).on_hover_text("Shortcuts (.)").clicked() {
-                            self.open_settings(crate::settings::Page::Shortcuts);
-                        }
-                        let (r, _) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::hover());
-                        ui.painter().circle_filled(r.center(), 14.0, accent);
-                        ui.painter().text(r.center(), Align2::CENTER_CENTER, "ME", bold(11.0), Color32::WHITE);
-                    });
-                });
-            });
-        self.ui_quick_nav(ctx);
-    }
-
     /// The small month for jumping to a date.
     fn ui_quick_nav(&mut self, ctx: &egui::Context) {
         let a = ctx.animate_bool_with_time(Id::new("quicknav"), self.quick_nav, ANIM_S);
@@ -98,8 +59,10 @@ impl App {
         let (muted, text, accent) = (self.pal.muted, self.pal.text, self.pal.accent);
         let mut go: Option<NaiveDate> = None;
         let mut step = 0;
+        let right = self.data.prefs.sidebar_side == PanelSide::Right;
+        let (anchor, dx) = if right { (Align2::RIGHT_TOP, -14.0) } else { (Align2::LEFT_TOP, 14.0) };
         egui::Area::new(Id::new("quicknav_area"))
-            .anchor(Align2::LEFT_BOTTOM, [60.0, -16.0 + (1.0 - a) * 12.0])
+            .anchor(anchor, [dx, 96.0 + (1.0 - a) * 12.0])
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 ui.set_opacity(a);
@@ -108,10 +71,10 @@ impl App {
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(first.format("%B %Y").to_string()).font(bold(14.0)));
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if flat(ui, ">").clicked() {
+                            if flat(ui, RichText::new(icons::CHEVRON_RIGHT).size(14.0)).clicked() {
                                 step = 1;
                             }
-                            if flat(ui, "<").clicked() {
+                            if flat(ui, RichText::new(icons::CHEVRON_LEFT).size(14.0)).clicked() {
                                 step = -1;
                             }
                         });
@@ -159,11 +122,16 @@ impl App {
 
     pub fn ui_toolbar(&mut self, ctx: &egui::Context) {
         let (muted, text) = (self.pal.muted, self.pal.text);
+        let closed_left = !self.data.prefs.sidebar_open && self.data.prefs.sidebar_side == PanelSide::Left;
         egui::TopBottomPanel::top("bar")
             .show_separator_line(false)
             .frame(egui::Frame::new().fill(self.pal.bg).inner_margin(Margin { left: 24, right: 16, top: 12, bottom: 6 }))
             .show(ctx, |ui| {
                 ui.horizontal(|ui| {
+                    // room for the floating panel handle while the panel is closed
+                    if closed_left {
+                        ui.add_space(36.0);
+                    }
                     let days = self.visible_days();
                     let (first, last) = match self.view {
                         View::Month => (self.anchor, self.anchor),
@@ -181,96 +149,6 @@ impl App {
                     if !tiny {
                         ui.label(RichText::new(last.year().to_string()).size(if narrow { 20.0 } else { 26.0 }).color(muted));
                     }
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing.x = if narrow { 9.0 } else { 16.0 };
-                        if ui
-                            .add(egui::Button::new(RichText::new("Planner").size(14.0)).corner_radius(8))
-                            .on_hover_text("Fit open tasks into free working time")
-                            .clicked()
-                        {
-                            self.run(ctx, Cmd::Plan);
-                        }
-                        if flat(ui, RichText::new("🔍").size(16.0).color(muted)).on_hover_text("Search (Ctrl+F)").clicked() {
-                            self.run(ctx, Cmd::Search);
-                        }
-                        if !tiny && flat(ui, RichText::new(">_").size(16.0).color(muted)).on_hover_text("Command bar (Ctrl+K)").clicked() {
-                            self.run(ctx, Cmd::CommandBar);
-                        }
-                        ui.menu_button(RichText::new("📅").size(16.0).color(muted), |ui| {
-                            ui.label(RichText::new("Calendars").color(muted));
-                            let mut changed = false;
-                            for c in self.data.calendars.iter_mut() {
-                                changed |= ui.checkbox(&mut c.visible, RichText::new(format!("● {}", c.name)).color(rgb(c.color))).changed();
-                            }
-                            if changed {
-                                self.commit();
-                            }
-                            ui.separator();
-                            if ui.button("Subscribe to a calendar…").clicked() {
-                                self.open_settings(crate::settings::Page::Calendars);
-                                ui.close_menu();
-                            }
-                            if ui.button("Refresh").clicked() {
-                                self.run(ctx, Cmd::Refresh);
-                                ui.close_menu();
-                            }
-                        });
-                        let mut v = self.view;
-                        ui.menu_button(RichText::new(v.label()).size(15.0).color(muted), |ui| {
-                            ui.set_min_width(170.0);
-                            for (o, key) in [
-                                (View::Days(1), "D"),
-                                (View::Week, "W"),
-                                (View::Month, "M"),
-                                (View::Agenda, "A"),
-                                (View::TwoWeeks, "X"),
-                            ] {
-                                ui.horizontal(|ui| {
-                                    if ui.selectable_label(v == o, o.label()).clicked() {
-                                        v = o;
-                                        ui.close_menu();
-                                    }
-                                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                        ui.label(RichText::new(key).monospace().size(11.0).color(muted));
-                                    });
-                                });
-                            }
-                            ui.separator();
-                            ui.menu_button("Number of days", |ui| {
-                                for n in 2..=9u8 {
-                                    if ui.selectable_label(v == View::Days(n), format!("{n} days")).clicked() {
-                                        v = View::Days(n);
-                                        ui.close_menu();
-                                    }
-                                }
-                            });
-                        });
-                        self.view = v;
-                        if !tiny && flat(ui, RichText::new("⟲").size(17.0).color(muted)).on_hover_text("Refresh (R)").clicked() {
-                            self.run(ctx, Cmd::Refresh);
-                        }
-                        if flat(ui, RichText::new(">").size(18.0).color(muted)).on_hover_text("Next (Right)").clicked() {
-                            self.run(ctx, Cmd::Next);
-                        }
-                        let (r, resp) = ui.allocate_exact_size(vec2(20.0, 20.0), Sense::click());
-                        ui.painter().circle_stroke(r.center(), 6.0, Stroke::new(1.6, if resp.hovered() { text } else { muted }));
-                        if resp.on_hover_text("Today (T)").clicked() {
-                            self.run(ctx, Cmd::Today);
-                        }
-                        if flat(ui, RichText::new("<").size(18.0).color(muted)).on_hover_text("Previous (Left)").clicked() {
-                            self.run(ctx, Cmd::Prev);
-                        }
-                        // Undo appears while there is something to take back
-                        let a = ctx.animate_bool_with_time(Id::new("undo_btn"), !self.undo.is_empty(), ANIM_S);
-                        if a > 0.0 {
-                            ui.scope(|ui| {
-                                ui.set_opacity(a);
-                                if ui.add(egui::Button::new(RichText::new("⟲ Undo").size(14.0)).corner_radius(8)).on_hover_text("Ctrl+Z").clicked() {
-                                    self.do_undo(ctx);
-                                }
-                            });
-                        }
-                    });
                 });
             });
     }
@@ -319,75 +197,238 @@ impl App {
 
     pub fn ui_sidebar(&mut self, ctx: &egui::Context) {
         let today = Local::now().date_naive();
-        let (side, muted, text, border) = (self.pal.side, self.pal.muted, self.pal.text, self.pal.border);
+        let side = self.pal.side;
+        let c = (self.pal.side, self.pal.muted, self.pal.text);
         let open = self.data.prefs.sidebar_open;
-        egui::SidePanel::left("tasks")
+        let right = self.data.prefs.sidebar_side == PanelSide::Right;
+        let panel = if right { egui::SidePanel::right("tasks") } else { egui::SidePanel::left("tasks") };
+        panel
             .resizable(true)
             .default_width(self.data.prefs.sidebar_w)
             .width_range(280.0..=560.0)
             .show_separator_line(false)
-            .frame(egui::Frame::new().fill(side).inner_margin(Margin { left: 18, right: 16, top: 14, bottom: 10 }))
+            .frame(egui::Frame::new().fill(side))
             .show_animated(ctx, open, |ui| {
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("Tasks").font(bold(18.0)));
-                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if ui.add(egui::Button::new(RichText::new("+").size(17.0)).corner_radius(6).min_size(vec2(26.0, 26.0))).on_hover_text("New task (N then T)").clicked() {
-                            self.focus_new_task = true;
+                egui::TopBottomPanel::bottom(Id::new("panel_bottom"))
+                    .show_separator_line(false)
+                    .frame(egui::Frame::new().fill(side).inner_margin(Margin { left: 10, right: 10, top: 4, bottom: 8 }))
+                    .show_inside(ui, |ui| self.panel_bottom(ui, ctx, right, c));
+                egui::CentralPanel::default()
+                    .frame(egui::Frame::new().fill(side).inner_margin(Margin { left: 14, right: 12, top: 10, bottom: 0 }))
+                    .show_inside(ui, |ui| self.panel_main(ui, ctx, right, today, c));
+            });
+        // while the panel is closed, a lone handle brings it back
+        if !open {
+            let (anchor, dx) = if right { (Align2::RIGHT_TOP, -10.0) } else { (Align2::LEFT_TOP, 10.0) };
+            egui::Area::new(Id::new("panel_handle")).anchor(anchor, [dx, 10.0]).order(egui::Order::Foreground).show(ctx, |ui| {
+                if icon_btn(ui, icons::MENU, 17.0, "Show the task panel (Space)", c).clicked() {
+                    self.run(ctx, Cmd::ToggleTasks);
+                }
+            });
+        }
+        self.ui_quick_nav(ctx);
+    }
+
+    /// The row of buttons at the bottom of the panel: the new-list button in
+    /// the inner corner, preferences in the outer one.
+    fn panel_bottom(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, right: bool, c: (Color32, Color32, Color32)) {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            let mut tools = |ui: &mut egui::Ui, app: &mut App| {
+                if icon_btn(ui, icons::SETTINGS, 16.0, "Preferences (P)", c).clicked() {
+                    app.open_settings(crate::settings::Page::General);
+                }
+                if icon_btn(ui, icons::HELP, 16.0, "Shortcuts (.)", c).clicked() {
+                    app.open_settings(crate::settings::Page::Shortcuts);
+                }
+                if icon_btn(ui, icons::TERMINAL, 15.0, "Command bar (Ctrl+K)", c).clicked() {
+                    app.run(ctx, Cmd::CommandBar);
+                }
+                if icon_btn(ui, icons::SEARCH, 15.0, "Search (Ctrl+F)", c).clicked() {
+                    app.run(ctx, Cmd::Search);
+                }
+                if icon_btn(ui, icons::SHUFFLE, 15.0, "Plan my tasks: fit open tasks into free working time", c).clicked() {
+                    app.run(ctx, Cmd::Plan);
+                }
+            };
+            let mut new_list = |ui: &mut egui::Ui, app: &mut App| {
+                if icon_btn(ui, icons::PLUS, 17.0, "New task list", c).clicked() {
+                    app.new_list_text = Some(String::new());
+                }
+            };
+            if right {
+                tools(ui, self);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| new_list(ui, self));
+            } else {
+                new_list(ui, self);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| tools(ui, self));
+            }
+        });
+    }
+
+    /// Everything above the bottom row: navigation, the view controls and
+    /// the task lists.
+    fn panel_main(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, right: bool, today: NaiveDate, c: (Color32, Color32, Color32)) {
+        let (muted, border) = (self.pal.muted, self.pal.border);
+        // collapse toggle in the outer corner, navigation in the inner one,
+        // the refresh button beside the navigation
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            let mut nav = |ui: &mut egui::Ui, app: &mut App, flipped: bool| {
+                // drawn right to left when flipped
+                let order: [(&str, f32, &str, Cmd); 3] = if flipped {
+                    [
+                        (icons::CHEVRON_RIGHT, 17.0, "Next (Right)", Cmd::Next),
+                        (icons::CHEVRON_LEFT, 17.0, "Previous (Left)", Cmd::Prev),
+                        (icons::REFRESH, 15.0, "Refresh (R)", Cmd::Refresh),
+                    ]
+                } else {
+                    [
+                        (icons::REFRESH, 15.0, "Refresh (R)", Cmd::Refresh),
+                        (icons::CHEVRON_LEFT, 17.0, "Previous (Left)", Cmd::Prev),
+                        (icons::CHEVRON_RIGHT, 17.0, "Next (Right)", Cmd::Next),
+                    ]
+                };
+                for (glyph, size, tip, cmd) in order {
+                    if icon_btn(ui, glyph, size, tip, c).clicked() {
+                        app.run(ctx, cmd);
+                    }
+                }
+            };
+            if right {
+                nav(ui, self, false);
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if icon_btn(ui, icons::MENU, 17.0, "Hide the task panel (Space)", c).clicked() {
+                        self.run(ctx, Cmd::ToggleTasks);
+                    }
+                });
+            } else {
+                if icon_btn(ui, icons::MENU, 17.0, "Hide the task panel (Space)", c).clicked() {
+                    self.run(ctx, Cmd::ToggleTasks);
+                }
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| nav(ui, self, true));
+            }
+        });
+        // today, go to a date, calendars, the view — and undo while it applies
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            if icon_btn(ui, icons::CALENDAR_CHECK, 16.0, "Today (T)", c).clicked() {
+                self.run(ctx, Cmd::Today);
+            }
+            if icon_btn(ui, icons::CALENDAR_DAYS, 16.0, "Go to a date", c).clicked() {
+                self.quick_nav = !self.quick_nav;
+            }
+            ui.menu_button(RichText::new(icons::CALENDAR).size(16.0).color(muted), |ui| {
+                ui.label(RichText::new("Calendars").color(muted));
+                let mut changed = false;
+                for cal in self.data.calendars.iter_mut() {
+                    changed |= ui.checkbox(&mut cal.visible, RichText::new(format!("{} {}", icons::CIRCLE, cal.name)).color(rgb(cal.color))).changed();
+                }
+                if changed {
+                    self.commit();
+                }
+                ui.separator();
+                if ui.button("Subscribe to a calendar…").clicked() {
+                    self.open_settings(crate::settings::Page::Calendars);
+                    ui.close_menu();
+                }
+                if ui.button("Refresh").clicked() {
+                    self.run(ctx, Cmd::Refresh);
+                    ui.close_menu();
+                }
+            })
+            .response
+            .on_hover_text("Calendars");
+            let mut v = self.view;
+            ui.menu_button(RichText::new(format!("{}  {}", v.label(), icons::CHEVRON_DOWN)).size(13.5).color(muted), |ui| {
+                ui.set_min_width(170.0);
+                for (o, key) in [
+                    (View::Days(1), "D"),
+                    (View::Week, "W"),
+                    (View::Month, "M"),
+                    (View::Agenda, "A"),
+                    (View::TwoWeeks, "X"),
+                ] {
+                    ui.horizontal(|ui| {
+                        if ui.selectable_label(v == o, o.label()).clicked() {
+                            v = o;
+                            ui.close_menu();
                         }
-                        ui.menu_button(RichText::new("☰ View").color(muted), |ui| {
-                            ui.set_min_width(220.0);
-                            let p = &mut self.data.prefs;
-                            ui.label(RichText::new("Pinned lists").color(muted).size(12.0));
-                            let mut ch = ui.checkbox(&mut p.show_due_today, "Due today").changed();
-                            ch |= ui.checkbox(&mut p.show_due_tomorrow, "Due tomorrow").changed();
-                            ch |= ui.checkbox(&mut p.show_due_soon, "Due soon").changed();
-                            ui.separator();
-                            ch |= ui.checkbox(&mut p.show_scheduled_tasks, "Show scheduled tasks").changed();
-                            ch |= ui.checkbox(&mut p.due_on_calendar, "Due dates on the calendar").changed();
-                            ui.separator();
-                            ui.label(RichText::new("Sort by").color(muted).size(12.0));
-                            for (i, n) in ["My order", "Due date", "Importance"].iter().enumerate() {
-                                ui.radio_value(&mut self.sort_by, i, *n);
-                            }
-                            if ch {
-                                self.commit();
-                            }
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.label(RichText::new(key).monospace().size(11.0).color(muted));
                         });
                     });
+                }
+                ui.separator();
+                ui.menu_button("Number of days", |ui| {
+                    for n in 2..=9u8 {
+                        if ui.selectable_label(v == View::Days(n), format!("{n} days")).clicked() {
+                            v = View::Days(n);
+                            ui.close_menu();
+                        }
+                    }
                 });
-                ui.add_space(6.0);
-                let r = ui.add(
-                    egui::TextEdit::singleline(&mut self.new_task_text)
-                        .hint_text("New task   #tag  !high  >list  30m  .tomorrow")
-                        .desired_width(f32::INFINITY)
-                        .margin(Margin::symmetric(8, 6)),
-                );
-                if self.focus_new_task {
-                    r.request_focus();
-                    self.focus_new_task = false;
-                }
-                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    let t = std::mem::take(&mut self.new_task_text);
-                    self.add_task(&t, 0);
-                    r.request_focus();
-                }
-                // tags as a quick filter
-                let mut tags: Vec<String> = self.data.tasks.iter().filter(|t| !t.done).flat_map(|t| t.tags.clone()).collect();
-                tags.sort();
-                tags.dedup();
-                if !tags.is_empty() {
-                    ui.add_space(2.0);
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
-                        for t in &tags {
-                            let on = self.filter_tag.as_deref() == Some(t.as_str());
-                            if ui.selectable_label(on, RichText::new(format!("#{t}")).size(11.5).color(if on { Color32::WHITE } else { muted })).clicked() {
-                                self.filter_tag = if on { None } else { Some(t.clone()) };
-                            }
+            })
+            .response
+            .on_hover_text("Calendar view");
+            self.view = v;
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                // undo appears while there is something to take back
+                let a = ctx.animate_bool_with_time(Id::new("undo_btn"), !self.undo.is_empty(), ANIM_S);
+                if a > 0.0 {
+                    ui.scope(|ui| {
+                        ui.set_opacity(a);
+                        if icon_btn(ui, icons::UNDO, 16.0, "Undo (Ctrl+Z)", c).clicked() {
+                            self.do_undo(ctx);
                         }
                     });
                 }
-                ui.add_space(8.0);
+            });
+        });
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Tasks").font(bold(18.0)));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.menu_button(RichText::new(icons::SLIDERS).size(15.0).color(muted), |ui| {
+                    ui.set_min_width(220.0);
+                    let p = &mut self.data.prefs;
+                    ui.label(RichText::new("Pinned lists").color(muted).size(12.0));
+                    let mut ch = ui.checkbox(&mut p.show_due_today, "Due today").changed();
+                    ch |= ui.checkbox(&mut p.show_due_tomorrow, "Due tomorrow").changed();
+                    ch |= ui.checkbox(&mut p.show_due_soon, "Due soon").changed();
+                    ui.separator();
+                    ch |= ui.checkbox(&mut p.show_scheduled_tasks, "Show scheduled tasks").changed();
+                    ch |= ui.checkbox(&mut p.due_on_calendar, "Due dates on the calendar").changed();
+                    ui.separator();
+                    ui.label(RichText::new("Sort by").color(muted).size(12.0));
+                    for (i, n) in ["My order", "Due date", "Importance"].iter().enumerate() {
+                        ui.radio_value(&mut self.sort_by, i, *n);
+                    }
+                    if ch {
+                        self.commit();
+                    }
+                })
+                .response
+                .on_hover_text("List options");
+            });
+        });
+        // tags as a quick filter
+        let mut tags: Vec<String> = self.data.tasks.iter().filter(|t| !t.done).flat_map(|t| t.tags.clone()).collect();
+        tags.sort();
+        tags.dedup();
+        if !tags.is_empty() {
+            ui.add_space(2.0);
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+                for t in &tags {
+                    let on = self.filter_tag.as_deref() == Some(t.as_str());
+                    if ui.selectable_label(on, RichText::new(format!("#{t}")).size(11.5).color(if on { Color32::WHITE } else { muted })).clicked() {
+                        self.filter_tag = if on { None } else { Some(t.clone()) };
+                    }
+                }
+            });
+        }
+        ui.add_space(8.0);
 
                 // which tasks go where
                 let tomorrow = today + Duration::days(1);
@@ -422,10 +463,10 @@ impl App {
                 egui::ScrollArea::vertical().id_salt("tasklist").auto_shrink([false, false]).show(ui, |ui| {
                     let mut any_pinned = false;
                     for (key, name, icon, color, items, show) in [
-                        ("overdue", "Overdue", "⏰", RED, &overdue, true),
-                        ("today", "Due today", "☀", ORANGE, &due_today, p.show_due_today),
-                        ("tomorrow", "Due tomorrow", "⏵", ORANGE, &due_tomorrow, p.show_due_tomorrow),
-                        ("soon", "Due soon", "⏶", ORANGE, &due_soon, p.show_due_soon),
+                        ("overdue", "Overdue", icons::ALARM, RED, &overdue, true),
+                        ("today", "Due today", icons::SUN, ORANGE, &due_today, p.show_due_today),
+                        ("tomorrow", "Due tomorrow", icons::ARROW_RIGHT, ORANGE, &due_tomorrow, p.show_due_tomorrow),
+                        ("soon", "Due soon", icons::CHEVRONS_RIGHT, ORANGE, &due_soon, p.show_due_soon),
                     ] {
                         if show && !items.is_empty() {
                             any_pinned = true;
@@ -442,7 +483,7 @@ impl App {
                         self.section(ui, ctx, &format!("list{id}"), name, None, *color, items, Some(*id));
                     }
                     if !done_ids.is_empty() {
-                        self.section(ui, ctx, "done", "Completed", Some(("✔", muted)), muted, &done_ids, None);
+                        self.section(ui, ctx, "done", "Completed", Some((icons::CHECK, muted)), muted, &done_ids, None);
                     }
                     ui.add_space(10.0);
                     if let Some(mut name) = self.new_list_text.take() {
@@ -457,13 +498,9 @@ impl App {
                         } else if !esc && !enter {
                             self.new_list_text = Some(name);
                         }
-                    } else if flat(ui, RichText::new("+   New task list").size(14.0).color(muted)).clicked() {
-                        self.new_list_text = Some(String::new());
                     }
                     ui.add_space(20.0);
                 });
-                let _ = text;
-            });
     }
 
     /// One collapsible group of tasks with its heading.
@@ -484,7 +521,7 @@ impl App {
         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
         let glow = ctx.animate_bool_with_time(Id::new(("sec", key)), resp.hovered(), ANIM_FAST_S);
         if glow > 0.0 {
-            ui.painter().rect_filled(r.expand2(vec2(6.0, 0.0)), 6.0, mix(side, text, 0.05 * glow));
+            fill_squircle(ui.painter(), r.expand2(vec2(6.0, 0.0)), RADIUS, mix(side, text, 0.05 * glow));
         }
         let p = ui.painter();
         let ic = pos2(r.left() + 9.0, r.center().y);
@@ -499,7 +536,7 @@ impl App {
         let g = p.text(pos2(r.left() + 28.0, r.center().y), Align2::LEFT_CENTER, name, bold(15.0), text);
         let count = items.len().to_string();
         let pill = Rect::from_center_size(pos2(g.right() + 18.0, r.center().y), vec2(10.0 + 8.0 * count.len() as f32, 18.0));
-        p.rect_filled(pill, 9.0, mix(side, text, 0.10));
+        fill_squircle(p, pill, RADIUS, mix(side, text, 0.10));
         p.text(pill.center(), Align2::CENTER_CENTER, count, FontId::proportional(11.5), muted);
         // chevron turns as the group opens
         let turn = ctx.animate_bool_with_time(Id::new(("chev", key)), !collapsed, ANIM_S);
@@ -645,8 +682,8 @@ impl App {
                 }
                 if let Some(d) = t.due {
                     let c = if d < today && !t.done { RED } else { muted };
-                    let rep = if t.repeat != Repeat::None { " ⟲" } else { "" };
-                    chips.push((format!("⚑ {}{rep}", due_label(d, today)), c));
+                    let rep = if t.repeat != Repeat::None { format!("  {}", icons::REPEAT) } else { String::new() };
+                    chips.push((format!("{} {}{rep}", icons::FLAG, due_label(d, today)), c));
                 }
                 if let Some(m) = t.duration_min {
                     chips.push((fmt_duration(m), muted));
@@ -672,7 +709,7 @@ impl App {
             let hovered = ui.rect_contains_pointer(inner.response.rect);
             let glow = ctx.animate_bool_with_time(Id::new(("row", salt, id)), hovered, ANIM_FAST_S);
             if glow > 0.0 {
-                ui.painter().rect_filled(inner.response.rect.expand2(vec2(6.0, 0.0)), 6.0, mix(side, text, 0.06).gamma_multiply(glow * 0.6));
+                fill_squircle(ui.painter(), inner.response.rect.expand2(vec2(6.0, 0.0)), RADIUS, mix(side, text, 0.06).gamma_multiply(glow * 0.6));
             }
         });
     }

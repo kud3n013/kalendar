@@ -1,5 +1,6 @@
 //! The settings window: a window of its own with a list of pages on the left.
 
+use crate::icons;
 use crate::model::*;
 use crate::{ics, mix, rgb, App, COMMANDS};
 use eframe::egui::{self, vec2, Align, Color32, FontId, Layout, Margin, RichText, Sense, Stroke};
@@ -9,6 +10,7 @@ pub enum Page {
     Shortcuts,
     Calendars,
     General,
+    Appearance,
     ActiveCalendars,
     Planner,
     Info,
@@ -132,13 +134,18 @@ impl App {
                 ui.spacing_mut().item_spacing.y = 2.0;
                 ui.add_space(26.0);
                 for (group, pages) in [
-                    ("Explore", vec![(Page::Shortcuts, "⌨", "Shortcuts")]),
-                    ("Integrations", vec![(Page::Calendars, "📆", "Calendars")]),
+                    ("Explore", vec![(Page::Shortcuts, icons::KEYBOARD, "Shortcuts")]),
+                    ("Integrations", vec![(Page::Calendars, icons::CALENDAR, "Calendars")]),
                     (
                         "Preferences",
-                        vec![(Page::General, "⚙", "General"), (Page::ActiveCalendars, "☑", "Active calendars"), (Page::Planner, "○", "Planner")],
+                        vec![
+                            (Page::General, icons::SETTINGS, "General"),
+                            (Page::Appearance, icons::PALETTE, "Appearance"),
+                            (Page::ActiveCalendars, icons::SQUARE_CHECK, "Active calendars"),
+                            (Page::Planner, icons::SHUFFLE, "Planner"),
+                        ],
                     ),
-                    ("About", vec![(Page::Info, "ℹ", "Info")]),
+                    ("About", vec![(Page::Info, icons::INFO, "Info")]),
                 ] {
                     ui.horizontal(|ui| {
                         ui.add_space(8.0);
@@ -181,6 +188,7 @@ impl App {
                     ui.set_max_width(w);
                     match self.settings_page {
                         Page::General => self.page_general(ui),
+                        Page::Appearance => self.page_appearance(ui),
                         Page::Planner => self.page_planner(ui),
                         Page::ActiveCalendars => self.page_active(ui),
                         Page::Calendars => self.page_calendars(ui, &ctx),
@@ -216,9 +224,6 @@ impl App {
         row(ui, "Initial calendar view", "", |ui| {
             let opts: Vec<(View, String)> = View::all().into_iter().map(|v| (v, v.label())).collect();
             combo(ui, "iv", &mut p.initial_view, &opts);
-        });
-        row(ui, "Theme", "", |ui| {
-            combo(ui, "th", &mut p.theme, &[(Theme::System, "System".into()), (Theme::Light, "Light".into()), (Theme::Dark, "Dark".into())]);
         });
         divider(ui, border);
         let snapshot = p.clone();
@@ -262,6 +267,17 @@ impl App {
         row(ui, "Show completed tasks", "On the calendar.", |ui| combo(ui, "ct", &mut p.show_completed_tasks, &yes_no));
         row(ui, "Show scheduled tasks in the list", "", |ui| combo(ui, "st", &mut p.show_scheduled_tasks, &yes_no));
         row(ui, "Due dates on the calendar", "", |ui| combo(ui, "dc", &mut p.due_on_calendar, &yes_no));
+    }
+
+    fn page_appearance(&mut self, ui: &mut egui::Ui) {
+        heading(ui, "Appearance");
+        let p = &mut self.data.prefs;
+        row(ui, "Theme", "", |ui| {
+            combo(ui, "th", &mut p.theme, &[(Theme::System, "System".into()), (Theme::Light, "Light".into()), (Theme::Dark, "Dark".into())]);
+        });
+        row(ui, "Task panel position", "Which side of the window the task panel sits on.", |ui| {
+            combo(ui, "ps", &mut p.sidebar_side, &[(PanelSide::Left, "Left".into()), (PanelSide::Right, "Right".into())]);
+        });
     }
 
     fn page_planner(&mut self, ui: &mut egui::Ui) {
@@ -460,7 +476,7 @@ impl App {
                     ui.label(RichText::new(format!("{kind}{when}")).size(14.0).color(muted));
                 });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.menu_button(RichText::new("···").size(20.0).color(muted), |ui| {
+                    ui.menu_button(RichText::new(icons::ELLIPSIS).size(18.0).color(muted), |ui| {
                         if ui.button("Refresh").clicked() {
                             refresh = Some(url.clone());
                             ui.close_menu();
@@ -477,7 +493,7 @@ impl App {
                     } else if let Some(e) = &c.error {
                         ui.label(RichText::new("Not connected").size(16.0).color(RED)).on_hover_text(e);
                     } else if c.last_sync.is_some() {
-                        ui.label(RichText::new("✔ Connected").size(16.0).color(GREEN));
+                        ui.label(RichText::new(format!("{} Connected", icons::CHECK)).size(16.0).color(GREEN));
                     } else {
                         ui.label(RichText::new("Waiting").size(16.0).color(muted));
                     }

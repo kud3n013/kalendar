@@ -1,6 +1,7 @@
 //! Kalendar: a calendar and task planner.
 
 mod ics;
+mod icons;
 mod model;
 mod panel;
 mod settings;
@@ -73,6 +74,48 @@ pub fn rgb(c: [u8; 3]) -> Color32 {
     Color32::from_rgb(c[0], c[1], c[2])
 }
 
+/// The outline of a squircle: a rectangle whose corners are superellipse
+/// arcs (continuous curvature) instead of circular ones.
+pub fn squircle_points(rect: egui::Rect, radius: f32) -> Vec<egui::Pos2> {
+    let r = radius.min(rect.width() / 2.0).min(rect.height() / 2.0);
+    if r <= 0.5 {
+        return vec![rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom()];
+    }
+    const STEPS: usize = 10;
+    // |x|^4 + |y|^4 = r^4, so the offsets are cos(t)^0.5 and sin(t)^0.5
+    let arc = |i: usize| {
+        let t = std::f32::consts::FRAC_PI_2 * i as f32 / STEPS as f32;
+        (t.cos().max(0.0).sqrt(), t.sin().max(0.0).sqrt())
+    };
+    let mut pts = Vec::with_capacity(4 * (STEPS + 1));
+    let (l, t, rt, b) = (rect.left(), rect.top(), rect.right(), rect.bottom());
+    for i in 0..=STEPS {
+        let (c, s) = arc(i);
+        pts.push(egui::pos2(rt - r + r * s, t + r - r * c)); // top right
+    }
+    for i in 0..=STEPS {
+        let (c, s) = arc(i);
+        pts.push(egui::pos2(rt - r + r * c, b - r + r * s)); // bottom right
+    }
+    for i in 0..=STEPS {
+        let (c, s) = arc(i);
+        pts.push(egui::pos2(l + r - r * s, b - r + r * c)); // bottom left
+    }
+    for i in 0..=STEPS {
+        let (c, s) = arc(i);
+        pts.push(egui::pos2(l + r - r * c, t + r - r * s)); // top left
+    }
+    pts
+}
+
+pub fn fill_squircle(p: &egui::Painter, rect: egui::Rect, radius: f32, fill: Color32) {
+    p.add(egui::Shape::convex_polygon(squircle_points(rect, radius), fill, egui::Stroke::NONE));
+}
+
+pub fn stroke_squircle(p: &egui::Painter, rect: egui::Rect, radius: f32, stroke: egui::Stroke) {
+    p.add(egui::Shape::closed_line(squircle_points(rect, radius), stroke));
+}
+
 pub enum Drag {
     Create { anchor: NaiveDateTime, draft: Event },
     Move { id: u64, grab_min: i64 },
@@ -82,6 +125,16 @@ pub enum Drag {
 pub struct EventEdit {
     pub ev: Event,
     pub is_new: bool,
+    pub focus: bool,
+}
+
+/// The small window that follows a block drawn on the calendar: it makes
+/// the block a task session (the default) or a plain event.
+pub struct CreateEdit {
+    pub ev: Event,
+    pub as_task: bool,
+    /// where the block is, in screen points; the window sits beside it
+    pub anchor_rect: egui::Rect,
     pub focus: bool,
 }
 
@@ -151,7 +204,7 @@ pub const COMMANDS: &[(Cmd, &str, &str, &str)] = &[
     (Cmd::ViewTwoWeeks, "2 weeks", "X", "Calendar view"),
     (Cmd::Refresh, "Refresh your calendars", "R", "Calendar view"),
     (Cmd::NewEvent, "Create a new event", "C", "Events and tasks"),
-    (Cmd::NewTask, "Create a new task", "N then T", "Events and tasks"),
+    (Cmd::NewTask, "Create a new task", "Ctrl+T", "Events and tasks"),
     (Cmd::Edit, "Edit an event", "E", "Events and tasks"),
     (Cmd::Delete, "Delete selected event or task", "Del / Backspace", "Events and tasks"),
     (Cmd::Copy, "Copy", "Ctrl+C", "Events and tasks"),
@@ -163,7 +216,7 @@ pub const COMMANDS: &[(Cmd, &str, &str, &str)] = &[
     (Cmd::Undo, "Undo", "Ctrl+Z", "General"),
     (Cmd::CommandBar, "Toggle command bar", "Ctrl+K", "General"),
     (Cmd::Search, "Open search", "Ctrl+F", "General"),
-    (Cmd::ToggleTasks, "Toggle left drawer", "Space", "General"),
+    (Cmd::ToggleTasks, "Toggle the task panel", "Space", "General"),
     (Cmd::ToggleTheme, "Toggle dark/light themes", "\\", "General"),
     (Cmd::FinerGrid, "Increase calendar time resolution", "]", "General"),
     (Cmd::CoarserGrid, "Reduce calendar time resolution", "[", "General"),
@@ -179,6 +232,7 @@ pub struct App {
     pub selected: Option<u64>,
     pub editor: Option<EventEdit>,
     pub task_editor: Option<TaskEdit>,
+    pub create: Option<CreateEdit>,
     pub drag: Option<Drag>,
     pub drag_task: Option<u64>,
     pub ctx_target: Option<u64>,
@@ -198,7 +252,8 @@ pub struct App {
     pub command_bar: Option<String>,
     pub command_focus: bool,
     pub new_task_text: String,
-    pub focus_new_task: bool,
+    pub new_task_open: bool,
+    pub new_task_focus: bool,
     pub quick_nav: bool,
     pub sub_url: String,
     pub sub_name: String,
@@ -215,7 +270,6 @@ pub struct App {
     pub collapsed: std::collections::HashSet<String>,
     pub scroll_to: Option<f32>,
     pub clipboard: Option<Event>,
-    pub last_n: f64,
     pub shot: Option<PathBuf>,
     pub frames: u32,
     pub pal: Palette,
@@ -228,13 +282,14 @@ impl App {
         let data = if shot.is_some() { Data::sample(today) } else { Data::load_or_sample(today) };
         let view = data.prefs.initial_view;
         let scroll = (opening_scroll_min(Self::now()) - data.prefs.grid_start_h * 60) as f32 / 60.0 * data.prefs.hour_height();
-        App {
+        let mut app = App {
             data,
             view,
             anchor: today,
             selected: None,
             editor: None,
             task_editor: None,
+            create: None,
             drag: None,
             drag_task: None,
             ctx_target: None,
@@ -252,7 +307,8 @@ impl App {
             command_bar: None,
             command_focus: false,
             new_task_text: String::new(),
-            focus_new_task: false,
+            new_task_open: false,
+            new_task_focus: false,
             quick_nav: false,
             sub_url: String::new(),
             sub_name: String::new(),
@@ -269,11 +325,23 @@ impl App {
             collapsed: ["done".to_string()].into_iter().collect(),
             scroll_to: Some(scroll.max(0.0)),
             clipboard: None,
-            last_n: -10.0,
             shot,
             frames: 0,
             pal: Palette::new(true),
+        };
+        // test aids for pictures of the new windows and layouts
+        if std::env::var("KALENDAR_PANEL_RIGHT").is_ok() {
+            app.data.prefs.sidebar_side = PanelSide::Right;
         }
+        if std::env::var("KALENDAR_SHOW_NEWTASK").is_ok() {
+            app.new_task_open = true;
+            app.new_task_focus = true;
+        }
+        if std::env::var("KALENDAR_SHOW_CREATE").is_ok() {
+            let start = today.and_hms_opt(10, 0, 0).unwrap();
+            app.open_create(start, 60, egui::Rect::from_min_size(egui::pos2(700.0, 300.0), egui::vec2(150.0, 100.0)));
+        }
+        app
     }
 
     /// The current time; KALENDAR_NOW=2026-11-11T10:30 overrides it for testing.
@@ -354,6 +422,30 @@ impl App {
                 }
             }
         };
+    }
+
+    /// Opens the small create window beside a block drawn on the calendar.
+    pub fn open_create(&mut self, start: NaiveDateTime, mins: i64, anchor_rect: egui::Rect) {
+        let id = self.data.new_id();
+        self.create = Some(CreateEdit {
+            ev: Event {
+                id,
+                title: String::new(),
+                start,
+                end: start + Duration::minutes(mins),
+                all_day: false,
+                calendar: self.data.first_own_calendar(),
+                notes: String::new(),
+                task_id: None,
+                color: None,
+                ..Default::default()
+            },
+            as_task: true,
+            anchor_rect,
+            focus: true,
+        });
+        self.editor = None;
+        self.selected = None;
     }
 
     pub fn open_new_event(&mut self, start: NaiveDateTime, mins: i64, all_day: bool) {
@@ -736,8 +828,8 @@ impl App {
                 self.open_new_event(start, NEW_EVENT_MIN, false);
             }
             Cmd::NewTask => {
-                self.data.prefs.sidebar_open = true;
-                self.focus_new_task = true;
+                self.new_task_open = true;
+                self.new_task_focus = true;
             }
             Cmd::Edit => {
                 if let Some(id) = self.selected {
@@ -837,8 +929,10 @@ impl App {
     fn keys(&mut self, ctx: &egui::Context) {
         let dialogs = self.editor.is_some()
             || self.task_editor.is_some()
-            || self.command_bar.is_some();
-        let (cmd_mod, shift, time) = ctx.input(|i| (i.modifiers.command, i.modifiers.shift, i.time));
+            || self.command_bar.is_some()
+            || self.create.is_some()
+            || self.new_task_open;
+        let (cmd_mod, shift) = ctx.input(|i| (i.modifiers.command, i.modifiers.shift));
         let pressed = |k: Key| ctx.input(|i| i.key_pressed(k));
         // always available
         if cmd_mod && pressed(Key::K) {
@@ -847,11 +941,17 @@ impl App {
         if cmd_mod && pressed(Key::F) {
             return self.run(ctx, Cmd::Search);
         }
+        if cmd_mod && pressed(Key::T) {
+            return self.run(ctx, Cmd::NewTask);
+        }
         if cmd_mod && pressed(Key::Q) {
             return self.run(ctx, Cmd::Quit);
         }
         if pressed(Key::Escape) {
             if self.command_bar.take().is_some() {
+            } else if self.new_task_open {
+                self.new_task_open = false;
+            } else if self.create.take().is_some() {
             } else if self.editor.take().is_some() || self.task_editor.take().is_some() {
             } else if self.show_prefs {
                 self.show_prefs = false;
@@ -882,14 +982,8 @@ impl App {
                 }
             }
         }
-        if pressed(Key::N) {
-            self.last_n = time;
-            return;
-        }
         if pressed(Key::T) {
-            let c = if time - self.last_n < 1.0 { Cmd::NewTask } else { Cmd::Today };
-            self.last_n = -10.0;
-            return self.run(ctx, c);
+            return self.run(ctx, Cmd::Today);
         }
         let map: &[(Key, Cmd)] = &[
             (Key::D, Cmd::ViewDay),
@@ -977,6 +1071,19 @@ impl eframe::App for App {
             s.spacing.item_spacing = egui::vec2(8.0, 6.0);
             s.spacing.button_padding = egui::vec2(8.0, 4.0);
             s.animation_time = ANIM_S;
+            // the one corner radius, everywhere
+            let cr = egui::CornerRadius::same(RADIUS as u8);
+            s.visuals.window_corner_radius = cr;
+            s.visuals.menu_corner_radius = cr;
+            for w in [
+                &mut s.visuals.widgets.noninteractive,
+                &mut s.visuals.widgets.inactive,
+                &mut s.visuals.widgets.hovered,
+                &mut s.visuals.widgets.active,
+                &mut s.visuals.widgets.open,
+            ] {
+                w.corner_radius = cr;
+            }
         });
 
         self.poll_sync(ctx);
@@ -988,6 +1095,7 @@ impl eframe::App for App {
                 "active" => Page::ActiveCalendars,
                 "shortcuts" => Page::Shortcuts,
                 "planner" => Page::Planner,
+                "appearance" => Page::Appearance,
                 "info" => Page::Info,
                 _ => Page::General,
             };
@@ -996,7 +1104,6 @@ impl eframe::App for App {
             return self.screenshot(ctx);
         }
         self.keys(ctx);
-        self.ui_rail(ctx);
         self.ui_sidebar(ctx);
         self.ui_toolbar(ctx);
         // slide and fade when the period or the view changes
@@ -1117,6 +1224,15 @@ fn main() {
             let mut fam = vec!["heavy".to_string()];
             fam.extend(base);
             fonts.families.insert(egui::FontFamily::Name("bold".into()), fam);
+            // the Lucide icon font covers only private-use glyphs, so it can
+            // sit at the end of every family as a fallback
+            fonts.font_data.insert(
+                "lucide".into(),
+                std::sync::Arc::new(egui::FontData::from_static(include_bytes!("../assets/lucide/lucide.ttf"))),
+            );
+            for fam in fonts.families.values_mut() {
+                fam.push("lucide".to_string());
+            }
             cc.egui_ctx.set_fonts(fonts);
             Ok(Box::new(App::new(shot)))
         }),

@@ -19,12 +19,14 @@ JSON data file, no account.
   work to the next free slot.
 - **Planner**: one click fits your open tasks into free working time
   (Mon–Fri, 08:00–18:00), splitting long tasks into chunks.
-- **Quick entry**: type `Write report #deep-work !high >Work 90m .tomorrow`
-  to set tags, priority, list, duration, and due date in one line.
+- **Quick entry**: press `Ctrl+T` and type
+  `Write report #deep-work !high >Work 90m .tomorrow` to set tags, priority,
+  list, duration, and due date in one line.
 - **Calendar subscriptions**: subscribe to read-only `.ics` feeds
   (`https://` or `webcal://`), refreshed automatically.
 - **Comfort**: command bar (Ctrl+K), search, undo with a grace toast,
-  light/dark themes, and a full keyboard shortcut set (press `.`).
+  light/dark themes, a task panel that can sit on the left or the right,
+  and a full keyboard shortcut set (press `.`).
 
 ## Build and run
 
@@ -54,3 +56,6 @@ to the binary, data is kept inside it instead.
 ## License
 
 GPL-2.0 — see [LICENSE](LICENSE).
+
+The bundled [Lucide](https://lucide.dev) icon font in `assets/lucide/` is
+ISC-licensed — see [assets/lucide/LICENSE](assets/lucide/LICENSE).
