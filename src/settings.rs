@@ -250,7 +250,7 @@ impl App {
         ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("settings"), builder, |ui, class| {
             if class == egui::ViewportClass::EmbeddedWindow {
                 // this system can't open a second window: egui shows this one
-                // inside the app, and the page's own close button closes it
+                // inside the app, and Esc closes it
                 ui.set_min_size(vec2(900.0, 640.0));
                 self.settings_body(ui);
                 return;
@@ -324,15 +324,6 @@ impl App {
         // the page
         let ctx = ui.ctx().clone();
         ui.scope_builder(egui::UiBuilder::new().max_rect(page_rect), |ui| {
-            // close button in the corner
-            let x = egui::Rect::from_min_size(page_rect.right_top() + vec2(-44.0, 10.0), vec2(30.0, 30.0));
-            let resp = ui.interact(x, ui.scope_id().with("close"), Sense::click());
-            let c = if resp.hovered() { text } else { muted };
-            ui.painter().line_segment([x.center() + vec2(-6.0, -6.0), x.center() + vec2(6.0, 6.0)], Stroke::new(1.6, c));
-            ui.painter().line_segment([x.center() + vec2(-6.0, 6.0), x.center() + vec2(6.0, -6.0)], Stroke::new(1.6, c));
-            if resp.clicked() {
-                self.show_prefs = false;
-            }
             let words = search_words(&self.settings_query);
             let salt = if words.is_empty() { self.settings_page as u8 } else { u8::MAX };
             egui::ScrollArea::vertical().id_salt(("page", salt)).auto_shrink([false, false]).show(ui, |ui| {
@@ -724,30 +715,26 @@ impl App {
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 12.0;
-            for (kind, label) in [(1u8, "Calendar feed"), (2u8, "Proton Calendar")] {
-                let on = self.sub_kind == kind;
-                let b = egui::Button::new(RichText::new(format!("   {label}")).size(17.0))
-                    .min_size(vec2(((ui.available_width() - 12.0) / 2.0).clamp(150.0, 260.0), 52.0))
-                    .corner_radius(8)
-                    .fill(mix(side, text, if on { 0.16 } else { 0.09 }));
-                if ui.add(b).clicked() {
-                    self.sub_kind = if on { 0 } else { kind };
-                }
+            let on = self.sub_kind != 0;
+            let b = egui::Button::new(RichText::new("   Calendar feed").size(17.0))
+                .min_size(vec2(((ui.available_width() - 12.0) / 2.0).clamp(150.0, 260.0), 52.0))
+                .corner_radius(8)
+                .fill(mix(side, text, if on { 0.16 } else { 0.09 }));
+            if ui.add(b).clicked() {
+                self.sub_kind = if on { 0 } else { 1 };
             }
         });
         if self.sub_kind != 0 {
             ui.add_space(12.0);
             egui::Frame::new().fill(mix(side, text, 0.04)).stroke(Stroke::new(1.0, border)).corner_radius(10).inner_margin(Margin::same(16)).show(ui, |ui| {
-                let help = if self.sub_kind == 2 {
-                    "In Proton Calendar open Settings → Calendars, pick the calendar, choose \"Share with anyone\" and create a link. Paste that link here."
-                } else {
-                    "Paste the calendar's link. It starts with https:// or webcal:// and usually ends in .ics."
-                };
+                // one field takes every kind of link: plain .ics feeds, webcal,
+                // and shared links from Proton, Google, Outlook or iCloud
+                let help = "Paste the calendar's link: an https://, http:// or webcal:// address, such as a .ics feed or a shared link from Proton, Google, Outlook or iCloud. For Proton Calendar, open Settings > Calendars, pick the calendar, choose \"Share with anyone\" and copy the link.";
                 ui.label(RichText::new(help).size(14.0).color(muted));
                 ui.add_space(6.0);
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut self.sub_url)
-                        .hint_text(if self.sub_kind == 2 { "https://calendar.proton.me/api/calendar/v1/url/…" } else { "https://…/calendar.ics" })
+                        .hint_text("https://…/calendar.ics  or  webcal://…")
                         .font(FontId::proportional(15.0))
                         .margin(Margin::symmetric(10, 8))
                         .desired_width(f32::INFINITY),

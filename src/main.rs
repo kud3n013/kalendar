@@ -1367,6 +1367,10 @@ impl eframe::App for App {
             if let Ok(q) = std::env::var("KALENDAR_SHORTCUT_QUERY") {
                 self.shortcut_query = q;
             }
+            if let Ok(u) = std::env::var("KALENDAR_SUB_URL") {
+                self.sub_kind = 1;
+                self.sub_url = u;
+            }
             egui::CentralPanel::default().frame(egui::Frame::new().fill(self.pal.bg)).show(ui, |ui| self.settings_body(ui));
             self.dlg_toast_public(ctx);
             return self.screenshot(ctx);
