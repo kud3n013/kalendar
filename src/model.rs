@@ -221,6 +221,10 @@ impl Prefs {
 
 #[derive(Clone, Serialize, Deserialize, Default)]
 pub struct Calendar {
+    /// stable identity; events and frames point at it. 0 only in data
+    /// files written before ids existed, until `Data::migrate` runs
+    #[serde(default)]
+    pub id: u64,
     pub name: String,
     pub color: [u8; 3],
     pub visible: bool,
@@ -232,6 +236,27 @@ pub struct Calendar {
     pub last_sync: Option<String>,
     #[serde(default)]
     pub error: Option<String>,
+    /// the synced account it belongs to; None for own and subscribed ones
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<u64>,
+    /// its address or id on the server
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_id: Option<String>,
+    /// the server's sync token, to ask only for what changed
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ctag: Option<String>,
+    /// its events cannot be changed here
+    #[serde(default)]
+    pub read_only: bool,
+}
+
+impl Calendar {
+    /// Kept on this computer only: not subscribed and not synced.
+    pub fn is_local(&self) -> bool {
+        self.url.is_none() && self.account.is_none()
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]
@@ -241,7 +266,8 @@ pub struct Event {
     pub start: NaiveDateTime,
     pub end: NaiveDateTime,
     pub all_day: bool,
-    pub calendar: usize,
+    /// id of its calendar
+    pub calendar: u64,
     pub notes: String,
     pub task_id: Option<u64>,
     /// own colour, chosen from the right-click menu
@@ -250,6 +276,23 @@ pub struct Event {
     /// came from a subscribed calendar
     #[serde(default)]
     pub remote: bool,
+    /// UID of the event on the server
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uid: Option<String>,
+    /// which occurrence of a repeating event this is
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recurrence_id: Option<String>,
+    /// where it lives on the server
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub href: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub etag: Option<String>,
+    /// the event as the server sent it, so nothing is lost when writing back
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw: Option<String>,
+    /// changed here and not yet sent to the server
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dirty: bool,
 }
 
 impl Event {
@@ -282,6 +325,17 @@ pub struct Task {
     /// how its due date repeats once it is completed
     #[serde(default)]
     pub repeat: Repeat,
+    /// the same server fields as on events, for synced task lists
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uid: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub href: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub etag: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dirty: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug, Default)]
@@ -353,8 +407,8 @@ impl FrameFilter {
 pub struct Frame {
     pub id: u64,
     pub name: String,
-    /// one of one's own calendars, never a subscribed one
-    pub calendar: usize,
+    /// id of one of one's own calendars, never a subscribed one
+    pub calendar: u64,
     pub color: Option<[u8; 3]>,
     /// minutes from midnight; the frame ends on the same day
     pub start_min: i64,
@@ -424,6 +478,24 @@ impl Frame {
     }
     pub fn minutes(&self) -> i64 {
         self.end_min - self.start_min
+    }
+}
+
+/// Names an event on a server.
+#[derive(Clone, Debug, PartialEq)]
+pub enum RemoteKey {
+    /// UID and, for one occurrence of a repeating event, which one
+    Uid(String, Option<String>),
+    /// address of the whole event, with all its occurrences
+    Href(String),
+}
+
+impl RemoteKey {
+    pub fn matches(&self, e: &Event) -> bool {
+        match self {
+            RemoteKey::Uid(uid, rid) => e.uid.as_ref() == Some(uid) && &e.recurrence_id == rid,
+            RemoteKey::Href(h) => e.href.as_ref() == Some(h),
+        }
     }
 }
 
@@ -584,7 +656,7 @@ fn write_json(p: PathBuf, s: String) {
 
 impl Data {
     pub fn load_or_sample(today: NaiveDate) -> Data {
-        let stored: Option<Data> = std::fs::read_to_string(data_path()).ok().and_then(|s| serde_json::from_str(&s).ok());
+        let stored: Option<Data> = std::fs::read_to_string(data_path()).ok().and_then(|s| Data::from_json(&s));
         let had_data = stored.is_some();
         let mut data = stored.unwrap_or_else(|| Data::sample(today));
         // settings come from their own file; an older data.json carries
@@ -629,51 +701,130 @@ impl Data {
     pub fn event_color(&self, e: &Event) -> [u8; 3] {
         e.color.unwrap_or_else(|| self.calendar_color(e.calendar))
     }
-    /// The calendar task sessions go to: the one named "Tasks", else the
-    /// first calendar of one's own.
-    pub fn task_calendar(&self) -> usize {
-        self.calendars
-            .iter()
-            .position(|c| c.url.is_none() && c.name == "Tasks")
-            .or_else(|| self.calendars.iter().position(|c| c.url.is_none()))
-            .unwrap_or(0)
+    /// Reads a data file, bringing an older one up to date.
+    pub fn from_json(text: &str) -> Option<Data> {
+        let mut d: Data = serde_json::from_str(text).ok()?;
+        d.migrate();
+        Some(d)
     }
-    /// The first calendar new events can be written to.
-    pub fn first_own_calendar(&self) -> usize {
-        self.calendars.iter().position(|c| c.url.is_none()).unwrap_or(0)
-    }
-    /// Replaces a subscribed calendar's events with freshly fetched ones.
-    pub fn replace_remote(&mut self, cal: usize, feed: Vec<crate::ics::FeedEvent>) {
-        self.events.retain(|e| !(e.remote && e.calendar == cal));
-        for f in feed {
-            let id = self.new_id();
-            self.events.push(Event {
-                id,
-                title: f.title,
-                start: f.start,
-                end: f.end,
-                all_day: f.all_day,
-                calendar: cal,
-                notes: f.notes,
-                remote: true,
-                ..Default::default()
-            });
-        }
-    }
-    /// Removes a calendar with its events and keeps the others pointing right.
-    pub fn remove_calendar(&mut self, cal: usize) {
-        if cal >= self.calendars.len() {
+    /// Older data files had no calendar ids: events and frames held the
+    /// calendar's place in the list. Gives every calendar an id, in list
+    /// order, and points events and frames at the ids.
+    pub fn migrate(&mut self) {
+        if self.calendars.iter().all(|c| c.id != 0) {
             return;
         }
+        let old = self.calendars.iter().all(|c| c.id == 0);
+        for i in 0..self.calendars.len() {
+            if self.calendars[i].id == 0 {
+                self.calendars[i].id = self.new_id();
+            }
+            if self.calendars[i].url.is_some() {
+                self.calendars[i].read_only = true;
+            }
+        }
+        if !old {
+            return;
+        }
+        let ids: Vec<u64> = self.calendars.iter().map(|c| c.id).collect();
+        let first = ids.first().copied().unwrap_or(0);
+        let at = |i: u64| ids.get(i as usize).copied().unwrap_or(first);
+        for e in &mut self.events {
+            e.calendar = at(e.calendar);
+        }
+        for f in &mut self.frames {
+            f.calendar = at(f.calendar);
+        }
+    }
+    pub fn calendar(&self, id: u64) -> Option<&Calendar> {
+        self.calendars.iter().find(|c| c.id == id)
+    }
+    pub fn calendar_mut(&mut self, id: u64) -> Option<&mut Calendar> {
+        self.calendars.iter_mut().find(|c| c.id == id)
+    }
+    /// The calendar task sessions go to: the one named "Tasks", else the
+    /// first calendar of one's own.
+    pub fn task_calendar(&self) -> u64 {
+        self.calendars
+            .iter()
+            .find(|c| c.is_local() && c.name == "Tasks")
+            .map(|c| c.id)
+            .unwrap_or_else(|| self.first_own_calendar())
+    }
+    /// The first calendar new events can be written to.
+    pub fn first_own_calendar(&self) -> u64 {
+        self.calendars.iter().find(|c| c.is_local()).or(self.calendars.first()).map(|c| c.id).unwrap_or(0)
+    }
+    /// Brings a calendar in line with what the server sent: `upserts` are
+    /// new or changed events, `deletes` are gone. An event already here is
+    /// matched by UID and occurrence, and keeps its id and own colour.
+    pub fn apply_delta(&mut self, cal: u64, upserts: Vec<crate::ics::FeedEvent>, deletes: &[RemoteKey]) {
+        use std::collections::{HashMap, VecDeque};
+        if !deletes.is_empty() {
+            self.events.retain(|e| {
+                !(e.remote && e.calendar == cal && deletes.iter().any(|k| k.matches(e)))
+            });
+        }
+        // a feed may repeat a key; each copy takes the next match
+        let mut have: HashMap<(String, Option<String>), VecDeque<usize>> = HashMap::new();
+        for (i, e) in self.events.iter().enumerate() {
+            if e.remote && e.calendar == cal {
+                if let Some(uid) = &e.uid {
+                    have.entry((uid.clone(), e.recurrence_id.clone())).or_default().push_back(i);
+                }
+            }
+        }
+        for f in upserts {
+            let found = have.get_mut(&(f.uid.clone(), f.recurrence_id.clone())).and_then(|q| q.pop_front());
+            let i = match found {
+                Some(i) => i,
+                None => {
+                    let id = self.new_id();
+                    self.events.push(Event { id, calendar: cal, remote: true, ..Default::default() });
+                    self.events.len() - 1
+                }
+            };
+            let e = &mut self.events[i];
+            e.title = f.title;
+            e.start = f.start;
+            e.end = f.end;
+            e.all_day = f.all_day;
+            e.notes = f.notes;
+            e.uid = Some(f.uid);
+            e.recurrence_id = f.recurrence_id;
+            e.href = f.href;
+            e.etag = f.etag;
+            e.dirty = false;
+        }
+    }
+    /// Makes a calendar hold exactly the events of a freshly fetched feed.
+    pub fn apply_full(&mut self, cal: u64, feed: Vec<crate::ics::FeedEvent>) {
+        use std::collections::HashMap;
+        // how many of each key the feed holds; extra copies here go
+        let mut want: HashMap<(String, Option<String>), usize> = HashMap::new();
+        for f in &feed {
+            *want.entry((f.uid.clone(), f.recurrence_id.clone())).or_default() += 1;
+        }
+        self.events.retain(|e| {
+            if !(e.remote && e.calendar == cal) {
+                return true;
+            }
+            let Some(uid) = &e.uid else { return false };
+            match want.get_mut(&(uid.clone(), e.recurrence_id.clone())) {
+                Some(n) if *n > 0 => {
+                    *n -= 1;
+                    true
+                }
+                _ => false,
+            }
+        });
+        self.apply_delta(cal, feed, &[]);
+    }
+    /// Removes a calendar with its events and frames.
+    pub fn remove_calendar(&mut self, cal: u64) {
         self.events.retain(|e| e.calendar != cal);
-        for e in self.events.iter_mut().filter(|e| e.calendar > cal) {
-            e.calendar -= 1;
-        }
         self.frames.retain(|f| f.calendar != cal);
-        for f in self.frames.iter_mut().filter(|f| f.calendar > cal) {
-            f.calendar -= 1;
-        }
-        self.calendars.remove(cal);
+        self.calendars.retain(|c| c.id != cal);
     }
     pub fn frame(&self, id: u64) -> Option<&Frame> {
         self.frames.iter().find(|f| f.id == id)
@@ -703,7 +854,7 @@ impl Data {
             .frames
             .iter()
             .filter(|f| {
-                self.calendars.get(f.calendar).is_some_and(|c| c.visible && c.url.is_none())
+                self.calendar(f.calendar).is_some_and(|c| c.visible && c.is_local())
                     && f.end_min > f.start_min
                     && Self::frame_occurs_on(f, day)
             })
@@ -716,11 +867,11 @@ impl Data {
         v.sort_by_key(|o| (o.start, o.end));
         v
     }
-    pub fn calendar_color(&self, i: usize) -> [u8; 3] {
-        self.calendars.get(i).map(|c| c.color).unwrap_or([66, 133, 244])
+    pub fn calendar_color(&self, id: u64) -> [u8; 3] {
+        self.calendar(id).map(|c| c.color).unwrap_or([66, 133, 244])
     }
     pub fn event_visible(&self, e: &Event) -> bool {
-        if !self.calendars.get(e.calendar).map(|c| c.visible).unwrap_or(true) {
+        if !self.calendar(e.calendar).map(|c| c.visible).unwrap_or(true) {
             return false;
         }
         if let Some(t) = e.task_id.and_then(|id| self.task(id)) {
@@ -743,10 +894,10 @@ impl Data {
             events: vec![],
             tasks: vec![],
             calendars: vec![
-                Calendar { name: "Personal".into(), color: [0x35, 0x85, 0xe1], visible: true, ..Default::default() },
-                Calendar { name: "Work".into(), color: [0x77, 0x7b, 0xf0], visible: true, ..Default::default() },
-                Calendar { name: "Family".into(), color: [0xe8, 0xae, 0x26], visible: true, ..Default::default() },
-                Calendar { name: "Tasks".into(), color: [0x38, 0xc2, 0xc7], visible: true, ..Default::default() },
+                Calendar { id: 1, name: "Personal".into(), color: [0x35, 0x85, 0xe1], visible: true, ..Default::default() },
+                Calendar { id: 2, name: "Work".into(), color: [0x77, 0x7b, 0xf0], visible: true, ..Default::default() },
+                Calendar { id: 3, name: "Family".into(), color: [0xe8, 0xae, 0x26], visible: true, ..Default::default() },
+                Calendar { id: 4, name: "Tasks".into(), color: [0x38, 0xc2, 0xc7], visible: true, ..Default::default() },
             ],
             frames: vec![],
             prefs: Prefs::default(),
@@ -754,7 +905,8 @@ impl Data {
         };
         let ws = d.prefs.week_start(today);
         let at = |day: i64, h: u32, m: u32| (ws + Duration::days(day)).and_hms_opt(h, m, 0).unwrap();
-        let mut ev = |d: &mut Data, title: &str, day: i64, h: u32, m: u32, mins: i64, cal: usize| {
+        // sample calendars have the ids 1 to 4, in list order
+        let mut ev = |d: &mut Data, title: &str, day: i64, h: u32, m: u32, mins: i64, cal: u64| {
             let id = d.new_id();
             let start = at(day, h, m);
             d.events.push(Event {
@@ -763,7 +915,7 @@ impl Data {
                 start,
                 end: start + Duration::minutes(mins),
                 all_day: false,
-                calendar: cal,
+                calendar: cal + 1,
                 notes: String::new(),
                 task_id: None,
             color: None,
@@ -790,7 +942,7 @@ impl Data {
             start: at(4, 0, 0),
             end: at(6, 0, 0),
             all_day: true,
-            calendar: 2,
+            calendar: 3,
             notes: String::new(),
             task_id: None,
         color: None,
@@ -825,7 +977,7 @@ impl Data {
             d.frames.push(Frame {
                 id,
                 name: name.into(),
-                calendar: cal,
+                calendar: cal + 1,
                 start_min: h * 60,
                 end_min: (h + if filter.is_empty() { 2 } else { 1 }) * 60,
                 from: ws,
@@ -843,7 +995,7 @@ impl Data {
             start,
             end: start + Duration::minutes(45),
             all_day: false,
-            calendar: 3,
+            calendar: 4,
             notes: String::new(),
             task_id: Some(tid),
         color: None,
@@ -1038,7 +1190,7 @@ impl Data {
 struct Window {
     start: NaiveDateTime,
     end: NaiveDateTime,
-    calendar: usize,
+    calendar: u64,
     /// how specific the frame's filter is; 0 outside frames
     spec: usize,
 }
@@ -1072,7 +1224,7 @@ fn subtract(gaps: Vec<Span>, cuts: &[Span]) -> Vec<Span> {
 /// Places `need` minutes in the windows: the first one with room for all of
 /// it, else (when splitting is allowed) chunks of at least PLAN_MIN_CHUNK
 /// across the windows in order, never leaving a smaller remainder.
-fn fit(windows: &[Window], need: i64, can_split: bool) -> Option<Vec<(NaiveDateTime, NaiveDateTime, usize)>> {
+fn fit(windows: &[Window], need: i64, can_split: bool) -> Option<Vec<(NaiveDateTime, NaiveDateTime, u64)>> {
     if let Some(w) = windows.iter().find(|w| (w.end - w.start).num_minutes() >= need) {
         return Some(vec![(w.start, w.start + Duration::minutes(need), w.calendar)]);
     }
@@ -1080,7 +1232,7 @@ fn fit(windows: &[Window], need: i64, can_split: bool) -> Option<Vec<(NaiveDateT
         return None;
     }
     let mut left = need;
-    let mut placed: Vec<(NaiveDateTime, NaiveDateTime, usize)> = vec![];
+    let mut placed: Vec<(NaiveDateTime, NaiveDateTime, u64)> = vec![];
     for w in windows {
         // windows of overlapping frames may share time already taken
         let taken: Vec<Span> = placed.iter().map(|p| (p.0, p.1)).collect();
@@ -1151,8 +1303,9 @@ mod tests {
         d
     }
 
-    fn frame(id: u64, cal: usize) -> Frame {
-        Frame { id, name: format!("F{id}"), calendar: cal, from: ymd(11, 16), ..Default::default() }
+    /// `cal` is the calendar's place in the sample list; its id is one more.
+    fn frame(id: u64, cal: u64) -> Frame {
+        Frame { id, name: format!("F{id}"), calendar: cal + 1, from: ymd(11, 16), ..Default::default() }
     }
 
     #[test]
@@ -1245,7 +1398,7 @@ mod tests {
             .events
             .iter()
             .filter(|e| e.task_id.is_some())
-            .map(|e| format!("{} {} {} c{}", e.start.format("%a %H:%M"), e.end.format("%H:%M"), e.title, e.calendar))
+            .map(|e| format!("{} {} {} c{}", e.start.format("%a %H:%M"), e.end.format("%H:%M"), e.title, d.calendars.iter().position(|c| c.id == e.calendar).unwrap()))
             .collect();
         v.sort();
         v
@@ -1294,7 +1447,7 @@ mod tests {
         id
     }
 
-    fn deep_frame(id: u64, cal: usize, start_h: i64, end_h: i64) -> Frame {
+    fn deep_frame(id: u64, cal: u64, start_h: i64, end_h: i64) -> Frame {
         let mut f = frame(id, cal);
         f.start_min = start_h * 60;
         f.end_min = end_h * 60;
@@ -1413,11 +1566,106 @@ mod tests {
     }
 
     #[test]
-    fn removing_a_calendar_reindexes_frames() {
-        let mut d = empty();
+    fn removing_a_calendar_keeps_the_others() {
+        let mut d = Data::sample(ymd(11, 16));
         d.frames = vec![frame(1, 0), frame(2, 1), frame(3, 3)];
-        d.remove_calendar(1);
-        let v: Vec<(u64, usize)> = d.frames.iter().map(|f| (f.id, f.calendar)).collect();
-        assert_eq!(v, vec![(1, 0), (3, 2)]);
+        let before: Vec<(u64, String)> =
+            d.events.iter().filter(|e| e.calendar != 2).map(|e| (e.id, d.calendar(e.calendar).unwrap().name.clone())).collect();
+        d.remove_calendar(2);
+        let v: Vec<(u64, u64)> = d.frames.iter().map(|f| (f.id, f.calendar)).collect();
+        assert_eq!(v, vec![(1, 1), (3, 4)]);
+        let after: Vec<(u64, String)> = d.events.iter().map(|e| (e.id, d.calendar(e.calendar).unwrap().name.clone())).collect();
+        assert_eq!(before, after, "an event moved to another calendar");
+        // putting the calendars in another order moves nothing either
+        d.calendars.reverse();
+        let again: Vec<(u64, String)> = d.events.iter().map(|e| (e.id, d.calendar(e.calendar).unwrap().name.clone())).collect();
+        assert_eq!(before, again);
+    }
+
+    /// A data file as written before calendars had ids.
+    fn old_format(d: &Data) -> String {
+        let mut v = serde_json::to_value(d).unwrap();
+        let ids: Vec<u64> = d.calendars.iter().map(|c| c.id).collect();
+        let place = |id: &serde_json::Value| ids.iter().position(|x| Some(*x) == id.as_u64()).unwrap();
+        for c in v["calendars"].as_array_mut().unwrap() {
+            let c = c.as_object_mut().unwrap();
+            c.remove("id");
+            c.remove("read_only");
+        }
+        for key in ["events", "frames"] {
+            for e in v[key].as_array_mut().unwrap() {
+                e["calendar"] = place(&e["calendar"]).into();
+            }
+        }
+        v.to_string()
+    }
+
+    #[test]
+    fn old_data_file_gets_calendar_ids() {
+        let mut sample = Data::sample(ymd(11, 16));
+        sample.calendars.push(Calendar { id: 5, name: "Feed".into(), url: Some("https://example.org/a.ics".into()), visible: true, ..Default::default() });
+        let names = |d: &Data| -> Vec<(u64, String, String)> {
+            let mut v: Vec<_> = d.events.iter().map(|e| (e.id, e.title.clone(), d.calendar(e.calendar).expect("event without calendar").name.clone())).collect();
+            v.extend(d.frames.iter().map(|f| (f.id, f.name.clone(), d.calendar(f.calendar).expect("frame without calendar").name.clone())));
+            v
+        };
+        let want = names(&sample);
+        let loaded = Data::from_json(&old_format(&sample)).expect("old data.json");
+        assert!(loaded.calendars.iter().all(|c| c.id != 0));
+        let mut ids: Vec<u64> = loaded.calendars.iter().map(|c| c.id).collect();
+        ids.dedup();
+        assert_eq!(ids.len(), 5, "calendar ids must differ");
+        assert!(loaded.calendars[4].read_only && !loaded.calendars[0].read_only);
+        assert_eq!(names(&loaded), want);
+        // saved and read again, nothing moves and the ids stay
+        let again = Data::from_json(&serde_json::to_string(&loaded).unwrap()).unwrap();
+        assert_eq!(names(&again), want);
+        assert_eq!(again.calendars.iter().map(|c| c.id).collect::<Vec<_>>(), loaded.calendars.iter().map(|c| c.id).collect::<Vec<_>>());
+        assert_eq!(again.next_id, loaded.next_id);
+    }
+
+    fn feed_event(uid: &str, rid: Option<&str>, title: &str, h: u32) -> crate::ics::FeedEvent {
+        let start = ymd(11, 16).and_hms_opt(h, 0, 0).unwrap();
+        crate::ics::FeedEvent {
+            title: title.into(),
+            start,
+            end: start + Duration::hours(1),
+            all_day: false,
+            notes: String::new(),
+            uid: uid.into(),
+            recurrence_id: rid.map(|s| s.to_string()),
+            href: None,
+            etag: None,
+        }
+    }
+
+    #[test]
+    fn refreshing_a_feed_keeps_event_ids() {
+        let mut d = empty();
+        let own = d.events.len();
+        let feed = || vec![feed_event("a", None, "A", 9), feed_event("r", Some("1"), "R", 10), feed_event("r", Some("2"), "R", 11)];
+        d.apply_full(2, feed());
+        let ids: Vec<u64> = d.events.iter().map(|e| e.id).collect();
+        assert_eq!(ids.len(), own + 3);
+        d.event_mut(ids[0]).unwrap().color = Some([1, 2, 3]);
+        d.apply_full(2, feed());
+        assert_eq!(d.events.iter().map(|e| e.id).collect::<Vec<_>>(), ids);
+        assert_eq!(d.event(ids[0]).unwrap().color, Some([1, 2, 3]), "own colour lost");
+
+        // one changed, one gone, one new
+        d.apply_full(2, vec![feed_event("a", None, "A moved", 14), feed_event("r", Some("2"), "R", 11), feed_event("n", None, "N", 12)]);
+        let a = d.event(ids[0]).expect("changed event kept its id");
+        assert_eq!((a.title.as_str(), a.start.hour()), ("A moved", 14));
+        assert!(d.event(ids[1]).is_none(), "event gone from the feed stays");
+        assert!(d.event(ids[2]).is_some());
+        assert_eq!(d.events.len(), 3);
+
+        // a change on its own, and deletes by key
+        d.apply_delta(2, vec![feed_event("n", None, "N2", 13)], &[RemoteKey::Uid("r".into(), Some("2".into()))]);
+        assert_eq!(d.events.len(), 2);
+        assert!(d.events.iter().any(|e| e.title == "N2"));
+        // another calendar's events are never touched
+        d.apply_full(1, vec![]);
+        assert_eq!(d.events.len(), 2);
     }
 }

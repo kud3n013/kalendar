@@ -623,7 +623,9 @@ impl App {
                 self.snapshot();
                 let n = self.data.calendars.len();
                 let name = std::mem::take(&mut self.new_cal_name);
+                let id = self.data.new_id();
                 self.data.calendars.push(Calendar {
+                    id,
                     name: name.trim().to_string(),
                     color: EVENT_COLORS[(n * 3 + 1) % EVENT_COLORS.len()].0,
                     visible: true,
@@ -636,12 +638,13 @@ impl App {
             }
         });
         ui.add_space(10.0);
-        let own_count = self.data.calendars.iter().filter(|c| c.url.is_none()).count();
-        let counts: Vec<usize> = (0..self.data.calendars.len()).map(|i| self.data.events.iter().filter(|e| e.calendar == i).count()).collect();
-        let mut remove: Option<usize> = None;
-        let mut ask: Option<Option<usize>> = None;
+        let own_count = self.data.calendars.iter().filter(|c| c.is_local()).count();
+        let counts: Vec<usize> = self.data.calendars.iter().map(|c| self.data.events.iter().filter(|e| e.calendar == c.id).count()).collect();
+        let mut remove: Option<u64> = None;
+        let mut ask: Option<Option<u64>> = None;
         for (i, c) in self.data.calendars.iter_mut().enumerate() {
-            let subscribed = c.url.is_some();
+            let subscribed = !c.is_local();
+            let cid = c.id;
             ui.allocate_ui_with_layout(vec2(ui.available_width(), 52.0), Layout::left_to_right(Align::Center), |ui| {
                 ui.checkbox(&mut c.visible, "").on_hover_text("Show on the calendar");
                 // colour: a dot that opens the palette
@@ -660,17 +663,17 @@ impl App {
                         }
                     });
                 });
-                ui.add(egui::TextEdit::singleline(&mut c.name).font(FontId::proportional(16.0)).desired_width((ui.available_width() - 330.0).clamp(110.0, 280.0)).id_salt(("calname", i)));
+                ui.add(egui::TextEdit::singleline(&mut c.name).font(FontId::proportional(16.0)).desired_width((ui.available_width() - 330.0).clamp(110.0, 280.0)).id_salt(("calname", cid)));
                 let what = if subscribed { "subscribed, read-only".to_string() } else { format!("{} events", counts[i]) };
                 ui.label(RichText::new(what).size(13.0).color(muted));
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if self.confirm_remove == Some(i) {
+                    if self.confirm_remove == Some(cid) {
                         if ui.add(egui::Button::new(RichText::new("Cancel").size(14.0)).corner_radius(7)).clicked() {
                             ask = Some(None);
                         }
                         let label = if subscribed { "Unsubscribe".to_string() } else { format!("Remove with its {} events", counts[i]) };
                         if ui.add(egui::Button::new(RichText::new(label).size(14.0).color(Color32::WHITE)).fill(RED).corner_radius(7)).clicked() {
-                            remove = Some(i);
+                            remove = Some(cid);
                         }
                     } else {
                         let last_own = !subscribed && own_count <= 1;
@@ -679,7 +682,7 @@ impl App {
                         if last_own {
                             resp.on_disabled_hover_text("At least one calendar of your own is needed");
                         } else if resp.clicked() {
-                            ask = Some(Some(i));
+                            ask = Some(Some(cid));
                         }
                     }
                 });
@@ -690,10 +693,10 @@ impl App {
         if let Some(a) = ask {
             self.confirm_remove = a;
         }
-        if let Some(i) = remove {
+        if let Some(id) = remove {
             self.snapshot();
-            let name = self.data.calendars[i].name.clone();
-            self.data.remove_calendar(i);
+            let name = self.data.calendar(id).map(|c| c.name.clone()).unwrap_or_default();
+            self.data.remove_calendar(id);
             self.confirm_remove = None;
             self.selected = None;
             self.editor = None;
@@ -761,8 +764,8 @@ impl App {
         divider(ui, border);
         heading(ui, "Manage integrations");
         let mut refresh: Option<String> = None;
-        let mut remove: Option<usize> = None;
-        let subs: Vec<(usize, Calendar)> = self.data.calendars.iter().cloned().enumerate().filter(|(_, c)| c.url.is_some()).collect();
+        let mut remove: Option<u64> = None;
+        let subs: Vec<(u64, Calendar)> = self.data.calendars.iter().filter(|c| c.url.is_some()).map(|c| (c.id, c.clone())).collect();
         if subs.is_empty() {
             ui.label(RichText::new("No subscribed calendars yet.").size(15.0).color(muted));
         }

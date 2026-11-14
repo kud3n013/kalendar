@@ -11,6 +11,14 @@ pub struct FeedEvent {
     pub end: NaiveDateTime,
     pub all_day: bool,
     pub notes: String,
+    /// the event's UID; never empty
+    pub uid: String,
+    /// names one occurrence of a repeating event: its original start, in
+    /// UTC when the feed gives a zone
+    pub recurrence_id: Option<String>,
+    /// address and version on a server; None for a plain feed
+    pub href: Option<String>,
+    pub etag: Option<String>,
 }
 
 pub struct Feed {
@@ -116,6 +124,20 @@ impl When {
     /// The same moment on this computer's clock.
     fn local(&self) -> NaiveDateTime {
         self.at(self.wall)
+    }
+    /// The moment as text that does not depend on this computer's zone.
+    fn key(&self, all_day: bool) -> String {
+        if all_day {
+            return self.wall.format("%Y%m%d").to_string();
+        }
+        match &self.zone {
+            Zone::Utc => self.wall.format("%Y%m%dT%H%M%SZ").to_string(),
+            Zone::Named(tz) => match tz.from_local_datetime(&self.wall).earliest() {
+                Some(t) => t.with_timezone(&Utc).format("%Y%m%dT%H%M%SZ").to_string(),
+                None => self.wall.format("%Y%m%dT%H%M%S").to_string(),
+            },
+            Zone::Floating => self.wall.format("%Y%m%dT%H%M%S").to_string(),
+        }
     }
     /// A wall time in this value's zone, shown on this computer's clock.
     fn at(&self, wall: NaiveDateTime) -> NaiveDateTime {
@@ -459,7 +481,10 @@ pub fn parse(text: &str, now: NaiveDateTime) -> Result<Feed, String> {
             notes = if notes.is_empty() { format!("Where: {}", r.location.trim()) } else { format!("Where: {}\n{}", r.location.trim(), notes) };
         }
         let title = if r.summary.trim().is_empty() { "Busy".to_string() } else { r.summary.trim().to_string() };
-        let starts: Vec<NaiveDateTime> = match (&r.rrule, &r.recurrence_id) {
+        // a feed that leaves the UID out still needs a steady name
+        let uid = if r.uid.is_empty() { format!("no-uid:{}:{}", start.key(all_day), title) } else { r.uid.clone() };
+        // each start with the name of its occurrence
+        let starts: Vec<(NaiveDateTime, Option<String>)> = match (&r.rrule, &r.recurrence_id) {
             (Some(rule), None) => {
                 let excluded: HashSet<NaiveDateTime> = r.exdates.iter().map(|w| w.local()).collect();
                 let s = start.clone();
@@ -472,18 +497,28 @@ pub fn parse(text: &str, now: NaiveDateTime) -> Result<Feed, String> {
                     }
                 })
                 .into_iter()
-                .map(|w| start.at(w))
-                .filter(|l| !excluded.contains(l) && !overridden.contains(&(r.uid.clone(), *l)))
+                .map(|w| (start.at(w), Some(When { wall: w, zone: start.zone.clone() }.key(all_day))))
+                .filter(|(l, _)| !excluded.contains(l) && !overridden.contains(&(r.uid.clone(), *l)))
                 .collect()
             }
-            _ => vec![start.local()],
+            (_, rid) => vec![(start.local(), rid.as_ref().map(|w| w.key(all_day)))],
         };
-        for s in starts {
+        for (s, recurrence_id) in starts {
             let e = s + len;
             if e < from || s > to {
                 continue;
             }
-            events.push(FeedEvent { title: title.clone(), start: s, end: e, all_day, notes: notes.clone() });
+            events.push(FeedEvent {
+                title: title.clone(),
+                start: s,
+                end: e,
+                all_day,
+                notes: notes.clone(),
+                uid: uid.clone(),
+                recurrence_id,
+                href: None,
+                etag: None,
+            });
         }
     }
     events.sort_by(|a, b| a.start.cmp(&b.start).then(a.title.cmp(&b.title)));
@@ -570,6 +605,26 @@ mod tests {
         assert_eq!(d, vec![10, 12, 14, 16]);
         let m: Vec<NaiveDate> = f.events.iter().filter(|e| e.title == "M").map(|e| e.start.date()).collect();
         assert_eq!(m, vec![NaiveDate::from_ymd_opt(2026, 11, 12).unwrap(), NaiveDate::from_ymd_opt(2026, 12, 10).unwrap(), NaiveDate::from_ymd_opt(2027, 1, 14).unwrap()]);
+    }
+
+    #[test]
+    fn uid_and_occurrence_are_kept() {
+        let text = wrap("BEGIN:VEVENT\r\nUID:w\r\nSUMMARY:Standup\r\nDTSTART;TZID=Europe/Zurich:20261102T090000\r\nRRULE:FREQ=WEEKLY;COUNT=3\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:w\r\nRECURRENCE-ID;TZID=Europe/Zurich:20261109T090000\r\nSUMMARY:Moved\r\nDTSTART;TZID=Europe/Zurich:20261109T110000\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nSUMMARY:No uid\r\nDTSTART;VALUE=DATE:20261120\r\nEND:VEVENT\r\n");
+        let f = parse(&text, now()).unwrap();
+        let keys: Vec<(&str, Option<&str>, &str)> = f.events.iter().map(|e| (e.uid.as_str(), e.recurrence_id.as_deref(), e.title.as_str())).collect();
+        // 09:00 in Zurich is 08:00 UTC in winter; the moved one keeps the name of the one it replaces
+        assert_eq!(
+            keys,
+            vec![
+                ("w", Some("20261102T080000Z"), "Standup"),
+                ("w", Some("20261109T080000Z"), "Moved"),
+                ("w", Some("20261116T080000Z"), "Standup"),
+                ("no-uid:20261120:No uid", None, "No uid"),
+            ]
+        );
+        // read again, every event has the same name
+        let again = parse(&text, now()).unwrap();
+        assert_eq!(f.events, again.events);
     }
 
     #[test]

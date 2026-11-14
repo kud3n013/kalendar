@@ -839,7 +839,7 @@ impl App {
         if ev.remote {
             // a subscribed event can only be copied
             ui.set_min_width(260.0);
-            let cal = self.data.calendars.get(ev.calendar).map(|c| c.name.clone()).unwrap_or_default();
+            let cal = self.data.calendar(ev.calendar).map(|c| c.name.clone()).unwrap_or_default();
             ui.label(RichText::new(format!("From {cal} (read-only)")).color(muted));
             ui.separator();
             if ui.button("Copy event").clicked() {

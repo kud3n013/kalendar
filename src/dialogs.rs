@@ -91,10 +91,10 @@ impl App {
                 ui.add_space(2.0);
                 // one calendar, picked with a box per calendar
                 ui.label(RichText::new("Calendar").size(12.0).color(muted));
-                for (i, cal) in self.data.calendars.iter().enumerate().filter(|(_, cal)| cal.url.is_none()) {
-                    let mut on = c.ev.calendar == i;
+                for cal in self.data.calendars.iter().filter(|cal| cal.is_local()) {
+                    let mut on = c.ev.calendar == cal.id;
                     if ui.checkbox(&mut on, RichText::new(format!("{} {}", icons::CIRCLE, cal.name)).color(rgb(cal.color))).changed() && on {
-                        c.ev.calendar = i;
+                        c.ev.calendar = cal.id;
                     }
                 }
                 ui.add_space(4.0);
@@ -189,10 +189,10 @@ impl App {
                 };
                 egui::Grid::new("framegrid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
                     label(ui, "Calendar");
-                    let cname = |i: usize| self.data.calendars.get(i).map(|c| c.name.clone()).unwrap_or_default();
+                    let cname = |id: u64| self.data.calendar(id).map(|c| c.name.clone()).unwrap_or_default();
                     egui::ComboBox::from_id_salt("fcal").selected_text(cname(ed.frame.calendar)).show_ui(ui, |ui| {
-                        for (i, cal) in self.data.calendars.iter().enumerate().filter(|(_, c)| c.url.is_none()) {
-                            ui.selectable_value(&mut ed.frame.calendar, i, RichText::new(format!("{} {}", icons::CIRCLE, cal.name)).color(rgb(cal.color)));
+                        for cal in self.data.calendars.iter().filter(|c| c.is_local()) {
+                            ui.selectable_value(&mut ed.frame.calendar, cal.id, RichText::new(format!("{} {}", icons::CIRCLE, cal.name)).color(rgb(cal.color)));
                         }
                     });
                     ui.end_row();
@@ -393,7 +393,7 @@ impl App {
                 f.name = "Frame".into();
             }
             // never a subscribed calendar
-            if self.data.calendars.get(f.calendar).is_none_or(|c| c.url.is_some()) {
+            if self.data.calendar(f.calendar).is_none_or(|c| !c.is_local()) {
                 f.calendar = self.data.first_own_calendar();
             }
             self.snapshot();
@@ -572,10 +572,10 @@ impl App {
                 }
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Calendar").color(muted));
-                    let name = self.data.calendars.get(ed.ev.calendar).map(|c| c.name.clone()).unwrap_or_default();
+                    let name = self.data.calendar(ed.ev.calendar).map(|c| c.name.clone()).unwrap_or_default();
                     egui::ComboBox::from_id_salt("cal").selected_text(name).show_ui(ui, |ui| {
-                        for (i, c) in self.data.calendars.iter().enumerate().filter(|(_, c)| c.url.is_none()) {
-                            ui.selectable_value(&mut ed.ev.calendar, i, RichText::new(format!("{} {}", icons::CIRCLE, c.name)).color(rgb(c.color)));
+                        for c in self.data.calendars.iter().filter(|c| c.is_local()) {
+                            ui.selectable_value(&mut ed.ev.calendar, c.id, RichText::new(format!("{} {}", icons::CIRCLE, c.name)).color(rgb(c.color)));
                         }
                     });
                 });

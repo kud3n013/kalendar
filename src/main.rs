@@ -384,7 +384,7 @@ pub struct App {
     pub shortcut_query: String,
     pub sub_kind: u8,
     pub new_cal_name: String,
-    pub confirm_remove: Option<usize>,
+    pub confirm_remove: Option<u64>,
     pub command_bar: Option<String>,
     pub command_focus: bool,
     pub new_task_text: String,
@@ -616,8 +616,8 @@ impl App {
     /// Opens the frame editor on a new frame for `start_min..end_min` of a
     /// day: on weekdays it repeats Monday to Friday, on a weekend day just
     /// on that weekday. Subscribed calendars never get frames.
-    pub fn open_new_frame(&mut self, day: NaiveDate, start_min: i64, end_min: i64, calendar: usize, name: String) {
-        let calendar = if self.data.calendars.get(calendar).is_some_and(|c| c.url.is_none()) {
+    pub fn open_new_frame(&mut self, day: NaiveDate, start_min: i64, end_min: i64, calendar: u64, name: String) {
+        let calendar = if self.data.calendar(calendar).is_some_and(|c| c.is_local()) {
             calendar
         } else {
             self.data.first_own_calendar()
@@ -757,7 +757,10 @@ impl App {
         }
         let name = self.sub_name.trim();
         let n = self.data.calendars.iter().filter(|c| c.url.is_some()).count();
+        let id = self.data.new_id();
         self.data.calendars.push(Calendar {
+            id,
+            read_only: true,
             name: if name.is_empty() { ics::default_name(&url) } else { name.to_string() },
             color: EVENT_COLORS[(6 + n) % EVENT_COLORS.len()].0,
             visible: true,
@@ -803,7 +806,8 @@ impl App {
                     if let Some(n) = feed.name.filter(|_| self.data.calendars[i].name == default) {
                         self.data.calendars[i].name = n;
                     }
-                    self.data.replace_remote(i, feed.events);
+                    let id = self.data.calendars[i].id;
+                    self.data.apply_full(id, feed.events);
                     self.data.calendars[i].last_sync = Some(Local::now().format("%b %-d, %H:%M").to_string());
                     self.data.calendars[i].error = None;
                     let name = self.data.calendars[i].name.clone();
