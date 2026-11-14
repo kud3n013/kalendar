@@ -24,6 +24,9 @@ pub struct OAuthApp {
     pub scope: String,
     /// more parameters for the sign-in page
     pub extra: Vec<(String, String)>,
+    /// the answer is asked back to "http://localhost" instead of
+    /// "http://127.0.0.1", for services that only take that name
+    pub localhost_redirect: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -160,7 +163,17 @@ pub fn authorize(app: &OAuthApp, opened: &dyn Fn(&str), stop: &AtomicBool, wait_
     let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| SyncError::Other(format!("No port could be opened for the sign-in ({e}).")))?;
     let port = listener.local_addr().map_err(|e| SyncError::Other(e.to_string()))?.port();
     listener.set_nonblocking(true).map_err(|e| SyncError::Other(e.to_string()))?;
-    let redirect = format!("http://127.0.0.1:{port}");
+    // "localhost" may mean the IPv6 address of this computer to the
+    // browser, so that one listens too where it can
+    let mut listeners = vec![listener];
+    if app.localhost_redirect {
+        if let Ok(l) = TcpListener::bind(("::1", port)) {
+            if l.set_nonblocking(true).is_ok() {
+                listeners.push(l);
+            }
+        }
+    }
+    let redirect = format!("http://{}:{port}", if app.localhost_redirect { "localhost" } else { "127.0.0.1" });
     let verifier = base64url(&random(48)?);
     let state = base64url(&random(24)?);
     let mut params: Vec<(String, String)> = vec![
@@ -184,9 +197,9 @@ pub fn authorize(app: &OAuthApp, opened: &dyn Fn(&str), stop: &AtomicBool, wait_
         if began.elapsed().as_secs() > wait_s {
             return Err(SyncError::Other("Nobody signed in in time. Try again.".into()));
         }
-        let mut stream = match listener.accept() {
-            Ok((s, _)) => s,
-            Err(_) => {
+        let mut stream = match listeners.iter().find_map(|l| l.accept().ok()) {
+            Some((s, _)) => s,
+            None => {
                 std::thread::sleep(Duration::from_millis(150));
                 continue;
             }
@@ -214,7 +227,7 @@ pub fn authorize(app: &OAuthApp, opened: &dyn Fn(&str), stop: &AtomicBool, wait_
             None => answer(&mut stream, "404 Not Found", ""),
         }
     };
-    drop(listener);
+    drop(listeners);
     token_request(app, &[("grant_type", "authorization_code"), ("code", &code), ("redirect_uri", &redirect), ("code_verifier", &verifier)])
 }
 
@@ -272,7 +285,7 @@ mod tests {
     }
 
     fn app(token_url: String) -> OAuthApp {
-        OAuthApp { auth_url: "https://signin.example/auth".into(), token_url, client_id: "client-1".into(), client_secret: Some("not-secret".into()), scope: "cal read".into(), extra: vec![("access_type".into(), "offline".into())] }
+        OAuthApp { auth_url: "https://signin.example/auth".into(), token_url, client_id: "client-1".into(), client_secret: Some("not-secret".into()), scope: "cal read".into(), extra: vec![("access_type".into(), "offline".into())], localhost_redirect: false }
     }
 
     #[test]
@@ -289,6 +302,7 @@ mod tests {
             *sc.lock().unwrap() = get("code_challenge");
             let (redirect, state) = (get("redirect_uri"), get("state"));
             assert!(redirect.starts_with("http://127.0.0.1:"));
+            let redirect = redirect.replace("localhost", "127.0.0.1");
             std::thread::spawn(move || {
                 // a stray request and one with a wrong mark are passed over
                 assert!(http_get(&format!("{redirect}/favicon.ico")).starts_with("HTTP/1.1 404"));

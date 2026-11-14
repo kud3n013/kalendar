@@ -39,6 +39,7 @@ pub enum SyncDone {
 }
 
 pub struct GoogleGrant {
+    microsoft: bool,
     email: String,
     client_id: String,
     /// what goes into the keyring: refresh token and client secret
@@ -54,9 +55,9 @@ pub type TokenCache = std::sync::Arc<std::sync::Mutex<std::collections::HashMap<
 /// A connection to an account's server. `secret` is what the keyring
 /// holds for it: an app password, or for Google the refresh token, from
 /// which an access token is had when the last one has run out.
-fn open_account(a: &Account, secret: &str, tokens: &TokenCache) -> Result<CalDav, sync::SyncError> {
-    if !a.google {
-        return Ok(CalDav::new(&a.server, &a.username, secret, a.home.clone()));
+fn open_account(a: &Account, secret: &str, tokens: &TokenCache, allow_file: bool) -> Result<Box<dyn Provider>, sync::SyncError> {
+    if !a.google && !a.microsoft {
+        return Ok(Box::new(CalDav::new(&a.server, &a.username, secret, a.home.clone())));
     }
     let now = std::time::Instant::now();
     let cached = tokens.lock().ok().and_then(|t| t.get(&a.id).filter(|(_, until)| *until > now).map(|(t, _)| t.clone()));
@@ -64,20 +65,30 @@ fn open_account(a: &Account, secret: &str, tokens: &TokenCache) -> Result<CalDav
         Some(t) => t,
         None => {
             let (refresh, client_secret) = sync::google::unpack(secret).ok_or(sync::SyncError::Auth)?;
-            let app = sync::google::app(a.client_id.as_deref().unwrap_or(""), &client_secret, &a.username);
+            let client_id = a.client_id.as_deref().unwrap_or("");
+            let app = if a.microsoft { sync::graph::app(client_id, &a.username) } else { sync::google::app(client_id, &client_secret, &a.username) };
             let t = sync::oauth::refresh(&app, &refresh)?;
             if let Ok(mut cache) = tokens.lock() {
                 cache.insert(a.id, (t.access.clone(), now + std::time::Duration::from_secs(t.expires_in.saturating_sub(60))));
             }
+            // Microsoft hands out a new refresh token each time; the
+            // newest is the one to keep
+            if let Some(newer) = t.refresh.filter(|r| *r != refresh) {
+                let _ = secrets::set(&secrets::account_key(a.id), &sync::google::pack(&newer, &client_secret), allow_file);
+            }
             t.access
         }
     };
-    Ok(CalDav::with_bearer(&a.server, &a.username, &access, a.home.clone()))
+    if a.microsoft {
+        return Ok(Box::new(sync::graph::Graph::new(&access)));
+    }
+    Ok(Box::new(CalDav::with_bearer(&a.server, &a.username, &access, a.home.clone())))
 }
 
 /// Why an account's sync failed, in words that say what to do.
 fn account_error(a: Option<&Account>, e: &sync::SyncError) -> String {
     match (a, e) {
+        (Some(a), sync::SyncError::Auth) if a.microsoft => "Microsoft wants you to sign in again: sign out of this account here, then sign in once more.".into(),
         (Some(a), sync::SyncError::Auth) if a.google => "Google wants you to sign in again: sign out of this account here, then sign in once more. While a Google Cloud project is in Testing, a sign-in lasts 7 days.".into(),
         _ => e.text(),
     }
@@ -493,6 +504,10 @@ pub struct App {
     pub g_email: String,
     pub g_client_id: String,
     pub g_secret: String,
+    /// the Microsoft sign-in form
+    pub ms_open: bool,
+    pub ms_email: String,
+    pub ms_client_id: String,
     pub side_scroll: f32,
     pub sort_by: usize,
     pub filter_tag: Option<String>,
@@ -589,10 +604,13 @@ impl App {
             outbox_changed: None,
             nextcloud_wait: None,
             tokens: Default::default(),
-            g_open: std::env::var_os("KALENDAR_DEMO_ACCOUNT").is_some(),
+            g_open: false,
             g_email: String::new(),
             g_client_id: String::new(),
             g_secret: String::new(),
+            ms_open: std::env::var_os("KALENDAR_DEMO_ACCOUNT").is_some(),
+            ms_email: String::new(),
+            ms_client_id: String::new(),
             side_scroll: 0.0,
             sort_by: 0,
             filter_tag: None,
@@ -1078,13 +1096,13 @@ impl App {
             };
             let (home, res) = match pass {
                 Err(e) => (None, Err(sync::SyncError::Other(e))),
-                Ok(p) => match open_account(&a, &p, &tokens) {
+                Ok(p) => match open_account(&a, &p, &tokens, allow_file) {
                   Err(e) => (None, Err(e)),
                   Ok(mut dav) => {
                     let mut res = dav.list_calendars();
                     // the calendars may have moved since they were found
                     if a.home.is_some() && matches!(res, Err(sync::SyncError::Other(_))) {
-                        dav.home = None;
+                        dav.forget_home();
                         res = dav.list_calendars();
                     }
                     if first && res.is_ok() {
@@ -1092,7 +1110,7 @@ impl App {
                             res = Err(sync::SyncError::Other(e));
                         }
                     }
-                    (dav.home, res)
+                    (dav.home(), res)
                   }
                 },
             };
@@ -1128,14 +1146,14 @@ impl App {
         self.in_background(ctx, move |send| {
             // the keyring's answer and the sign-in both have to work out
             let pass = secrets::get(&secrets::account_key(account), allow_file).map_err(sync::SyncError::Other);
-            let opened = pass.and_then(|p| open_account(&a, &p, &tokens));
+            let opened = pass.and_then(|p| open_account(&a, &p, &tokens, allow_file));
             let (mut dav, pass) = match opened {
                 Ok(d) => (Some(d), Ok(())),
                 Err(e) => (None, Err(e)),
             };
             for (cal, remote, mut state, out) in jobs {
                 if let (Some(dav), false) = (&mut dav, out.is_empty()) {
-                    let results = sync::push(dav, &remote, &out, chrono::Utc::now().naive_utc());
+                    let results = sync::push(dav.as_mut(), &remote, &out, chrono::Utc::now().naive_utc());
                     // after a conflict the server's copy is read afresh
                     if results.iter().any(|r| matches!(r, sync::PushResult::Conflict { .. } | sync::PushResult::DeleteConflict { .. })) {
                         state = None;
@@ -1287,17 +1305,18 @@ impl App {
                     }
                     match res {
                         Ok(g) => {
-                            let server = sync::google::server(&g.email);
+                            let server = if g.microsoft { format!("microsoft:{}", g.email.to_lowercase()) } else { sync::google::server(&g.email) };
                             if self.data.accounts.iter().any(|a| a.server == server) {
                                 self.acct_error = Some("This account is already connected.".into());
                             } else {
                                 let id = self.data.new_id();
-                                self.data.accounts.push(Account { id, server, username: g.email, google: true, client_id: Some(g.client_id), ..Default::default() });
+                                self.data.accounts.push(Account { id, server, username: g.email, google: !g.microsoft, microsoft: g.microsoft, client_id: Some(g.client_id), ..Default::default() });
                                 if let Ok(mut cache) = self.tokens.lock() {
                                     cache.insert(id, (g.access, std::time::Instant::now() + std::time::Duration::from_secs(g.expires_in.saturating_sub(60))));
                                 }
                                 self.g_secret.clear();
                                 self.g_open = false;
+                                self.ms_open = false;
                                 self.sync_account(ctx, id, Some(g.secret));
                             }
                         }
@@ -1461,8 +1480,36 @@ impl App {
                 send(SyncDone::NextcloudOpened { login: url.to_string() });
             };
             let res = sync::oauth::authorize(&app, &opened, &stop, NEXTCLOUD_WAIT_S).and_then(|t| match t.refresh {
-                Some(r) => Ok(GoogleGrant { email, client_id, secret: sync::google::pack(&r, &secret), access: t.access, expires_in: t.expires_in }),
+                Some(r) => Ok(GoogleGrant { microsoft: false, email, client_id, secret: sync::google::pack(&r, &secret), access: t.access, expires_in: t.expires_in }),
                 None => Err(sync::SyncError::Other("Google signed you in but gave nothing to stay signed in with. Remove kalendar under your Google account's third-party access, then try again.".into())),
+            });
+            send(SyncDone::GoogleDone { res });
+        });
+    }
+
+    /// Signs in to Microsoft through its page in the browser, with the
+    /// client ID of the app registration the person brought.
+    pub fn connect_microsoft(&mut self, ctx: &egui::Context) {
+        let (email, client_id) = (self.ms_email.trim().to_string(), self.ms_client_id.trim().to_string());
+        if !email.contains('@') || client_id.is_empty() {
+            self.acct_error = Some("Fill in your Microsoft address and the client ID of your app registration.".into());
+            return;
+        }
+        if self.shot.is_some() || self.nextcloud_wait.is_some() {
+            return;
+        }
+        self.acct_error = None;
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.nextcloud_wait = Some((String::new(), stop.clone()));
+        self.in_background(ctx, move |send| {
+            let app = sync::graph::app(&client_id, &email);
+            let opened = |url: &str| {
+                let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+                send(SyncDone::NextcloudOpened { login: url.to_string() });
+            };
+            let res = sync::oauth::authorize(&app, &opened, &stop, NEXTCLOUD_WAIT_S).and_then(|t| match t.refresh {
+                Some(r) => Ok(GoogleGrant { microsoft: true, email, client_id, secret: sync::google::pack(&r, ""), access: t.access, expires_in: t.expires_in }),
+                None => Err(sync::SyncError::Other("Microsoft signed you in but gave nothing to stay signed in with. Check that the app registration allows the offline_access permission.".into())),
             });
             send(SyncDone::GoogleDone { res });
         });

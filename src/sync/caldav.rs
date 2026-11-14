@@ -385,6 +385,14 @@ impl Provider for CalDav {
         Ok(out)
     }
 
+    fn home(&self) -> Option<String> {
+        self.home.clone()
+    }
+
+    fn forget_home(&mut self) {
+        self.home = None;
+    }
+
     fn get(&mut self, href: &str) -> Result<(String, Option<String>), SyncError> {
         let r = self.ask("GET", href, None, "")?;
         Ok((r.body, r.etag))

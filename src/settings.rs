@@ -712,7 +712,7 @@ impl App {
     fn page_calendars(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         if finding(ui) {
             let names: Vec<&str> = self.data.calendars.iter().filter(|c| c.url.is_some()).map(|c| c.name.as_str()).collect();
-            let words = [&["integration", "subscription", "link", "url", "ics", "webcal", "feed", "proton", "import", "refresh", "unsubscribe", "account", "caldav", "nextcloud", "fastmail", "radicale", "sync", "password", "keyring", "sign in", "server", "google", "gmail", "oauth", "client id"][..], &names].concat();
+            let words = [&["integration", "subscription", "link", "url", "ics", "webcal", "feed", "proton", "import", "refresh", "unsubscribe", "account", "caldav", "nextcloud", "fastmail", "radicale", "sync", "password", "keyring", "sign in", "server", "google", "gmail", "oauth", "client id", "microsoft", "outlook", "office 365", "entra"][..], &names].concat();
             page_result(ui, Page::Calendars, "Subscribe to a calendar", "Bring other calendars in by their link, such as Proton Calendar", &words);
             return;
         }
@@ -931,6 +931,32 @@ impl App {
                     self.connect_google(ctx);
                 }
             }
+            // Microsoft: likewise
+            ui.add_space(6.0);
+            let label = if self.ms_open { "Hide Microsoft 365 / Outlook.com" } else { "Microsoft 365 / Outlook.com…" };
+            if ui.add(egui::Button::new(RichText::new(label).size(15.0)).corner_radius(8)).clicked() {
+                self.ms_open = !self.ms_open;
+            }
+            if self.ms_open {
+                ui.add(
+                    egui::Label::new(
+                        RichText::new("kalendar has no registration of its own with Microsoft, so you bring one: in the Microsoft Entra admin center, register an app for accounts in any organisation and personal accounts, add the platform \"Mobile and desktop applications\" with the redirect address http://localhost, and allow the delegated Graph permission Calendars.ReadWrite. Paste its Application (client) ID here; there is no secret.")
+                            .size(13.0)
+                            .color(muted),
+                    )
+                    .wrap(),
+                );
+                ui.add_space(4.0);
+                field(ui, &mut self.ms_email, "Your Microsoft address", false);
+                ui.add_space(4.0);
+                field(ui, &mut self.ms_client_id, "Application (client) ID", false);
+                ui.add_space(6.0);
+                let waiting = self.nextcloud_wait.is_some();
+                let b = egui::Button::new(RichText::new("Sign in with Microsoft…").size(15.0).color(Color32::WHITE)).fill(self.pal.accent).corner_radius(8);
+                if ui.add_enabled(!waiting, b).clicked() {
+                    self.connect_microsoft(ctx);
+                }
+            }
             if let Some(e) = &self.acct_error {
                 ui.add_space(4.0);
                 ui.add(egui::Label::new(RichText::new(e).size(14.0).color(RED)).wrap());
@@ -953,7 +979,7 @@ impl App {
                     ui.add_space(10.0);
                     ui.label(RichText::new(a.label()).size(17.0));
                     let when = a.last_sync.as_ref().map(|t| format!("  ·  synced {t}")).unwrap_or_default();
-                    let kind = if a.google { "Google account" } else if a.nextcloud { "Nextcloud account" } else { "CalDAV account" };
+                    let kind = if a.microsoft { "Microsoft account" } else if a.google { "Google account" } else if a.nextcloud { "Nextcloud account" } else { "CalDAV account" };
                     ui.label(RichText::new(format!("{kind}{when}")).size(14.0).color(muted));
                 });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

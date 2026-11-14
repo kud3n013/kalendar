@@ -20,6 +20,7 @@ pub fn app(client_id: &str, client_secret: &str, email: &str) -> OAuthApp {
         scope: "https://www.googleapis.com/auth/calendar".into(),
         // "offline" and "consent" make Google hand out a refresh token
         extra: vec![("access_type".into(), "offline".into()), ("prompt".into(), "consent".into()), ("login_hint".into(), email.trim().to_string())],
+        localhost_redirect: false,
     }
 }
 

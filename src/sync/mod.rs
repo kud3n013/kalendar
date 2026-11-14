@@ -2,6 +2,7 @@
 
 pub mod caldav;
 pub mod google;
+pub mod graph;
 pub mod nextcloud;
 pub mod oauth;
 
@@ -76,6 +77,17 @@ pub trait Provider: Send {
     /// What changed since `state`, or everything without one. Repeating
     /// events are written out around `now`.
     fn pull(&mut self, cal: &RemoteCalendar, state: Option<&str>, now: NaiveDateTime) -> Result<Delta, SyncError>;
+    /// Where the account's calendars were found, to skip the search next time.
+    fn home(&self) -> Option<String> {
+        None
+    }
+    /// Forgets where the calendars were found, so they are looked for again.
+    fn forget_home(&mut self) {}
+    /// Writes an event in the service's own way. None where events travel
+    /// as iCalendar text, through `get` and `put`.
+    fn save_native(&mut self, _cal: &RemoteCalendar, _e: &Event) -> Option<PushResult> {
+        None
+    }
     /// An event as the server holds it, with its version.
     fn get(&mut self, _href: &str) -> Result<(String, Option<String>), SyncError> {
         Err(SyncError::Other("This calendar is read-only.".into()))
@@ -142,7 +154,7 @@ pub enum PushResult {
 
 /// An event's notes as the two fields a server keeps: the place, written
 /// here as a first line "Where: …", and the description.
-fn place_and_notes(notes: &str) -> (String, String) {
+pub fn place_and_notes(notes: &str) -> (String, String) {
     match notes.strip_prefix("Where: ") {
         Some(rest) => match rest.split_once('\n') {
             Some((place, more)) => (place.trim().to_string(), more.to_string()),
@@ -214,7 +226,10 @@ fn save(p: &mut dyn Provider, cal: &RemoteCalendar, e: &Event, stamp: NaiveDateT
 pub fn push(p: &mut dyn Provider, cal: &RemoteCalendar, jobs: &[PushJob], stamp: NaiveDateTime) -> Vec<PushResult> {
     jobs.iter()
         .map(|job| match job {
-            PushJob::Save(e) => save(p, cal, e, stamp),
+            PushJob::Save(e) => match p.save_native(cal, e) {
+                Some(r) => r,
+                None => save(p, cal, e, stamp),
+            },
             PushJob::Delete { href, etag } => match p.delete(cal, href, etag.as_deref()) {
                 // already gone is as good as deleted
                 Ok(()) | Err(SyncError::Gone) => PushResult::Deleted { href: href.clone() },

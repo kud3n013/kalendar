@@ -281,7 +281,10 @@ pub struct Account {
     /// a Google account, signed in through the browser; the keyring holds
     /// its refresh token and client secret
     pub google: bool,
-    /// the Google Cloud client ID the person brought
+    /// a Microsoft account, reached through Microsoft Graph; the keyring
+    /// holds its refresh token
+    pub microsoft: bool,
+    /// the client ID the person brought, for Google or Microsoft
     pub client_id: Option<String>,
     /// signed in through Nextcloud's own page; its app password can be
     /// taken back on signing out
@@ -299,7 +302,7 @@ pub struct PendingDelete {
 impl Account {
     /// "name @ server" for lists.
     pub fn label(&self) -> String {
-        if self.google {
+        if self.google || self.microsoft {
             return self.username.clone();
         }
         let host = self.server.split("://").last().unwrap_or("").split('/').next().unwrap_or("");
