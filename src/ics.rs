@@ -214,7 +214,7 @@ fn parse_when(value: &str, params: &[(String, String)]) -> Option<(When, bool)> 
         Zone::Utc
     } else {
         match params.iter().find(|(k, _)| k == "TZID") {
-            Some((_, id)) => id.trim_start_matches('/').parse::<chrono_tz::Tz>().map(Zone::Named).unwrap_or(Zone::Floating),
+            Some((_, id)) => crate::tz::resolve(id).map(Zone::Named).unwrap_or(Zone::Floating),
             None => Zone::Floating,
         }
     };
@@ -285,6 +285,9 @@ fn expand(start: NaiveDateTime, rule: &str, until_wall: NaiveDateTime, until_is_
     let mut until: Option<NaiveDateTime> = None;
     let mut byday: Vec<(i32, Weekday)> = vec![];
     let mut bymonthday: Vec<i32> = vec![];
+    let mut bymonth: Vec<u32> = vec![];
+    let mut bysetpos: Vec<i32> = vec![];
+    let mut wkst = Weekday::Mon;
     for part in rule.split(';') {
         let Some((k, v)) = part.split_once('=') else { continue };
         match k.to_uppercase().as_str() {
@@ -314,6 +317,9 @@ fn expand(start: NaiveDateTime, rule: &str, until_wall: NaiveDateTime, until_is_
                     .collect()
             }
             "BYMONTHDAY" => bymonthday = v.split(',').filter_map(|d| d.trim().parse().ok()).collect(),
+            "BYMONTH" => bymonth = v.split(',').filter_map(|d| d.trim().parse().ok()).filter(|m| (1..=12).contains(m)).collect(),
+            "BYSETPOS" => bysetpos = v.split(',').filter_map(|d| d.trim().parse().ok()).collect(),
+            "WKST" => wkst = weekday(&v.trim().to_uppercase()).unwrap_or(Weekday::Mon),
             _ => {}
         }
     }
@@ -332,11 +338,12 @@ fn expand(start: NaiveDateTime, rule: &str, until_wall: NaiveDateTime, until_is_
         true
     };
     let d0 = start.date();
+    let in_months = |d: NaiveDate| bymonth.is_empty() || bymonth.contains(&d.month());
     match freq.to_uppercase().as_str() {
         "DAILY" => {
             let mut d = d0;
             for _ in 0..5000 {
-                let ok = byday.is_empty() || byday.iter().any(|(_, w)| *w == d.weekday());
+                let ok = (byday.is_empty() || byday.iter().any(|(_, w)| *w == d.weekday())) && in_months(d);
                 if ok && !push(d, &mut out) {
                     break;
                 }
@@ -348,11 +355,13 @@ fn expand(start: NaiveDateTime, rule: &str, until_wall: NaiveDateTime, until_is_
         }
         "WEEKLY" => {
             let days: Vec<Weekday> = if byday.is_empty() { vec![d0.weekday()] } else { byday.iter().map(|x| x.1).collect() };
-            let mut week = d0 - Duration::days(d0.weekday().num_days_from_monday() as i64);
+            // weeks are counted from the day the rule names as their first
+            let into_week = (d0.weekday().num_days_from_monday() + 7 - wkst.num_days_from_monday()) % 7;
+            let mut week = d0 - Duration::days(into_week as i64);
             'w: for _ in 0..3000 {
                 for i in 0..7 {
                     let d = week + Duration::days(i);
-                    if days.contains(&d.weekday()) && !push(d, &mut out) {
+                    if days.contains(&d.weekday()) && in_months(d) && !push(d, &mut out) {
                         break 'w;
                     }
                 }
@@ -363,33 +372,68 @@ fn expand(start: NaiveDateTime, rule: &str, until_wall: NaiveDateTime, until_is_
             }
         }
         "MONTHLY" | "YEARLY" => {
-            let step = if freq.eq_ignore_ascii_case("YEARLY") { 12 * interval } else { interval };
-            let mut k = 0i64;
-            'm: for _ in 0..2000 {
-                let m0 = d0.year() as i64 * 12 + d0.month0() as i64 + k * step;
-                let (y, m) = ((m0.div_euclid(12)) as i32, m0.rem_euclid(12) as u32 + 1);
-                let mut cands: Vec<NaiveDate> = vec![];
-                if !byday.is_empty() && byday.iter().all(|(n, _)| *n != 0) {
-                    cands.extend(byday.iter().filter_map(|(n, w)| nth_weekday(y, m, *w, *n)));
-                } else if !bymonthday.is_empty() {
-                    for md in &bymonthday {
-                        if *md > 0 {
-                            cands.extend(NaiveDate::from_ymd_opt(y, m, *md as u32));
+            let yearly = freq.eq_ignore_ascii_case("YEARLY");
+            // the days of one month the rule picks
+            let in_month = |y: i32, m: u32| -> Vec<NaiveDate> {
+                let Some(first) = NaiveDate::from_ymd_opt(y, m, 1) else { return vec![] };
+                let next = if m == 12 { NaiveDate::from_ymd_opt(y + 1, 1, 1) } else { NaiveDate::from_ymd_opt(y, m + 1, 1) };
+                let len = next.map(|n| (n - first).num_days()).unwrap_or(31) as i32;
+                // a negative day counts from the end of the month
+                let by_md = |d: &NaiveDate| {
+                    bymonthday.is_empty() || bymonthday.iter().any(|md| d.day() as i32 == if *md > 0 { *md } else { len + 1 + *md })
+                };
+                let days = || first.iter_days().take(len as usize);
+                let mut c: Vec<NaiveDate> = vec![];
+                if !byday.is_empty() {
+                    for (n, w) in &byday {
+                        if *n != 0 {
+                            c.extend(nth_weekday(y, m, *w, *n));
+                        } else {
+                            c.extend(days().filter(|d| d.weekday() == *w));
                         }
                     }
+                    c.retain(by_md);
+                } else if !bymonthday.is_empty() {
+                    c.extend(days().filter(by_md));
                 } else {
-                    cands.extend(NaiveDate::from_ymd_opt(y, m, d0.day()));
+                    c.extend(NaiveDate::from_ymd_opt(y, m, d0.day()));
                 }
+                c
+            };
+            'm: for k in 0..2000i64 {
+                // one round is a month, or the chosen months of a year
+                let (y, months, first_m) = if yearly {
+                    let y = d0.year() + (k * interval) as i32;
+                    (y, if bymonth.is_empty() { vec![d0.month()] } else { bymonth.clone() }, 1)
+                } else {
+                    let m0 = d0.year() as i64 * 12 + d0.month0() as i64 + k * interval;
+                    let (y, m) = (m0.div_euclid(12) as i32, m0.rem_euclid(12) as u32 + 1);
+                    (y, if bymonth.is_empty() || bymonth.contains(&m) { vec![m] } else { vec![] }, m)
+                };
+                let mut cands: Vec<NaiveDate> = months.iter().flat_map(|m| in_month(y, *m)).collect();
                 cands.sort();
+                cands.dedup();
+                if !bysetpos.is_empty() {
+                    // "the n-th of those", counted from the end when negative
+                    let n = cands.len() as i32;
+                    let mut picked: Vec<NaiveDate> = bysetpos
+                        .iter()
+                        .filter_map(|p| if *p > 0 { Some(*p - 1) } else { Some(n + *p) })
+                        .filter(|i| (0..n).contains(i))
+                        .map(|i| cands[i as usize])
+                        .collect();
+                    picked.sort();
+                    picked.dedup();
+                    cands = picked;
+                }
                 for d in cands {
                     if !push(d, &mut out) {
                         break 'm;
                     }
                 }
-                if NaiveDate::from_ymd_opt(y, m, 1).map(|d| d.and_time(time) > limit).unwrap_or(true) {
+                if NaiveDate::from_ymd_opt(y, first_m, 1).map(|d| d.and_time(time) > limit).unwrap_or(true) {
                     break;
                 }
-                k += 1;
             }
         }
         _ => {
@@ -525,6 +569,272 @@ pub fn parse(text: &str, now: NaiveDateTime) -> Result<Feed, String> {
     Ok(Feed { name, events })
 }
 
+/// The parts of an event that can be changed here.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct EventFields {
+    pub summary: String,
+    /// on this computer's clock
+    pub start: NaiveDateTime,
+    pub end: NaiveDateTime,
+    pub all_day: bool,
+    pub description: String,
+    pub location: String,
+    pub rrule: Option<String>,
+}
+
+fn unfold(text: &str) -> Vec<String> {
+    let mut lines: Vec<String> = vec![];
+    for l in text.split('\n') {
+        let l = l.strip_suffix('\r').unwrap_or(l);
+        if (l.starts_with(' ') || l.starts_with('\t')) && !lines.is_empty() {
+            lines.last_mut().unwrap().push_str(&l[1..]);
+        } else if !l.is_empty() {
+            lines.push(l.to_string());
+        }
+    }
+    lines
+}
+
+/// Lines longer than 75 bytes go on with a space on the next line.
+fn fold(lines: &[String]) -> String {
+    let mut out = String::new();
+    for l in lines {
+        let mut used = 0;
+        for c in l.chars() {
+            if used + c.len_utf8() > 75 {
+                out.push_str("\r\n ");
+                used = 1;
+            }
+            out.push(c);
+            used += c.len_utf8();
+        }
+        out.push_str("\r\n");
+    }
+    out
+}
+
+fn escape(v: &str) -> String {
+    let mut out = String::new();
+    for c in v.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            ';' => out.push_str(r"\;"),
+            ',' => out.push_str("\\,"),
+            '\n' => out.push_str("\\n"),
+            '\r' => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+/// Where the event to read or change sits among the lines: the main one
+/// of a repeating event rather than a changed occurrence.
+fn main_event(lines: &[String]) -> Option<(usize, usize)> {
+    let is = |l: &String, what: &str| l.trim().eq_ignore_ascii_case(what);
+    let mut found: Option<(usize, usize)> = None;
+    let mut begin = None;
+    for (i, l) in lines.iter().enumerate() {
+        if is(l, "BEGIN:VEVENT") {
+            begin = Some(i);
+        } else if is(l, "END:VEVENT") {
+            let Some(b) = begin.take() else { continue };
+            let occurrence = lines[b..i].iter().any(|l| l.to_uppercase().starts_with("RECURRENCE-ID"));
+            if !occurrence {
+                return Some((b, i));
+            }
+            found = found.or(Some((b, i)));
+        }
+    }
+    found
+}
+
+/// The event's own lines with how deep each sits: 0 for the event's own
+/// properties, more inside an alarm.
+fn own_lines(lines: &[String]) -> Vec<(usize, &String)> {
+    let mut depth = 0usize;
+    lines
+        .iter()
+        .map(|l| {
+            let up = l.to_uppercase();
+            if up.starts_with("END:") {
+                depth = depth.saturating_sub(1);
+                (depth, l)
+            } else if up.starts_with("BEGIN:") {
+                depth += 1;
+                (depth - 1, l)
+            } else {
+                (depth, l)
+            }
+        })
+        .collect()
+}
+
+/// Reads the changeable parts and the UID of an event as a server sent it.
+// used from the CalDAV write path, which comes next
+#[allow(dead_code)]
+pub fn read_event(raw: &str) -> Option<(String, EventFields)> {
+    let lines = unfold(raw);
+    let (b, e) = main_event(&lines)?;
+    let mut f = EventFields::default();
+    let (mut uid, mut start, mut end, mut dur) = (String::new(), None, None, None);
+    for (depth, line) in own_lines(&lines[b + 1..e]) {
+        let Some((key, params, value)) = split_line(line) else { continue };
+        if depth > 0 {
+            continue;
+        }
+        match key.as_str() {
+            "UID" => uid = value.trim().to_string(),
+            "SUMMARY" => f.summary = unescape(value),
+            "DESCRIPTION" => f.description = unescape(value),
+            "LOCATION" => f.location = unescape(value),
+            "RRULE" => f.rrule = Some(value.trim().to_string()),
+            "DTSTART" => start = parse_when(value, &params),
+            "DTEND" => end = parse_when(value, &params),
+            "DURATION" => dur = parse_duration(value),
+            _ => {}
+        }
+    }
+    let (start, all_day) = start?;
+    f.all_day = all_day;
+    f.start = start.local();
+    f.end = match (end, dur) {
+        (Some((e, _)), _) => e.local(),
+        (None, Some(d)) => f.start + d,
+        (None, None) if all_day => f.start + Duration::days(1),
+        (None, None) => f.start,
+    };
+    Some((uid, f))
+}
+
+/// Writes an event for a server. With `raw`, the event as the server sent
+/// it, only the title, times, notes, place and repeat rule are changed,
+/// and only where they differ: alarms, guests and everything this program
+/// does not know stay as they were. `stamp` is the time now, in UTC.
+// used from the CalDAV write path, which comes next
+#[allow(dead_code)]
+pub fn write_event(raw: Option<&str>, uid: &str, f: &EventFields, stamp: NaiveDateTime) -> String {
+    let fresh = || -> Vec<String> {
+        ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//kalendar//EN", "BEGIN:VEVENT", &format!("UID:{uid}"), "END:VEVENT", "END:VCALENDAR"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
+    };
+    let mut lines = raw.map(unfold).unwrap_or_else(fresh);
+    let mut is_new = raw.is_none();
+    let (b, e) = match main_event(&lines) {
+        Some(x) => x,
+        None => {
+            // nothing usable was kept: start over
+            lines = fresh();
+            is_new = true;
+            (3, 5)
+        }
+    };
+
+    // what the event holds now
+    let (mut old_start, mut old_end, mut old_dur) = (None, None, None);
+    for (depth, line) in own_lines(&lines[b + 1..e]) {
+        let Some((key, params, value)) = split_line(line) else { continue };
+        if depth > 0 {
+            continue;
+        }
+        match key.as_str() {
+            "DTSTART" => old_start = parse_when(value, &params).map(|w| (w, params.clone())),
+            "DTEND" => old_end = parse_when(value, &params),
+            "DURATION" => old_dur = parse_duration(value),
+            _ => {}
+        }
+    }
+    // times are written in the zone the event already uses, else in UTC
+    let zone: Option<(String, chrono_tz::Tz)> = old_start.as_ref().and_then(|((w, _), params)| match &w.zone {
+        Zone::Named(tz) => params.iter().find(|(k, _)| k == "TZID").map(|(_, id)| (id.clone(), *tz)),
+        _ => None,
+    });
+    let when = |name: &str, t: NaiveDateTime| -> String {
+        if f.all_day {
+            return format!("{name};VALUE=DATE:{}", t.format("%Y%m%d"));
+        }
+        let here = Local.from_local_datetime(&t).earliest();
+        match (&zone, here) {
+            (Some((id, tz)), Some(h)) => format!("{name};TZID={id}:{}", h.with_timezone(tz).naive_local().format("%Y%m%dT%H%M%S")),
+            (_, Some(h)) => format!("{name}:{}Z", h.naive_utc().format("%Y%m%dT%H%M%S")),
+            (_, None) => format!("{name}:{}", t.format("%Y%m%dT%H%M%S")),
+        }
+    };
+    let same_when = |old: &Option<(When, bool)>, t: NaiveDateTime| old.as_ref().is_some_and(|(w, all_day)| *all_day == f.all_day && w.local() == t);
+    let start_same = same_when(&old_start.as_ref().map(|(w, _)| w.clone()), f.start);
+    // an event given as start and length keeps that form while both hold
+    let keep_duration = old_end.is_none() && start_same && old_dur.is_some_and(|d| old_start.as_ref().map(|((w, _), _)| w.local() + d) == Some(f.end));
+    let text = |name: &str, v: &str| (!v.trim().is_empty()).then(|| format!("{name}:{}", escape(v)));
+    // the new line of each changeable property; None leaves it out
+    let wanted: Vec<(&str, Option<String>)> = vec![
+        ("DTSTART", Some(when("DTSTART", f.start))),
+        ("DTEND", (!keep_duration).then(|| when("DTEND", f.end))),
+        ("SUMMARY", text("SUMMARY", &f.summary)),
+        ("DESCRIPTION", text("DESCRIPTION", &f.description)),
+        ("LOCATION", text("LOCATION", &f.location)),
+        ("RRULE", f.rrule.as_ref().filter(|r| !r.trim().is_empty()).map(|r| format!("RRULE:{}", r.trim()))),
+    ];
+    let stamp_text = stamp.format("%Y%m%dT%H%M%SZ").to_string();
+
+    let mut out: Vec<String> = lines[..=b].to_vec();
+    let mut seen: HashSet<String> = HashSet::new();
+    for (depth, line) in own_lines(&lines[b + 1..e]) {
+        let parts = split_line(line).filter(|_| depth == 0);
+        let Some((key, params, value)) = parts else {
+            out.push(line.clone());
+            continue;
+        };
+        if let Some((_, new)) = wanted.iter().find(|(n, _)| *n == key) {
+            if !seen.insert(key.clone()) {
+                continue; // a second copy of a property that may appear once
+            }
+            let same = match key.as_str() {
+                "DTSTART" => start_same,
+                "DTEND" => new.is_some() && same_when(&parse_when(value, &params), f.end),
+                "RRULE" => f.rrule.as_deref().map(str::trim) == Some(value.trim()),
+                "SUMMARY" => unescape(value) == f.summary,
+                "DESCRIPTION" => unescape(value) == f.description,
+                _ => unescape(value) == f.location,
+            };
+            if same {
+                out.push(line.clone());
+            } else if let Some(n) = new {
+                out.push(n.clone());
+            }
+            continue;
+        }
+        match key.as_str() {
+            "DURATION" if !keep_duration => {}
+            "SEQUENCE" => {
+                seen.insert(key);
+                out.push(format!("SEQUENCE:{}", value.trim().parse::<i64>().unwrap_or(0) + 1));
+            }
+            "DTSTAMP" | "LAST-MODIFIED" => {
+                seen.insert(key.clone());
+                out.push(format!("{key}:{stamp_text}"));
+            }
+            _ => out.push(line.clone()),
+        }
+    }
+    for (name, new) in &wanted {
+        if let Some(n) = new.as_ref().filter(|_| !seen.contains(*name)) {
+            out.push(n.clone());
+        }
+    }
+    if !seen.contains("SEQUENCE") {
+        out.push(format!("SEQUENCE:{}", if is_new { 0 } else { 1 }));
+    }
+    for name in ["DTSTAMP", "LAST-MODIFIED"] {
+        if !seen.contains(name) {
+            out.push(format!("{name}:{stamp_text}"));
+        }
+    }
+    out.extend_from_slice(&lines[e..]);
+    fold(&out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -625,6 +935,132 @@ mod tests {
         // read again, every event has the same name
         let again = parse(&text, now()).unwrap();
         assert_eq!(f.events, again.events);
+    }
+
+    fn starts(rule: &str, dtstart: &str) -> Vec<String> {
+        let text = wrap(&format!("BEGIN:VEVENT\r\nUID:x\r\nSUMMARY:X\r\nDTSTART:{dtstart}\r\nRRULE:{rule}\r\nEND:VEVENT\r\n"));
+        parse(&text, now()).unwrap().events.iter().map(|e| e.start.format("%Y-%m-%d").to_string()).collect()
+    }
+
+    #[test]
+    fn last_weekday_of_the_month() {
+        // Oct 30 is a Friday, Nov 30 a Monday, Dec 31 a Thursday, Jan 29 a Friday
+        assert_eq!(
+            starts("FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1;COUNT=4", "20261030T170000"),
+            ["2026-10-30", "2026-11-30", "2026-12-31", "2027-01-29"]
+        );
+        // first and last working day of each month
+        assert_eq!(
+            starts("FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=1,-1;COUNT=4", "20261102T090000"),
+            ["2026-11-02", "2026-11-30", "2026-12-01", "2026-12-31"]
+        );
+        // the last day of the month, whatever its length
+        assert_eq!(starts("FREQ=MONTHLY;BYMONTHDAY=-1;COUNT=4", "20261130T090000"), ["2026-11-30", "2026-12-31", "2027-01-31", "2027-02-28"]);
+        // every Tuesday of the month, without a number before the day
+        assert_eq!(starts("FREQ=MONTHLY;BYDAY=TU;COUNT=5", "20261103T090000"), ["2026-11-03", "2026-11-10", "2026-11-17", "2026-11-24", "2026-12-01"]);
+    }
+
+    #[test]
+    fn yearly_by_month() {
+        // the fourth Thursday of November
+        assert_eq!(starts("FREQ=YEARLY;BYMONTH=11;BYDAY=4TH;COUNT=2", "20261126T120000"), ["2026-11-26", "2027-11-25"]);
+        // twice a year, on the day of the month it started on
+        assert_eq!(starts("FREQ=YEARLY;BYMONTH=6,12;COUNT=3", "20261210T120000"), ["2026-12-10", "2027-06-10", "2027-12-10"]);
+        // the 15th of the given months
+        assert_eq!(starts("FREQ=YEARLY;BYMONTH=1,12;BYMONTHDAY=15;COUNT=3", "20261215T120000"), ["2026-12-15", "2027-01-15", "2027-12-15"]);
+        // monthly, but only in some months
+        assert_eq!(starts("FREQ=MONTHLY;BYMONTH=11,1;COUNT=3", "20261105T120000"), ["2026-11-05", "2027-01-05", "2027-11-05"]);
+        // daily in December only
+        assert_eq!(starts("FREQ=DAILY;BYMONTH=12;COUNT=2", "20261129T120000"), ["2026-12-01", "2026-12-02"]);
+    }
+
+    #[test]
+    fn week_start_changes_every_other_week() {
+        // the example of RFC 5545, moved to 2026: Tuesday Nov 3 is the start
+        assert_eq!(starts("FREQ=WEEKLY;INTERVAL=2;COUNT=4;BYDAY=TU,SU;WKST=MO", "20261103T090000"), ["2026-11-03", "2026-11-08", "2026-11-17", "2026-11-22"]);
+        assert_eq!(starts("FREQ=WEEKLY;INTERVAL=2;COUNT=4;BYDAY=TU,SU;WKST=SU", "20261103T090000"), ["2026-11-03", "2026-11-15", "2026-11-17", "2026-11-29"]);
+    }
+
+    #[test]
+    fn windows_and_prefixed_zones() {
+        let f = parse(
+            &wrap("BEGIN:VEVENT\r\nUID:a\r\nSUMMARY:A\r\nDTSTART;TZID=Europe/Berlin:20261116T160000\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:b\r\nSUMMARY:B\r\nDTSTART;TZID=\"W. Europe Standard Time\":20261116T160000\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:c\r\nSUMMARY:C\r\nDTSTART;TZID=/mozilla.org/20050126_1/Europe/Berlin:20261116T160000\r\nEND:VEVENT\r\nBEGIN:VEVENT\r\nUID:d\r\nSUMMARY:D\r\nDTSTART:20261116T150000Z\r\nEND:VEVENT\r\n"),
+            now(),
+        )
+        .unwrap();
+        assert_eq!(f.events.len(), 4);
+        for e in &f.events {
+            assert_eq!(e.start, f.events[3].start, "{} is at another time", e.title);
+        }
+    }
+
+    const FULL: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Other//EN\r\nBEGIN:VTIMEZONE\r\nTZID:Europe/Zurich\r\nEND:VTIMEZONE\r\nBEGIN:VEVENT\r\nUID:abc@example.org\r\nDTSTAMP:20260101T000000Z\r\nSEQUENCE:3\r\nSUMMARY;LANGUAGE=en:Review\r\nDTSTART;TZID=Europe/Zurich:20261116T160000\r\nDTEND;TZID=Europe/Zurich:20261116T170000\r\nLOCATION:Room 4\r\nORGANIZER;CN=Sam:mailto:sam@example.org\r\nATTENDEE;PARTSTAT=ACCEPTED;CN=A very long name that makes this line run past the limit:mailto:alex@example.org\r\nX-CUSTOM-THING:keep me\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Reminder\r\nTRIGGER:-PT10M\r\nEND:VALARM\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+    fn stamp() -> NaiveDateTime {
+        at(2026, 11, 14, 20, 0)
+    }
+
+    #[test]
+    fn writing_back_keeps_what_is_not_known() {
+        let (uid, mut f) = read_event(FULL).unwrap();
+        assert_eq!((uid.as_str(), f.summary.as_str(), f.location.as_str()), ("abc@example.org", "Review", "Room 4"));
+        // nothing changed: only the stamp and the sequence number move
+        let same = unfold(&write_event(Some(FULL), &uid, &f, stamp()));
+        let before = unfold(FULL);
+        assert_eq!(same.len(), before.len() + 1, "only LAST-MODIFIED is added");
+        for l in &before {
+            if l.starts_with("DTSTAMP") || l.starts_with("SEQUENCE") {
+                continue;
+            }
+            assert!(same.contains(l), "lost: {l}");
+        }
+        assert!(same.contains(&"SEQUENCE:4".to_string()) && same.contains(&"DTSTAMP:20261114T200000Z".to_string()));
+
+        // title, time and notes changed
+        f.summary = "Review, part 2".into();
+        f.start += Duration::hours(1);
+        f.end += Duration::hours(2);
+        f.description = "Bring\nnotes".into();
+        f.location.clear();
+        let text = write_event(Some(FULL), &uid, &f, stamp());
+        assert!(text.lines().all(|l| l.len() <= 75), "a line is too long");
+        let out = unfold(&text);
+        for keep in ["X-CUSTOM-THING:keep me", "ORGANIZER;CN=Sam:mailto:sam@example.org", "TRIGGER:-PT10M", "DESCRIPTION:Reminder", "TZID:Europe/Zurich", "PRODID:-//Other//EN"] {
+            assert!(out.contains(&keep.to_string()), "lost: {keep}");
+        }
+        assert!(out.iter().any(|l| l.starts_with("ATTENDEE;PARTSTAT=ACCEPTED;CN=A very long name") && l.ends_with("mailto:alex@example.org")));
+        assert!(out.contains(&"SUMMARY:Review\\, part 2".to_string()));
+        assert!(out.contains(&"DTSTART;TZID=Europe/Zurich:20261116T170000".to_string()), "the event's own zone is kept");
+        assert!(out.contains(&"DTEND;TZID=Europe/Zurich:20261116T190000".to_string()));
+        assert!(out.contains(&"DESCRIPTION:Bring\\nnotes".to_string()));
+        assert!(!out.iter().any(|l| l.starts_with("LOCATION")));
+        // and it reads back as what was written
+        let (uid2, back) = read_event(&text).unwrap();
+        assert_eq!((uid2, back), (uid, f));
+    }
+
+    #[test]
+    fn writing_a_new_event() {
+        let f = EventFields { summary: "Lunch; with Sam".into(), start: at(2026, 11, 20, 0, 0), end: at(2026, 11, 22, 0, 0), all_day: true, ..Default::default() };
+        let text = write_event(None, "new-1", &f, stamp());
+        let out = unfold(&text);
+        assert_eq!(out.first().map(String::as_str), Some("BEGIN:VCALENDAR"));
+        for want in ["UID:new-1", "DTSTART;VALUE=DATE:20261120", "DTEND;VALUE=DATE:20261122", r"SUMMARY:Lunch\; with Sam", "SEQUENCE:0", "DTSTAMP:20261114T200000Z"] {
+            assert!(out.contains(&want.to_string()), "missing: {want}");
+        }
+        assert_eq!(read_event(&text).unwrap(), ("new-1".to_string(), f));
+        // a timed one goes out in UTC and comes back at the same local time
+        let t = EventFields { summary: "Call".into(), start: at(2026, 11, 20, 9, 0), end: at(2026, 11, 20, 9, 30), ..Default::default() };
+        let text = write_event(None, "new-2", &t, stamp());
+        assert!(unfold(&text).iter().any(|l| l.starts_with("DTSTART:2026") && l.ends_with('Z')));
+        assert_eq!(read_event(&text).unwrap().1, t);
+        // an event given as start and length keeps that form until its length changes
+        let dur = "BEGIN:VEVENT\r\nUID:d\r\nDTSTART:20261120T090000\r\nDURATION:PT30M\r\nEND:VEVENT\r\n";
+        let (_, mut d) = read_event(dur).unwrap();
+        assert!(write_event(Some(dur), "d", &d, stamp()).contains("DURATION:PT30M"));
+        d.end += Duration::minutes(15);
+        let longer = write_event(Some(dur), "d", &d, stamp());
+        assert!(!longer.contains("DURATION") && longer.contains("DTEND:"));
     }
 
     #[test]

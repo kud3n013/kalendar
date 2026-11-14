@@ -5,6 +5,7 @@ mod icons;
 mod model;
 mod panel;
 mod settings;
+mod tz;
 mod dialogs;
 mod views;
 
