@@ -217,6 +217,35 @@ impl App {
                     });
                     ui.end_row();
 
+                    label(ui, "Repeat");
+                    ui.horizontal(|ui| {
+                        let was = c.repeat;
+                        egui::ComboBox::from_id_salt("crep").selected_text(c.repeat.label()).show_ui(ui, |ui| {
+                            for v in Repeat::ALL {
+                                ui.selectable_value(&mut c.repeat, v, v.label());
+                            }
+                        });
+                        if c.repeat != was && c.repeat != Repeat::None {
+                            // a first end to start from: four weeks, twelve weeks or a year
+                            let day = c.ev.start.date();
+                            let until = match c.repeat {
+                                Repeat::Weekly => day + Duration::weeks(12),
+                                Repeat::Monthly => day.checked_add_months(chrono::Months::new(12)).unwrap_or(day),
+                                _ => day + Duration::weeks(4),
+                            };
+                            c.until_text = until.to_string();
+                        }
+                        if c.repeat != Repeat::None {
+                            if is_task {
+                                ui.label(RichText::new("when completed").color(muted)).on_hover_text("Ticking the task off leaves a fresh one, due the next time");
+                            } else {
+                                ui.label(RichText::new("until").color(muted));
+                                ui.add(egui::TextEdit::singleline(&mut c.until_text).hint_text("YYYY-MM-DD").desired_width(100.0));
+                            }
+                        }
+                    });
+                    ui.end_row();
+
                     if is_task {
                         label(ui, "List");
                         let lname = |id: u64| self.data.lists.iter().find(|l| l.id == id).map(|l| l.name.clone()).unwrap_or_else(|| self.data.prefs.inbox_name());
@@ -309,6 +338,17 @@ impl App {
                 }
             },
         };
+        // an event repeats up to a day, which has to be readable
+        let mut until: Option<NaiveDate> = None;
+        if save && c.kind == CreateKind::Event && c.repeat != Repeat::None {
+            match NaiveDate::parse_from_str(c.until_text.trim(), "%Y-%m-%d") {
+                Ok(d) => until = Some(d),
+                Err(_) => {
+                    self.say(ctx, "The last day should look like 2026-11-30", false);
+                    save = false;
+                }
+            }
+        }
         if to_frame {
             let day = c.ev.start.date();
             let s = (c.ev.start - midnight(day)).num_minutes();
@@ -340,7 +380,9 @@ impl App {
                         title: ev.title.clone(),
                         notes: std::mem::take(&mut ev.notes),
                         duration_min: Some(ev.minutes()),
-                        due,
+                        // a repeat counts from the due date: without one, the block's day
+                        due: due.or((c.repeat != Repeat::None).then_some(day)),
+                        repeat: c.repeat,
                         ..c.task.clone()
                     },
                 );
@@ -348,7 +390,36 @@ impl App {
                 self.data.events.push(ev);
                 self.after_task_scheduled(ctx, task_id, day);
             } else {
+                // a repeating event is laid out as one event per time, so each
+                // can be moved or removed alone and all of them sync like any other
+                let mut times: Vec<NaiveDate> = Vec::new();
+                if let Some(until) = until {
+                    let mut d = day;
+                    for i in 1..200u32 {
+                        d = match c.repeat {
+                            Repeat::Monthly => match day.checked_add_months(chrono::Months::new(i)) {
+                                Some(n) => n,
+                                None => break,
+                            },
+                            r => r.next(d),
+                        };
+                        if d > until {
+                            break;
+                        }
+                        times.push(d);
+                    }
+                }
+                for d in &times {
+                    let mut copy = ev.clone();
+                    copy.id = self.data.new_id();
+                    copy.start = ev.start + (*d - day);
+                    copy.end = ev.end + (*d - day);
+                    self.data.events.push(copy);
+                }
                 self.data.events.push(ev);
+                if !times.is_empty() {
+                    self.say(ctx, format!("Added {} events", times.len() + 1), true);
+                }
             }
             self.selected = Some(id);
             self.commit();

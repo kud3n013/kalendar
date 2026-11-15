@@ -251,11 +251,14 @@ pub struct CreateEdit {
     /// what a new task gets besides its name: list, importance, notes
     pub task: Task,
     pub due_text: String,
+    /// how the block repeats, and for an event up to which day
+    pub repeat: Repeat,
+    pub until_text: String,
 }
 
 impl CreateEdit {
     pub fn new(ev: Event, kind: CreateKind, anchor_rect: egui::Rect) -> Self {
-        CreateEdit { ev, kind, anchor_rect, focus: true, task: Task::default(), due_text: String::new() }
+        CreateEdit { ev, kind, anchor_rect, focus: true, task: Task::default(), due_text: String::new(), repeat: Repeat::None, until_text: String::new() }
     }
 }
 
