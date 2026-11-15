@@ -679,7 +679,8 @@ impl App {
                         self.toggle_task(id);
                         self.say(ctx, if d { "Task completed" } else { "Task reopened" }, true);
                     }
-                    let mut title = RichText::new(&t.title).size(14.5);
+                    // tasks left without a name by an older version still show one
+                    let mut title = RichText::new(if t.title.trim().is_empty() { "New task" } else { &t.title }).size(14.5);
                     if t.done {
                         title = title.color(muted).strikethrough();
                     }

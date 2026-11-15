@@ -548,7 +548,14 @@ impl App {
                     Item {
                         id: e.id,
                         rect: target,
-                        title: e.title.clone(),
+                        // a block without a name says what it is
+                        title: if !e.title.is_empty() {
+                            e.title.clone()
+                        } else if task.is_some() || self.create.as_ref().is_some_and(|c| c.ev.id == e.id && c.kind == CreateKind::Task) {
+                            "New task".into()
+                        } else {
+                            "New Event".into()
+                        },
                         sub: format!("{} – {}", p.fmt_time(e.start.time()), p.fmt_time(e.end.time())),
                         color: rgb(self.data.event_color(e)),
                         task,

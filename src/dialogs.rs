@@ -125,6 +125,10 @@ impl App {
             let day = ev.start.date();
             if c.kind == CreateKind::Task {
                 // the block becomes a session of a new task
+                // and a task always has a name to show in the lists
+                if ev.title.trim().is_empty() {
+                    ev.title = "New task".into();
+                }
                 let task_id = self.data.new_id();
                 self.data.tasks.insert(
                     0,
