@@ -253,6 +253,9 @@ pub struct CreateEdit {
 /// The frame editor: a frame being made or changed.
 pub struct FrameEdit {
     pub frame: Frame,
+    /// when the frame began as a block drawn on the calendar: that block and
+    /// where it is on screen, so the window stays beside it
+    pub from_block: Option<(Event, egui::Rect)>,
     pub is_new: bool,
     pub until_text: String,
     pub focus: bool,
@@ -708,8 +711,19 @@ impl App {
             app.open_new_task(list);
         }
         if std::env::var("KALENDAR_SHOW_CREATE").is_ok() {
-            let start = today.and_hms_opt(10, 0, 0).unwrap();
+            // KALENDAR_CREATE_AT=15 puts the block at another hour than ten
+            let hour = std::env::var("KALENDAR_CREATE_AT").ok().and_then(|h| h.parse::<u32>().ok()).filter(|h| *h < 23).unwrap_or(10);
+            let start = today.and_hms_opt(hour, 0, 0).unwrap();
             app.open_create(start, 60, egui::Rect::from_min_size(egui::pos2(700.0, 300.0), egui::vec2(150.0, 100.0)));
+            // KALENDAR_SHOW_CREATE=frame: as after choosing Frame in that window
+            if std::env::var("KALENDAR_SHOW_CREATE").is_ok_and(|v| v == "frame") {
+                if let Some(c) = app.create.take() {
+                    app.open_new_frame(today, hour as i64 * 60, hour as i64 * 60 + 60, c.ev.calendar, String::new());
+                    if let Some(fe) = &mut app.frame_editor {
+                        fe.from_block = Some((c.ev.clone(), c.anchor_rect));
+                    }
+                }
+            }
         }
         // KALENDAR_DRAG="title@x,y": hold the task with that title as if it
         // were being dragged, with the pointer at x,y
@@ -842,6 +856,7 @@ impl App {
         let id = self.data.new_id();
         self.frame_editor = Some(FrameEdit {
             frame: Frame { id, name, calendar, start_min, end_min: end_min.max(start_min + 15), days, from: day, ..Default::default() },
+            from_block: None,
             is_new: true,
             until_text: String::new(),
             focus: true,
@@ -856,6 +871,7 @@ impl App {
             self.frame_editor = Some(FrameEdit {
                 until_text: f.until.map(|d| d.to_string()).unwrap_or_default(),
                 frame: f,
+                from_block: None,
                 is_new: false,
                 focus: false,
             });

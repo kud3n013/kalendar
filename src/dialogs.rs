@@ -29,6 +29,11 @@ pub fn place_beside(ctx: &egui::Context, id: Id, r: egui::Rect, size: egui::Vec2
     )
 }
 
+/// The time of day so many minutes after midnight.
+fn time_of(min: i64) -> chrono::NaiveTime {
+    chrono::NaiveTime::from_num_seconds_from_midnight_opt((min.clamp(0, 24 * 60 - 1) * 60) as u32, 0).unwrap_or_default()
+}
+
 impl App {
     pub fn ui_dialogs(&mut self, ctx: &egui::Context) {
         self.dlg_create(ctx);
@@ -115,6 +120,10 @@ impl App {
             let s = (c.ev.start - midnight(day)).num_minutes();
             let e = if c.ev.end.date() == day { (c.ev.end - midnight(day)).num_minutes() } else { 24 * 60 };
             self.open_new_frame(day, s, e, c.ev.calendar, c.ev.title.clone());
+            // the frame's fields take over this window, beside the same block
+            if let Some(fe) = &mut self.frame_editor {
+                fe.from_block = Some((c.ev.clone(), c.anchor_rect));
+            }
         } else if save {
             self.snapshot();
             let mut ev = c.ev.clone();
@@ -167,13 +176,29 @@ impl App {
         let mut lists: Vec<(u64, String, [u8; 3])> = vec![(0, "Inbox".into(), [128, 128, 128])];
         lists.extend(self.data.lists.iter().map(|l| (l.id, l.name.clone(), l.color)));
         let hour12 = self.data.prefs.hour12;
-        egui::Window::new(if ed.is_new { "New frame" } else { "Frame" })
-            .id(Id::unique("frame_editor"))
-            .collapsible(false)
-            .resizable(false)
-            .anchor(Align2::CENTER_CENTER, [0.0, -30.0])
-            .show(ctx, |ui| {
+        let win = egui::Window::new(if ed.is_new { "New frame" } else { "Frame" }).id(Id::unique("frame_editor")).collapsible(false).resizable(false);
+        // begun from a drawn block, it sits beside that block like the
+        // task and event window it took over from
+        let win = match &ed.from_block {
+            Some((_, r)) => win.title_bar(false).fixed_pos(place_beside(ctx, Id::unique("frame_editor"), *r, egui::vec2(400.0, 520.0))),
+            None => win.anchor(Align2::CENTER_CENTER, [0.0, -30.0]),
+        };
+        let mut back: Option<CreateKind> = None;
+        let hours = format!("{} – {}", self.data.prefs.fmt_time(time_of(ed.frame.start_min)), self.data.prefs.fmt_time(time_of(ed.frame.end_min)));
+        win.show(ctx, |ui| {
                 ui.set_width(380.0);
+                if ed.from_block.is_some() {
+                    ui.horizontal(|ui| {
+                        for (kind, label) in [(CreateKind::Task, "Task"), (CreateKind::Event, "Event"), (CreateKind::Frame, "Frame")] {
+                            if ui.selectable_label(kind == CreateKind::Frame, RichText::new(label).size(13.5)).clicked() && kind != CreateKind::Frame {
+                                back = Some(kind);
+                            }
+                        }
+                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.label(RichText::new(&hours).size(12.0).color(muted));
+                        });
+                    });
+                }
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut ed.frame.name)
                         .hint_text("Frame name, e.g. Deep work")
@@ -375,6 +400,13 @@ impl App {
                     save = true;
                 }
             });
+        if let (Some(kind), Some((mut ev, rect))) = (back, ed.from_block.clone()) {
+            // back to a task or an event, keeping the name and the calendar
+            ev.title = ed.frame.name.clone();
+            ev.calendar = ed.frame.calendar;
+            self.create = Some(crate::CreateEdit { ev, kind, anchor_rect: rect, focus: true });
+            return;
+        }
         if save {
             let text = ed.until_text.trim();
             let until = if text.is_empty() {

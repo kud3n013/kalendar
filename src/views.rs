@@ -465,8 +465,15 @@ impl App {
         // and drags still reach the grid
         let mut frame_boxes: Vec<FrameBox> = vec![];
         for (di, day) in days.iter().enumerate() {
-            for o in self.data.frames_on(*day) {
-                let Some(f) = self.data.frame(o.frame) else { continue };
+            // the frame in the editor is shown as it is being set up
+            let edited = self.frame_editor.as_ref().map(|ed| &ed.frame);
+            let mut shown: Vec<&Frame> = self.data.frames_on(*day).iter().filter_map(|o| self.data.frame(o.frame)).filter(|f| edited.is_none_or(|e| e.id != f.id)).collect();
+            if let Some(f) = edited {
+                if f.end_min > f.start_min && Data::frame_occurs_on(f, *day) {
+                    shown.push(f);
+                }
+            }
+            for f in shown {
                 let s = (f.start_min.max(gs)).min(ge);
                 let e = (f.end_min.min(ge)).max(gs);
                 if e <= s {
@@ -477,7 +484,7 @@ impl App {
                 let color = rgb(self.data.frame_color(f));
                 // see-through, so the grid lines stay visible: lightened on a
                 // dark theme, a plain tint on a light one
-                let wash = if self.pal.dark { mix(color, Color32::WHITE, 0.25).gamma_multiply(0.20) } else { color.gamma_multiply(0.13) };
+                let wash = if self.pal.dark { mix(color, Color32::WHITE, 0.25).gamma_multiply(0.14) } else { color.gamma_multiply(0.09) };
                 fill_squircle(&painter, r, RADIUS, wash);
                 // a line of its colour along the top and the bottom
                 if r.height() > 8.0 {
@@ -547,7 +554,12 @@ impl App {
                 let (top_y, bottom_y) = boxes[k];
                 let (left, width, layer) = lay[k];
                 let x = x0 + di as f32 * col_w + left * cw;
-                let task = e.task_id.and_then(|t| self.data.task(t)).map(|t| (t.id, t.done));
+                let mut task = e.task_id.and_then(|t| self.data.task(t)).map(|t| (t.id, t.done));
+                // a block still being drawn or named looks like what it will be
+                let editing = self.editor.as_ref().is_some_and(|ed| ed.ev.id == e.id);
+                if *draft && !editing && self.create.as_ref().is_none_or(|c| c.kind == CreateKind::Task) {
+                    task = Some((0, false));
+                }
                 let mut target = Rect::from_min_max(pos2(x, top_y), pos2(x + width * cw, bottom_y));
                 if !*draft {
                     let dragging = matches!(&self.drag, Some(Drag::Move { id, .. }) | Some(Drag::Resize { id }) if *id == e.id);
