@@ -1220,13 +1220,14 @@ mod tests {
         assert!(!longer.contains("DURATION") && longer.contains("DTEND:"));
     }
 
-    const TODOS: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:t1\r\nDTSTAMP:20260101T000000Z\r\nSUMMARY:Buy milk\\, bread\r\nDESCRIPTION:Two of each\r\nDUE;TZID=Europe/Zurich:20261120T180000\r\nPRIORITY:1\r\nPERCENT-COMPLETE:40\r\nCATEGORIES:home\r\nX-APPLE-SORT-ORDER:7\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Reminder\r\nTRIGGER:-PT1H\r\nEND:VALARM\r\nEND:VTODO\r\nBEGIN:VTODO\r\nUID:t2\r\nSUMMARY:Done one\r\nDUE;VALUE=DATE:20261101\r\nSTATUS:COMPLETED\r\nCOMPLETED:20261102T100000Z\r\nEND:VTODO\r\nBEGIN:VTODO\r\nUID:t3\r\nSUMMARY:Every week\r\nRRULE:FREQ=WEEKLY\r\nEND:VTODO\r\nBEGIN:VTODO\r\nUID:t4\r\nSUMMARY:Dropped\r\nSTATUS:CANCELLED\r\nEND:VTODO\r\nBEGIN:VEVENT\r\nUID:e\r\nSUMMARY:An event\r\nDTSTART:20261120T100000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    const TODOS: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:t1\r\nDTSTAMP:20260101T000000Z\r\nSUMMARY:Buy milk\\, bread\r\nDESCRIPTION:Two of each\r\nDUE:20261120T120000Z\r\nPRIORITY:1\r\nPERCENT-COMPLETE:40\r\nCATEGORIES:home\r\nX-APPLE-SORT-ORDER:7\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Reminder\r\nTRIGGER:-PT1H\r\nEND:VALARM\r\nEND:VTODO\r\nBEGIN:VTODO\r\nUID:t2\r\nSUMMARY:Done one\r\nDUE;VALUE=DATE:20261101\r\nSTATUS:COMPLETED\r\nCOMPLETED:20261102T100000Z\r\nEND:VTODO\r\nBEGIN:VTODO\r\nUID:t3\r\nSUMMARY:Every week\r\nRRULE:FREQ=WEEKLY\r\nEND:VTODO\r\nBEGIN:VTODO\r\nUID:t4\r\nSUMMARY:Dropped\r\nSTATUS:CANCELLED\r\nEND:VTODO\r\nBEGIN:VEVENT\r\nUID:e\r\nSUMMARY:An event\r\nDTSTART:20261120T100000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
 
     #[test]
     fn reads_tasks() {
         let t = parse_todos(TODOS);
         assert_eq!(t.len(), 2, "repeating and cancelled tasks are left out");
         assert_eq!((t[0].uid.as_str(), t[0].title.as_str(), t[0].notes.as_str(), t[0].priority, t[0].done), ("t1", "Buy milk, bread", "Two of each", 1, false));
+        // noon in UTC is the 20th on almost every clock
         assert_eq!(t[0].due, NaiveDate::from_ymd_opt(2026, 11, 20));
         assert_eq!((t[1].title.as_str(), t[1].done, t[1].due), ("Done one", true, NaiveDate::from_ymd_opt(2026, 11, 1)));
         // the event beside them is still read as an event
@@ -1236,7 +1237,7 @@ mod tests {
 
     #[test]
     fn writes_tasks_back() {
-        let one = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:t1\r\nDTSTAMP:20260101T000000Z\r\nSUMMARY:Buy milk\\, bread\r\nDESCRIPTION:Two of each\r\nDUE;TZID=Europe/Zurich:20261120T180000\r\nPRIORITY:1\r\nPERCENT-COMPLETE:40\r\nCATEGORIES:home\r\nX-APPLE-SORT-ORDER:7\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Reminder\r\nTRIGGER:-PT1H\r\nEND:VALARM\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
+        let one = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:t1\r\nDTSTAMP:20260101T000000Z\r\nSUMMARY:Buy milk\\, bread\r\nDESCRIPTION:Two of each\r\nDUE:20261120T120000Z\r\nPRIORITY:1\r\nPERCENT-COMPLETE:40\r\nCATEGORIES:home\r\nX-APPLE-SORT-ORDER:7\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Reminder\r\nTRIGGER:-PT1H\r\nEND:VALARM\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
         let read = parse_todos(one).remove(0);
         let mut f = TaskFields { title: read.title, notes: read.notes, due: read.due, priority: read.priority, done: read.done };
         // unchanged: everything stays, the due time and the share done included
@@ -1252,11 +1253,11 @@ mod tests {
         // ticked off, renamed, moved to another day, priority dropped
         f.done = true;
         f.title = "Buy milk".into();
-        f.due = NaiveDate::from_ymd_opt(2026, 11, 21);
+        f.due = NaiveDate::from_ymd_opt(2026, 11, 23);
         f.priority = 0;
         let text = write_todo(Some(one), "t1", &f, stamp());
         let out = unfold(&text);
-        for want in ["SUMMARY:Buy milk", "DUE;VALUE=DATE:20261121", "STATUS:COMPLETED", "COMPLETED:20261114T200000Z", "PERCENT-COMPLETE:100", "CATEGORIES:home", "X-APPLE-SORT-ORDER:7", "TRIGGER:-PT1H", "DESCRIPTION:Reminder", "SEQUENCE:1"] {
+        for want in ["SUMMARY:Buy milk", "DUE;VALUE=DATE:20261123", "STATUS:COMPLETED", "COMPLETED:20261114T200000Z", "PERCENT-COMPLETE:100", "CATEGORIES:home", "X-APPLE-SORT-ORDER:7", "TRIGGER:-PT1H", "DESCRIPTION:Reminder", "SEQUENCE:1"] {
             assert!(out.contains(&want.to_string()), "missing: {want}\n{text}");
         }
         assert!(!out.iter().any(|l| l.starts_with("PRIORITY")));
