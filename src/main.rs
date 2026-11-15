@@ -648,7 +648,7 @@ impl App {
             ctx_target: None,
             ctx_frame: None,
             nav_anim: (-10.0, 0.0, 1.0),
-            nav_secs: ANIM_SLIDE_S,
+            nav_secs: anim(ANIM_SLIDE_S),
             page_shot: vec![],
             page_old: vec![],
             last_shown: None,
@@ -2443,6 +2443,7 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = &ui.ctx().clone();
+        ANIMATE.store(self.data.prefs.animations, std::sync::atomic::Ordering::Relaxed);
         ctx.set_theme(match self.data.prefs.theme {
             Theme::System => egui::ThemePreference::System,
             Theme::Light => egui::ThemePreference::Light,
@@ -2467,7 +2468,7 @@ impl eframe::App for App {
             s.visuals.selection.stroke.color = Color32::WHITE;
             s.spacing.item_spacing = egui::vec2(8.0, 6.0);
             s.spacing.button_padding = egui::vec2(8.0, 4.0);
-            s.animation_time = ANIM_S;
+            s.animation_time = anim(ANIM_S);
             // the one corner radius, everywhere
             let cr = egui::CornerRadius::same(RADIUS as u8);
             s.visuals.window_corner_radius = cr;
@@ -2557,14 +2558,14 @@ impl eframe::App for App {
                     };
                     self.page_old = std::mem::take(&mut self.page_shot);
                     // a block carried over the edge turns the page briskly
-                    self.nav_secs = if self.drag.is_some() { ANIM_SLIDE_S * 0.55 } else { ANIM_SLIDE_S };
+                    self.nav_secs = if self.drag.is_some() { anim(ANIM_SLIDE_S) * 0.55 } else { anim(ANIM_SLIDE_S) };
                     (time, moved.signum() as f32, part)
                 };
             }
         }
         self.last_shown = Some(shown);
         let (began, dir, part) = self.nav_anim;
-        let t = (((time - began) as f32) / if dir == 0.0 { ANIM_LONG_S } else { self.nav_secs }).clamp(0.0, 1.0);
+        let t = (((time - began) as f32) / if dir == 0.0 { anim(ANIM_LONG_S) } else { self.nav_secs }.max(1e-4)).clamp(0.0, 1.0);
         // gentle at both ends
         let ease = if t < 0.5 { 4.0 * t * t * t } else { 1.0 - (-2.0 * t + 2.0).powi(3) / 2.0 };
         if t < 1.0 {

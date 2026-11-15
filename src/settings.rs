@@ -195,7 +195,7 @@ fn switch(ui: &mut egui::Ui, on: &mut bool, accent: Color32) -> egui::Response {
         *on = !*on;
         resp.mark_changed();
     }
-    let t = ui.ctx().animate_bool_with_time(resp.id, *on, ANIM_FAST_S);
+    let t = ui.ctx().animate_bool_with_time(resp.id, *on, anim(ANIM_FAST_S));
     let off = ui.visuals().widgets.inactive.bg_fill;
     let track = if resp.hovered() { mix(off, ui.visuals().text_color(), 0.06) } else { off };
     ui.painter().rect_filled(r, 11.0, mix(track, accent, t));
@@ -308,7 +308,7 @@ impl App {
                     for (page, icon, name) in pages {
                         let on = self.settings_page == page && !searching;
                         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::click());
-                        let glow = ui.ctx().animate_bool_with_time(ui.scope_id().with(("nav", name)), resp.hovered() || on, ANIM_FAST_S);
+                        let glow = ui.ctx().animate_bool_with_time(ui.scope_id().with(("nav", name)), resp.hovered() || on, anim(ANIM_FAST_S));
                         if glow > 0.0 {
                             ui.painter().rect_filled(r, 9.0, mix(side, text, if on { 0.10 } else { 0.05 } * glow));
                         }
@@ -477,6 +477,10 @@ impl App {
             let mut pct = (p.ui_scale * 100.0).round() as u32;
             combo(ui, "sz", &mut pct, &sizes);
             p.ui_scale = pct as f32 / 100.0;
+        });
+        let accent = self.pal.accent;
+        row(ui, "Animations", "Sliding pages, gliding blocks, the zoom and fades. Off, everything changes at once.", |ui| {
+            switch(ui, &mut p.animations, accent);
         });
     }
 

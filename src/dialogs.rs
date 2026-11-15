@@ -1190,8 +1190,8 @@ impl App {
             t.born = born;
         }
         // fades and rises in, fades out
-        let a_in = (((now - born) as f32) / ANIM_S).clamp(0.0, 1.0);
-        let a_out = (((until - now) as f32) / ANIM_S).clamp(0.0, 1.0);
+        let a_in = (((now - born) as f32) / anim(ANIM_S)).clamp(0.0, 1.0);
+        let a_out = (((until - now) as f32) / anim(ANIM_S)).clamp(0.0, 1.0);
         let alpha = a_in.min(a_out);
         if alpha < 1.0 {
             ctx.request_repaint();

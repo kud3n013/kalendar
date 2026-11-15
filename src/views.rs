@@ -357,7 +357,7 @@ impl App {
                 let y = hrect.top() + 47.0 + (ev_rows + k) as f32 * 22.0;
                 let r = Rect::from_min_max(pos2(x0 + i as f32 * col_w + 2.0, y), pos2(x0 + (i + 1) as f32 * col_w - 4.0, y + 20.0));
                 let over = hresp.hover_pos().map(|p| r.contains(p)).unwrap_or(false);
-                let glow = ui.ctx().animate_bool_with_time(Id::unique(("due", *tid)), over, ANIM_FAST_S);
+                let glow = ui.ctx().animate_bool_with_time(Id::unique(("due", *tid)), over, anim(ANIM_FAST_S));
                 hp.rect_filled(r, 4.0, mix(self.pal.bg, self.pal.text, 0.03 + 0.07 * glow));
                 hp.rect_stroke(r, 4.0, Stroke::new(1.0, mix(self.pal.border, self.pal.text, 0.25)), StrokeKind::Inside);
                 let c = hp.with_clip_rect(r.shrink(2.0));
@@ -413,7 +413,7 @@ impl App {
             // step cannot be seen
             let was = self.data.prefs.hour_height();
             let dt = ctx.input(|i| i.stable_dt).min(0.05);
-            let mut h = at + (goal - at) * (1.0 - (-dt * ZOOM_RATE).exp());
+            let mut h = if anim(1.0) > 0.0 { at + (goal - at) * (1.0 - (-dt * ZOOM_RATE).exp()) } else { goal };
             if (goal - h).abs() < 0.02 {
                 h = goal;
                 self.zoom_goal = None;
@@ -581,7 +581,7 @@ impl App {
                 if !*draft {
                     let dragging = matches!(&self.drag, Some(Drag::Move { id, .. }) | Some(Drag::Resize { id }) if *id == e.id);
                     // a zoom or a new column width moves every block at once, like the frames
-                    let secs = if regrid { 0.0 } else if dragging { ANIM_FAST_S * 0.6 } else { ANIM_S };
+                    let secs = if regrid { 0.0 } else if dragging { anim(ANIM_FAST_S) * 0.6 } else { anim(ANIM_S) };
                     let key = Id::unique(("block", e.id, (*day - e.start.date()).num_days()));
                     let ax = ctx.animate_value_with_time(key.with("x"), target.left() - x0, secs);
                     let aw = ctx.animate_value_with_time(key.with("w"), target.width(), secs);
@@ -616,7 +616,7 @@ impl App {
         let hover_id = resp.hover_pos().and_then(|hp| items.iter().rev().find(|it| !it.draft && it.rect.contains(hp))).map(|it| it.id);
         for it in &items {
             let hovered = !it.draft && self.drag.is_none() && self.drag_task.is_none() && hover_id == Some(it.id);
-            let glow = ctx.animate_bool_with_time(Id::unique(("glow", it.id)), hovered, ANIM_FAST_S);
+            let glow = ctx.animate_bool_with_time(Id::unique(("glow", it.id)), hovered, anim(ANIM_FAST_S));
             draw_item(&painter, &self.pal, it, self.selected == Some(it.id) && !it.draft, glow);
         }
 
@@ -915,7 +915,7 @@ impl App {
                     let frame = ctx.cumulative_frame_nr();
                     let seen = ctx.data(|d| d.get_temp::<u64>(key)).is_some_and(|f| f + 1 >= frame);
                     ctx.data_mut(|d| d.insert_temp(key, frame));
-                    let secs = if regrid || !seen { 0.0 } else { ANIM_FAST_S * 0.6 };
+                    let secs = if regrid || !seen { 0.0 } else { anim(ANIM_FAST_S) * 0.6 };
                     let ax = ctx.animate_value_with_time(key.with("x"), r.left() - x0, secs);
                     let at = ctx.animate_value_with_time(key.with("t"), r.top() - rect.top(), secs);
                     let ab = ctx.animate_value_with_time(key.with("b"), r.bottom() - rect.top(), secs);
@@ -995,7 +995,7 @@ impl App {
                     ui.add_space(8.0);
                 }
                 let (r, resp) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
-                let grow = ctx.animate_bool_with_time(Id::unique(("dot", i)), resp.hovered(), ANIM_FAST_S);
+                let grow = ctx.animate_bool_with_time(Id::unique(("dot", i)), resp.hovered(), anim(ANIM_FAST_S));
                 ui.painter().circle_filled(r.center(), 9.0 + 2.0 * grow, rgb(*col));
                 if ev.color == Some(*col) {
                     ui.painter().circle_stroke(r.center(), 12.0, Stroke::new(1.5, self.pal.text));

@@ -22,6 +22,18 @@ pub const SNAP_CHOICES: [i64; 3] = [5, 15, 30];
 pub const UNDO_CHOICES: [u32; 5] = [0, 5, 10, 15, 30];
 pub const PLAN_SPAN_DAYS: i64 = 3; // the planner fills this many days
 pub const PLAN_MAX_SPAN_DAYS: i64 = 8; // longest look-ahead
+/// Whether things move at all; follows the setting under Appearance.
+pub static ANIMATE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// How long an animation of `secs` takes: nothing when they are off.
+pub fn anim(secs: f32) -> f32 {
+    if ANIMATE.load(std::sync::atomic::Ordering::Relaxed) {
+        secs
+    } else {
+        0.0
+    }
+}
+
 pub const ANIM_FAST_S: f32 = 0.1;
 pub const ANIM_S: f32 = 0.175;
 pub const ANIM_LONG_S: f32 = 0.275;
@@ -134,6 +146,8 @@ pub struct Prefs {
     pub font: String,
     /// size of everything on screen, 1.0 being the usual
     pub ui_scale: f32,
+    /// slides, glides and fades; off, everything is just there
+    pub animations: bool,
     /// how the Inbox looks: its name (empty for "Inbox"), colour and icon
     pub inbox_name: String,
     pub inbox_color: Option<[u8; 3]>,
@@ -181,6 +195,7 @@ impl Default for Prefs {
             sidebar_side: PanelSide::Left,
             font: String::new(),
             ui_scale: 1.0,
+            animations: true,
             inbox_name: String::new(),
             inbox_color: None,
             inbox_icon: String::new(),
