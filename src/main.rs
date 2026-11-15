@@ -499,6 +499,8 @@ pub struct App {
     /// start time, direction (0 = fade) and reach (share of the width) of
     /// the slide when the view changes
     pub nav_anim: (f64, f32, f32),
+    /// how long the page slide under way takes
+    pub nav_secs: f32,
     /// the calendar page as last painted, and the one sliding away
     pub page_shot: Vec<egui::epaint::ClippedShape>,
     pub page_old: Vec<egui::epaint::ClippedShape>,
@@ -646,6 +648,7 @@ impl App {
             ctx_target: None,
             ctx_frame: None,
             nav_anim: (-10.0, 0.0, 1.0),
+            nav_secs: ANIM_SLIDE_S,
             page_shot: vec![],
             page_old: vec![],
             last_shown: None,
@@ -2370,9 +2373,19 @@ impl App {
         ctx.request_repaint();
         // for screenshots: step this many periods just before the picture,
         // to catch the slide half way
-        if self.frames == 116 {
+        if self.frames == 104 {
             if let Some(n) = std::env::var("KALENDAR_NAV").ok().and_then(|n| n.parse::<i64>().ok()) {
                 self.step(n);
+            }
+            // KALENDAR_NAV_DAYS=1 moves by single days, as the day keys do
+            if let Some(n) = std::env::var("KALENDAR_NAV_DAYS").ok().and_then(|n| n.parse::<i64>().ok()) {
+                self.anchor += Duration::days(n);
+            }
+        }
+        if self.shot.is_some() && self.frames == 20 {
+            // KALENDAR_DAYS=3 shows that many days
+            if let Some(n) = std::env::var("KALENDAR_DAYS").ok().and_then(|n| n.parse::<u8>().ok()) {
+                self.view = View::Days(n as _);
             }
         }
         // the picture arrives later, from the renderer, so it is passed back here
@@ -2536,20 +2549,24 @@ impl eframe::App for App {
                     self.page_old.clear();
                     (time, 0.0, 1.0)
                 } else {
-                    // a step shorter than the days on screen moves just that far
+                    // a step shorter than the days on screen moves just that
+                    // many columns; `part` is the share of the columns moved
                     let part = match shown.0 {
                         View::Days(n) => (moved.abs() as f32 / n.max(1) as f32).min(1.0),
                         _ => 1.0,
                     };
                     self.page_old = std::mem::take(&mut self.page_shot);
+                    // a block carried over the edge turns the page briskly
+                    self.nav_secs = if self.drag.is_some() { ANIM_SLIDE_S * 0.55 } else { ANIM_SLIDE_S };
                     (time, moved.signum() as f32, part)
                 };
             }
         }
         self.last_shown = Some(shown);
         let (began, dir, part) = self.nav_anim;
-        let t = (((time - began) as f32) / if dir == 0.0 { ANIM_LONG_S } else { ANIM_SLIDE_S }).clamp(0.0, 1.0);
-        let ease = 1.0 - (1.0 - t).powi(3);
+        let t = (((time - began) as f32) / if dir == 0.0 { ANIM_LONG_S } else { self.nav_secs }).clamp(0.0, 1.0);
+        // gentle at both ends
+        let ease = if t < 0.5 { 4.0 * t * t * t } else { 1.0 - (-2.0 * t + 2.0).powi(3) / 2.0 };
         if t < 1.0 {
             ctx.request_repaint();
         } else {
@@ -2558,24 +2575,15 @@ impl eframe::App for App {
         egui::CentralPanel::default().frame(egui::Frame::new().fill(self.pal.bg)).show(ui, |ui| {
             let full = ui.max_rect();
             ui.set_clip_rect(full);
-            let reach = full.width() * part;
-            let dx = (dir * (1.0 - ease) * reach).round();
-            // the page that is leaving, as it was last painted
-            if t < 1.0 && dir != 0.0 {
-                let off = egui::vec2(dx - dir * reach, 0.0);
-                for cs in &self.page_old {
-                    let mut shape = cs.shape.clone();
-                    shape.translate(off);
-                    ui.painter().with_clip_rect(cs.clip_rect.translate(off).intersect(full)).add(shape);
-                }
-            }
+            // the hour gutter of the time grid stays put; the day columns
+            // slide past it, exactly as far as the days moved
+            let gutter = if matches!(self.view, View::Month | View::Agenda) { 0.0 } else { GUTTER_W };
+            let cols = full.with_min_x(full.left() + gutter);
+            let reach = cols.width() * part;
+            let sliding = t < 1.0 && dir != 0.0;
+            let dx = if sliding { (dir * (1.0 - ease) * reach).round() } else { 0.0 };
             let layer = ui.layer_id();
             let first = ctx.graphics(|g| g.get(layer).map_or(0, |l| l.next_idx().0));
-            if t < 1.0 && dir != 0.0 {
-                // the new page covers what it has reached of the old one
-                let cover = if dir > 0.0 { full.with_min_x(full.left() + dx) } else { full.with_max_x(full.right() + dx) };
-                ui.painter().rect_filled(cover, 0.0, self.pal.bg);
-            }
             ui.scope_builder(egui::UiBuilder::new().max_rect(full.translate(egui::vec2(dx, 0.0))), |ui| {
                 if dir == 0.0 {
                     ui.set_opacity(0.25 + 0.75 * ease);
@@ -2594,12 +2602,41 @@ impl eframe::App for App {
                         .map(|cs| {
                             let mut cs = cs.clone();
                             cs.shape.translate(egui::vec2(-dx, 0.0));
+                            // what the edge of the view cut off while sliding
+                            // is there again once the page is at rest
+                            if sliding && cs.clip_rect.left() <= full.left() + 0.5 {
+                                cs.clip_rect.min.x -= reach;
+                            }
+                            if sliding && cs.clip_rect.right() >= full.right() - 0.5 {
+                                cs.clip_rect.max.x += reach;
+                            }
                             cs.clip_rect = cs.clip_rect.translate(egui::vec2(-dx, 0.0));
                             cs
                         })
                         .collect()
                 })
             });
+            if sliding {
+                let p = ui.painter();
+                // the page that is leaving, as it was last painted, over the
+                // stretch the new one has not reached yet
+                let off = egui::vec2(dx - dir * reach, 0.0);
+                let old = if dir > 0.0 { cols.with_max_x(cols.left() + dx) } else { cols.with_min_x(cols.right() + dx) };
+                p.rect_filled(old, 0.0, self.pal.bg);
+                for cs in &self.page_old {
+                    let mut shape = cs.shape.clone();
+                    shape.translate(off);
+                    p.with_clip_rect(cs.clip_rect.translate(off).intersect(old)).add(shape);
+                }
+                // and the gutter of the new page, where it will rest
+                if gutter > 0.0 {
+                    let strip = full.with_max_x(cols.left());
+                    p.rect_filled(strip, 0.0, self.pal.bg);
+                    for cs in &self.page_shot {
+                        p.with_clip_rect(cs.clip_rect.intersect(strip)).add(cs.shape.clone());
+                    }
+                }
+            }
         });
         self.ui_dialogs(ctx);
         if let Some(kind) = self.demo_menu.clone() {

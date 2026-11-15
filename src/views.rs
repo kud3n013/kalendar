@@ -520,8 +520,10 @@ impl App {
 
         // has the grid itself changed size since the last frame?
         let grid_id = Id::unique("grid_shape");
-        let shape = (hh, col_w);
-        let regrid = ctx.data(|d| d.get_temp::<(f32, f32)>(grid_id)) != Some(shape);
+        // other days count too: the page slide carries the blocks then, so
+        // they must not also glide on their own to where they now belong
+        let shape = (hh, col_w, days[0], n);
+        let regrid = ctx.data(|d| d.get_temp::<(f32, f32, NaiveDate, usize)>(grid_id)) != Some(shape);
         ctx.data_mut(|d| d.insert_temp(grid_id, shape));
         let mut items: Vec<Item> = vec![];
         for (di, day) in days.iter().enumerate() {
@@ -747,10 +749,10 @@ impl App {
                     if dir != 0 {
                         let now_s = ctx.input(|i| i.time);
                         let since = ctx.data(|d| d.get_temp::<(i64, f64)>(edge_id)).filter(|e| e.0 == dir).map_or(now_s, |e| e.1);
-                        if now_s - since > 0.55 {
+                        if now_s - since > 0.3 {
                             self.step(dir);
                             // and again, a little slower, while it stays there
-                            at_edge = Some((dir, now_s + 0.35));
+                            at_edge = Some((dir, now_s + 0.25));
                         } else {
                             at_edge = Some((dir, since));
                         }
