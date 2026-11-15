@@ -47,7 +47,6 @@ pub fn apply(ctx: &egui::Context, family: &str) {
     let mut fonts = FontDefinitions::default();
     let base = fonts.families.get(&FontFamily::Proportional).cloned().unwrap_or_default();
     let mut text: Vec<String> = vec![];
-    let mut bold: Vec<String> = vec![];
 
     let chosen = if family.is_empty() { None } else { col.family_by_name(family) };
     let chosen = chosen.or_else(|| generic(&mut col, GenericFamily::SansSerif)).or_else(|| generic(&mut col, GenericFamily::SystemUi));
@@ -55,11 +54,6 @@ pub fn apply(ctx: &egui::Context, family: &str) {
         if let Some((regular, _)) = face(fam, FontWeight::NORMAL) {
             fonts.font_data.insert("text".into(), Arc::new(regular));
             text.push("text".into());
-        }
-        // titles are a step heavier, not the full bold
-        if let Some((heavy, true)) = face(fam, FontWeight::SEMI_BOLD) {
-            fonts.font_data.insert("heavy".into(), Arc::new(heavy));
-            bold.push("heavy".into());
         }
     }
     // colour emoji come before the built-in fonts, which have none
@@ -71,9 +65,9 @@ pub fn apply(ctx: &egui::Context, family: &str) {
     // the Lucide icon font covers only private-use glyphs, so it can sit at
     // the end of every family as a fallback
     fonts.font_data.insert("lucide".into(), Arc::new(FontData::from_static(include_bytes!("../assets/lucide/lucide.ttf"))));
-    bold.extend(text.iter().cloned());
+    // titles use the same weight as the rest
+    fonts.families.insert(FontFamily::Name("bold".into()), text.clone());
     fonts.families.insert(FontFamily::Proportional, text);
-    fonts.families.insert(FontFamily::Name("bold".into()), bold);
     for fam in fonts.families.values_mut() {
         fam.push("lucide".to_string());
     }

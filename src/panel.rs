@@ -136,6 +136,33 @@ impl App {
         }
     }
 
+    /// The menu that shows and hides calendars.
+    fn calendars_menu(&mut self, ui: &mut egui::Ui) {
+        let muted = self.pal.muted;
+        let ctx = &ui.ctx().clone();
+        ui.menu_button(RichText::new(icons::CALENDAR).size(16.0).color(muted), |ui| {
+            ui.label(RichText::new("Calendars").color(muted));
+            let mut changed = false;
+            for cal in self.data.calendars.iter_mut() {
+                changed |= ui.checkbox(&mut cal.visible, RichText::new(format!("{} {}", icons::CIRCLE, cal.name)).color(rgb(cal.color))).changed();
+            }
+            if changed {
+                self.commit();
+            }
+            ui.separator();
+            if ui.button("Subscribe to a calendar…").clicked() {
+                self.open_settings(crate::settings::Page::Calendars);
+                ui.close();
+            }
+            if ui.button("Refresh").clicked() {
+                self.run(ctx, Cmd::Refresh);
+                ui.close();
+            }
+        })
+        .response
+        .on_hover_text("Calendars");
+    }
+
     /// The menu that picks the view: day, week, month and so on.
     fn view_menu(&mut self, ui: &mut egui::Ui) {
         let muted = self.pal.muted;
@@ -220,6 +247,7 @@ impl App {
                             ui.add_space(36.0);
                         }
                         self.view_menu(ui);
+                        self.calendars_menu(ui);
                     });
                 });
             });
@@ -401,43 +429,6 @@ impl App {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| nav(ui, self, true));
             }
         });
-        // calendars — and undo while it applies
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 2.0;
-            ui.menu_button(RichText::new(icons::CALENDAR).size(16.0).color(muted), |ui| {
-                ui.label(RichText::new("Calendars").color(muted));
-                let mut changed = false;
-                for cal in self.data.calendars.iter_mut() {
-                    changed |= ui.checkbox(&mut cal.visible, RichText::new(format!("{} {}", icons::CIRCLE, cal.name)).color(rgb(cal.color))).changed();
-                }
-                if changed {
-                    self.commit();
-                }
-                ui.separator();
-                if ui.button("Subscribe to a calendar…").clicked() {
-                    self.open_settings(crate::settings::Page::Calendars);
-                    ui.close();
-                }
-                if ui.button("Refresh").clicked() {
-                    self.run(ctx, Cmd::Refresh);
-                    ui.close();
-                }
-            })
-            .response
-            .on_hover_text("Calendars");
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                // undo appears while there is something to take back
-                let a = ctx.animate_bool_with_time(Id::unique("undo_btn"), !self.undo.is_empty(), ANIM_S);
-                if a > 0.0 {
-                    ui.scope(|ui| {
-                        ui.set_opacity(a);
-                        if icon_btn(ui, icons::UNDO, 16.0, &self.tip("Undo", Cmd::Undo), c).clicked() {
-                            self.do_undo(ctx);
-                        }
-                    });
-                }
-            });
-        });
         ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.label(RichText::new("Tasks").font(bold(18.0)));
@@ -463,6 +454,16 @@ impl App {
                 })
                 .response
                 .on_hover_text("List options");
+                // undo appears while there is something to take back
+                let a = ctx.animate_bool_with_time(Id::unique("undo_btn"), !self.undo.is_empty(), ANIM_S);
+                if a > 0.0 {
+                    ui.scope(|ui| {
+                        ui.set_opacity(a);
+                        if icon_btn(ui, icons::UNDO, 16.0, &self.tip("Undo", Cmd::Undo), c).clicked() {
+                            self.do_undo(ctx);
+                        }
+                    });
+                }
             });
         });
         // tags as a quick filter
