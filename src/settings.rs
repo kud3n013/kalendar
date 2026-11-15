@@ -455,6 +455,24 @@ impl App {
         row(ui, "Task panel position", "Which side of the window the task panel sits on.", |ui| {
             combo(ui, "ps", &mut p.sidebar_side, &[(PanelSide::Left, "Left".into()), (PanelSide::Right, "Right".into())]);
         });
+        let names = self.font_names.get_or_insert_with(crate::fonts::families);
+        row(ui, "Font", "For all text. Emoji always use the system's emoji font.", |ui| {
+            let cw = ui.data(|d| d.get_temp::<f32>(egui::Id::unique("control_w"))).unwrap_or(CONTROL_W);
+            let shown = if p.font.is_empty() { "System default".to_string() } else { p.font.clone() };
+            egui::ComboBox::from_id_salt("font").width(cw).height(320.0).selected_text(shown).show_ui(ui, |ui| {
+                ui.selectable_value(&mut p.font, String::new(), "System default");
+                ui.separator();
+                for n in names.iter() {
+                    ui.selectable_value(&mut p.font, n.clone(), n);
+                }
+            });
+        });
+        row(ui, "Size", "How large text and everything else is drawn.", |ui| {
+            let sizes: Vec<(u32, String)> = [80u32, 90, 100, 110, 125, 150, 175, 200].iter().map(|s| (*s, format!("{s}%"))).collect();
+            let mut pct = (p.ui_scale * 100.0).round() as u32;
+            combo(ui, "sz", &mut pct, &sizes);
+            p.ui_scale = pct as f32 / 100.0;
+        });
     }
 
     fn page_planner(&mut self, ui: &mut egui::Ui) {

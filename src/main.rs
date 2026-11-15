@@ -9,6 +9,7 @@ mod settings;
 mod sync;
 mod tz;
 mod dialogs;
+mod fonts;
 mod views;
 
 use chrono::{Datelike, Duration, Local, Months, NaiveDate, NaiveDateTime, Timelike};
@@ -545,6 +546,10 @@ pub struct App {
     /// set while the window is too narrow for the panel and several days:
     /// whether the panel was open, and the view, to put back afterwards
     pub compact: Option<(bool, View)>,
+    /// the font family and text size now in use; None until first set
+    pub font_applied: Option<(String, f32)>,
+    /// installed font families, listed once the settings ask for them
+    pub font_names: Option<Vec<String>>,
     pub sort_by: usize,
     pub filter_tag: Option<String>,
     pub new_list_text: Option<String>,
@@ -662,6 +667,8 @@ impl App {
             side_scroll: 0.0,
             grid_scroll: (0.0, 0.0),
             compact: None,
+            font_applied: None,
+            font_names: None,
             sort_by: 0,
             filter_tag: None,
             new_list_text: None,
@@ -688,6 +695,10 @@ impl App {
             }
         }
         // KALENDAR_SHOW_NEWTASK=<list name> opens it as that list's + button does
+        // for screenshots: a font family other than the system's
+        if let Ok(f) = std::env::var("KALENDAR_FONT") {
+            app.data.prefs.font = f;
+        }
         if let Ok(v) = std::env::var("KALENDAR_SHOW_NEWTASK") {
             let list = app.data.lists.iter().find(|l| l.name.eq_ignore_ascii_case(&v)).map_or(0, |l| l.id);
             app.open_new_task(list);
@@ -2350,6 +2361,15 @@ impl eframe::App for App {
             Theme::Light => egui::ThemePreference::Light,
             Theme::Dark => egui::ThemePreference::Dark,
         });
+        // the font and the size of everything follow the settings
+        let want = (self.data.prefs.font.clone(), self.data.prefs.ui_scale.clamp(0.8, 2.0));
+        if self.font_applied.as_ref() != Some(&want) {
+            if self.font_applied.as_ref().map(|a| &a.0) != Some(&want.0) {
+                fonts::apply(ctx, &want.0);
+            }
+            ctx.set_zoom_factor(want.1);
+            self.font_applied = Some(want);
+        }
         self.pal = Palette::new(ctx.global_style().visuals.dark_mode);
         let (bg, side, text) = (self.pal.bg, self.pal.side, self.pal.text);
         ctx.global_style_mut(|s| {
@@ -2612,27 +2632,7 @@ fn main() {
         "Kalendar",
         options,
         Box::new(move |cc| {
-            // a heavier face for titles: the regular face, drawn with a little extra weight
-            let mut fonts = egui::FontDefinitions::default();
-            let base = fonts.families.get(&egui::FontFamily::Proportional).cloned().unwrap_or_default();
-            if let Some(first) = base.first().and_then(|n| fonts.font_data.get(n)).cloned() {
-                let mut heavy = (*first).clone();
-                heavy.tweak.scale = 1.0;
-                fonts.font_data.insert("heavy".into(), std::sync::Arc::new(heavy));
-            }
-            let mut fam = vec!["heavy".to_string()];
-            fam.extend(base);
-            fonts.families.insert(egui::FontFamily::Name("bold".into()), fam);
-            // the Lucide icon font covers only private-use glyphs, so it can
-            // sit at the end of every family as a fallback
-            fonts.font_data.insert(
-                "lucide".into(),
-                std::sync::Arc::new(egui::FontData::from_static(include_bytes!("../assets/lucide/lucide.ttf"))),
-            );
-            for fam in fonts.families.values_mut() {
-                fam.push("lucide".to_string());
-            }
-            cc.egui_ctx.set_fonts(fonts);
+            let _ = &cc;
             Ok(Box::new(App::new(shot)))
         }),
     );

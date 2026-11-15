@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-eframe = { version = "=0.37.0", default-features = false, features = ["default_fonts", "glow", "x11", "wayland", "clipboard"] }
+eframe = { version = "=0.37.0", default-features = false, features = ["default_fonts", "system_fonts", "glow", "x11", "wayland", "clipboard"] }
 chrono = { version = "0.4", features = ["serde"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -21,6 +21,8 @@ num-bigint = "0.5.1"
 base64 = "0.23.1"
 getrandom = "0.4.3"
 rand = "0.8"
+epaint = { version = "=0.37.0", features = ["color_fonts"] }
+fontique = "0.11"
 
 [profile.dev]
 opt-level = 1

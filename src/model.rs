@@ -128,6 +128,10 @@ pub struct Prefs {
     pub sidebar_open: bool,
     pub sidebar_w: f32,
     pub sidebar_side: PanelSide,
+    /// font family for all text; empty follows the system
+    pub font: String,
+    /// size of everything on screen, 1.0 being the usual
+    pub ui_scale: f32,
     pub show_scheduled_tasks: bool,
     pub undo_grace_s: u32,
     pub auto_due: bool,
@@ -169,6 +173,8 @@ impl Default for Prefs {
             sidebar_open: true,
             sidebar_w: 410.0,
             sidebar_side: PanelSide::Left,
+            font: String::new(),
+            ui_scale: 1.0,
             show_scheduled_tasks: false,
             undo_grace_s: 10,
             auto_due: true,
