@@ -134,6 +134,10 @@ pub struct Prefs {
     pub font: String,
     /// size of everything on screen, 1.0 being the usual
     pub ui_scale: f32,
+    /// how the Inbox looks: its name (empty for "Inbox"), colour and icon
+    pub inbox_name: String,
+    pub inbox_color: Option<[u8; 3]>,
+    pub inbox_icon: String,
     pub show_scheduled_tasks: bool,
     pub undo_grace_s: u32,
     pub auto_due: bool,
@@ -177,6 +181,9 @@ impl Default for Prefs {
             sidebar_side: PanelSide::Left,
             font: String::new(),
             ui_scale: 1.0,
+            inbox_name: String::new(),
+            inbox_color: None,
+            inbox_icon: String::new(),
             show_scheduled_tasks: false,
             undo_grace_s: 10,
             auto_due: true,
@@ -198,6 +205,10 @@ impl Default for Prefs {
 }
 
 impl Prefs {
+    pub fn inbox_name(&self) -> String {
+        let n = self.inbox_name.trim();
+        if n.is_empty() { "Inbox".to_string() } else { n.to_string() }
+    }
     pub fn hour_height(&self) -> f32 {
         if let Some(h) = self.hour_height_px {
             // not rounded: a zoom passes through the heights in between
@@ -608,6 +619,9 @@ pub struct TaskList {
     pub id: u64,
     pub name: String,
     pub color: [u8; 3],
+    /// a Lucide glyph shown in place of the ring; empty for the ring
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub icon: String,
     /// the synced account it belongs to; None for one's own lists
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account: Option<u64>,
@@ -623,6 +637,38 @@ pub struct TaskList {
     pub read_only: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+pub const INBOX_COLOR: [u8; 3] = [0x35, 0x85, 0xe1];
+
+impl Data {
+    /// A list's name, colour and icon as kept; list 0 is the Inbox, whose
+    /// name is empty until it is renamed.
+    pub fn list_look(&self, id: u64) -> (String, [u8; 3], String) {
+        match self.lists.iter().find(|l| l.id == id) {
+            Some(l) => (l.name.clone(), l.color, l.icon.clone()),
+            None => (self.prefs.inbox_name.clone(), self.prefs.inbox_color.unwrap_or(INBOX_COLOR), self.prefs.inbox_icon.clone()),
+        }
+    }
+    pub fn set_list_look(&mut self, id: u64, look: (String, [u8; 3], String)) {
+        if let Some(l) = self.lists.iter_mut().find(|l| l.id == id) {
+            (l.name, l.color, l.icon) = look;
+        } else if id == 0 {
+            self.prefs.inbox_name = look.0;
+            self.prefs.inbox_color = Some(look.1).filter(|c| *c != INBOX_COLOR);
+            self.prefs.inbox_icon = look.2;
+        }
+    }
+    /// Removes one of one's own lists; its tasks go to the Inbox.
+    pub fn remove_own_list(&mut self, id: u64) {
+        self.lists.retain(|l| l.id != id);
+        for t in self.tasks.iter_mut().filter(|t| t.list == id) {
+            t.list = 0;
+        }
+        for f in self.frames.iter_mut() {
+            f.filter.lists.retain(|l| *l != id);
+        }
+    }
 }
 
 impl TaskList {

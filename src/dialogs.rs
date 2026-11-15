@@ -173,7 +173,7 @@ impl App {
         all_tags.extend(ed.frame.filter.tags.iter().cloned());
         all_tags.sort_by_key(|t| t.to_lowercase());
         all_tags.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
-        let mut lists: Vec<(u64, String, [u8; 3])> = vec![(0, "Inbox".into(), [128, 128, 128])];
+        let mut lists: Vec<(u64, String, [u8; 3])> = vec![(0, self.data.prefs.inbox_name(), [128, 128, 128])];
         lists.extend(self.data.lists.iter().map(|l| (l.id, l.name.clone(), l.color)));
         let hour12 = self.data.prefs.hour12;
         let win = egui::Window::new(if ed.is_new { "New frame" } else { "Frame" }).id(Id::unique("frame_editor")).collapsible(false).resizable(false);
@@ -733,9 +733,9 @@ impl App {
                     ui.add(egui::TextEdit::singleline(&mut ed.earliest_text).hint_text("YYYY-MM-DD").desired_width(100.0));
                     ui.end_row();
                     ui.label(RichText::new("List").color(muted));
-                    let lname = |id: u64| self.data.lists.iter().find(|l| l.id == id).map(|l| l.name.clone()).unwrap_or_else(|| "Inbox".into());
+                    let lname = |id: u64| self.data.lists.iter().find(|l| l.id == id).map(|l| l.name.clone()).unwrap_or_else(|| self.data.prefs.inbox_name());
                     egui::ComboBox::from_id_salt("tlist").selected_text(lname(ed.task.list)).show_ui(ui, |ui| {
-                        ui.selectable_value(&mut ed.task.list, 0, "Inbox");
+                        ui.selectable_value(&mut ed.task.list, 0, self.data.prefs.inbox_name());
                         for l in &self.data.lists {
                             ui.selectable_value(&mut ed.task.list, l.id, &l.name);
                         }

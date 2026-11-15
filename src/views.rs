@@ -849,6 +849,17 @@ impl App {
                         pos2(x0 + di as f32 * col_w, y_of(s)),
                         pos2(x0 + (di + 1) as f32 * col_w - 8.0, y_of(s + mins)),
                     );
+                    // it glides from slot to slot like a block being moved;
+                    // where it first shows, or the grid changes, it is just there
+                    let key = Id::unique(("task_ghost", tid));
+                    let frame = ctx.cumulative_frame_nr();
+                    let seen = ctx.data(|d| d.get_temp::<u64>(key)).is_some_and(|f| f + 1 >= frame);
+                    ctx.data_mut(|d| d.insert_temp(key, frame));
+                    let secs = if regrid || !seen { 0.0 } else { ANIM_FAST_S * 0.6 };
+                    let ax = ctx.animate_value_with_time(key.with("x"), r.left() - x0, secs);
+                    let at = ctx.animate_value_with_time(key.with("t"), r.top() - rect.top(), secs);
+                    let ab = ctx.animate_value_with_time(key.with("b"), r.bottom() - rect.top(), secs);
+                    let r = Rect::from_min_max(pos2(x0 + ax, rect.top() + at), pos2(x0 + ax + r.width(), rect.top() + ab));
                     // over a frame the ghost takes its colour, dimmed when the
                     // frame would not take this task; the drop works either way
                     let over = frame_at(pos).filter(|b| b.day == start.date());

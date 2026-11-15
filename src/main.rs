@@ -250,6 +250,16 @@ pub struct CreateEdit {
     pub focus: bool,
 }
 
+/// A task list whose look is being changed from the task panel.
+pub struct ListEdit {
+    pub id: u64,
+    /// the corner the little window hangs from
+    pub at: egui::Pos2,
+    pub fresh: bool,
+    /// whether the state before the first change was kept for undo
+    pub snapped: bool,
+}
+
 /// The frame editor: a frame being made or changed.
 pub struct FrameEdit {
     pub frame: Frame,
@@ -558,7 +568,11 @@ pub struct App {
     pub font_names: Option<Vec<String>>,
     pub sort_by: usize,
     pub filter_tag: Option<String>,
-    pub new_list_text: Option<String>,
+    /// the name of a list being added, and whether its field just appeared
+    pub new_list_text: Option<(String, bool)>,
+    pub list_edit: Option<ListEdit>,
+    /// the name typed for a new list in the settings
+    pub new_list_name: String,
     pub collapsed: std::collections::HashSet<String>,
     pub scroll_to: Option<f32>,
     pub clipboard: Option<Event>,
@@ -679,6 +693,8 @@ impl App {
             sort_by: 0,
             filter_tag: None,
             new_list_text: None,
+            list_edit: None,
+            new_list_name: String::new(),
             collapsed: ["done".to_string()].into_iter().collect(),
             scroll_to: Some(scroll.max(0.0)),
             clipboard: None,
@@ -709,6 +725,14 @@ impl App {
         if let Ok(v) = std::env::var("KALENDAR_SHOW_NEWTASK") {
             let list = app.data.lists.iter().find(|l| l.name.eq_ignore_ascii_case(&v)).map_or(0, |l| l.id);
             app.open_new_task(list);
+        }
+        if let Ok(v) = std::env::var("KALENDAR_LIST_EDIT") {
+            // test aid: the named list gets an icon and its little editor is open
+            let id = app.data.lists.iter().find(|l| l.name.eq_ignore_ascii_case(&v)).map_or(0, |l| l.id);
+            if let Some(l) = app.data.lists.iter_mut().find(|l| l.id == id) {
+                l.icon = icons::LIST_ICONS[1].to_string();
+            }
+            app.list_edit = Some(ListEdit { id, at: egui::pos2(400.0, 330.0), fresh: true, snapped: true });
         }
         if std::env::var("KALENDAR_SHOW_CREATE").is_ok() {
             // KALENDAR_CREATE_AT=15 puts the block at another hour than ten
@@ -2425,6 +2449,7 @@ impl eframe::App for App {
                 "active" => Page::ActiveCalendars,
                 "shortcuts" => Page::Shortcuts,
                 "planner" => Page::Planner,
+                "lists" => Page::Lists,
                 "appearance" => Page::Appearance,
                 "info" => Page::Info,
                 _ => Page::General,

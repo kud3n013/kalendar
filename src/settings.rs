@@ -13,6 +13,7 @@ pub enum Page {
     General,
     Appearance,
     ActiveCalendars,
+    Lists,
     Planner,
     Info,
 }
@@ -27,10 +28,11 @@ fn bold(size: f32) -> FontId {
 }
 
 /// The order pages are listed in search results.
-const SEARCH_ORDER: [(Page, &str); 7] = [
+const SEARCH_ORDER: [(Page, &str); 8] = [
     (Page::General, "General"),
     (Page::Appearance, "Appearance"),
     (Page::ActiveCalendars, "Active calendars"),
+    (Page::Lists, "Task lists"),
     (Page::Planner, "Planner"),
     (Page::Calendars, "Calendars"),
     (Page::Info, "Info"),
@@ -266,7 +268,7 @@ impl App {
 
     /// The whole content: page list on the left, the chosen page on the right.
     pub fn settings_body(&mut self, ui: &mut egui::Ui) {
-        let before = serde_json::to_string(&(&self.data.prefs, &self.data.calendars, &self.data.frames)).unwrap_or_default();
+        let before = serde_json::to_string(&(&self.data.prefs, &self.data.calendars, &self.data.frames, &self.data.lists)).unwrap_or_default();
         let (side, bg, muted, text, border) = (self.pal.side, self.pal.bg, self.pal.muted, self.pal.text, self.pal.border);
         let full = ui.max_rect();
         let nav_w = 264.0f32.min(full.width() * 0.4);
@@ -292,6 +294,7 @@ impl App {
                             (Page::General, icons::SETTINGS, "General"),
                             (Page::Appearance, icons::PALETTE, "Appearance"),
                             (Page::ActiveCalendars, icons::SQUARE_CHECK, "Active calendars"),
+                            (Page::Lists, icons::LIST_TODO, "Task lists"),
                             (Page::Planner, icons::SHUFFLE, "Planner"),
                         ],
                     ),
@@ -339,6 +342,7 @@ impl App {
                         Page::Appearance => self.page_appearance(ui),
                         Page::Planner => self.page_planner(ui),
                         Page::ActiveCalendars => self.page_active(ui),
+                        Page::Lists => self.page_lists(ui),
                         Page::Calendars => self.page_calendars(ui, &ctx),
                         Page::Shortcuts => self.page_shortcuts(ui),
                         Page::Info => self.page_info(ui),
@@ -346,7 +350,7 @@ impl App {
                 });
             });
         });
-        if before != serde_json::to_string(&(&self.data.prefs, &self.data.calendars, &self.data.frames)).unwrap_or_default() {
+        if before != serde_json::to_string(&(&self.data.prefs, &self.data.calendars, &self.data.frames, &self.data.lists)).unwrap_or_default() {
             self.commit();
         }
     }
@@ -362,6 +366,7 @@ impl App {
                 Page::Appearance => self.page_appearance(ui),
                 Page::Planner => self.page_planner(ui),
                 Page::ActiveCalendars => self.page_active(ui),
+                Page::Lists => self.page_lists(ui),
                 Page::Calendars => self.page_calendars(ui, ctx),
                 Page::Shortcuts => self.page_shortcuts(ui),
                 Page::Info => self.page_info(ui),
@@ -592,7 +597,7 @@ impl App {
             let names: Vec<String> = f
                 .lists
                 .iter()
-                .map(|id| if *id == 0 { "Inbox".to_string() } else { self.data.lists.iter().find(|l| l.id == *id).map(|l| l.name.clone()).unwrap_or_else(|| "?".into()) })
+                .map(|id| if *id == 0 { self.data.prefs.inbox_name() } else { self.data.lists.iter().find(|l| l.id == *id).map(|l| l.name.clone()).unwrap_or_else(|| "?".into()) })
                 .collect();
             parts.push(names.join(", "));
         }
@@ -724,6 +729,90 @@ impl App {
             self.editor = None;
             self.commit();
             self.say(&ctx, format!("Calendar \"{name}\" removed"), true);
+        }
+    }
+
+    /// Task lists: name, colour and icon of each, new ones, and removing.
+    fn page_lists(&mut self, ui: &mut egui::Ui) {
+        if finding(ui) {
+            let names: Vec<&str> = self.data.lists.iter().map(|l| l.name.as_str()).collect();
+            let words = [&["task list", "inbox", "icon", "colour", "color", "rename", "add", "remove", "delete", "new list"][..], &names].concat();
+            page_result(ui, Page::Lists, "Manage task lists", "Rename task lists, change their colour and icon, add or remove them", &words);
+            return;
+        }
+        let (muted, border, side, text) = (self.pal.muted, self.pal.border, self.pal.side, self.pal.text);
+        heading(ui, "Task lists");
+        ui.add(egui::Label::new(RichText::new("Rename your task lists, change their colour and icon, add new ones or remove them.").size(15.0).color(muted)).wrap());
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            let r = ui.add(
+                egui::TextEdit::singleline(&mut self.new_list_name)
+                    .hint_text("New list name")
+                    .font(FontId::proportional(15.0))
+                    .margin(Margin::symmetric(10, 8))
+                    .desired_width((ui.available_width() - 330.0).clamp(120.0, 300.0)),
+            );
+            let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let b = egui::Button::new(RichText::new("+ Add list").size(15.0).color(Color32::WHITE)).fill(self.pal.accent).corner_radius(8);
+            if (ui.add(b).clicked() || enter) && !self.new_list_name.trim().is_empty() {
+                self.snapshot();
+                let name = std::mem::take(&mut self.new_list_name);
+                self.new_list(name.trim());
+            }
+        });
+        ui.add_space(10.0);
+        let ids: Vec<u64> = std::iter::once(0).chain(self.data.lists.iter().map(|l| l.id)).collect();
+        let mut remove: Option<u64> = None;
+        for lid in ids {
+            let (mut name, color, icon) = self.data.list_look(lid);
+            let synced = self.data.lists.iter().any(|l| l.id == lid && l.account.is_some());
+            let count = self.data.tasks.iter().filter(|t| t.list == lid && !t.done).count();
+            ui.allocate_ui_with_layout(vec2(ui.available_width(), 52.0), Layout::left_to_right(Align::Center), |ui| {
+                // the ring or icon opens colours and icons
+                let (r, resp) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::click());
+                if resp.hovered() {
+                    crate::fill_squircle(ui.painter(), r, 8.0, mix(side, text, 0.08));
+                }
+                if icon.is_empty() {
+                    ui.painter().circle_stroke(r.center(), 6.5, Stroke::new(2.0, rgb(color)));
+                } else {
+                    ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, &icon, FontId::proportional(18.0), rgb(color));
+                }
+                let resp = resp.on_hover_text("Colour and icon");
+                egui::Popup::from_toggle_button_response(&resp).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+                    ui.set_width(236.0);
+                    let mut snapped = true;
+                    self.list_fields(ui, lid, false, false, &mut snapped);
+                });
+                let edit = egui::TextEdit::singleline(&mut name)
+                    .hint_text(if lid == 0 { "Inbox" } else { "List name" })
+                    .font(FontId::proportional(16.0))
+                    .desired_width((ui.available_width() - 330.0).clamp(110.0, 280.0))
+                    .id_salt(("listname", lid));
+                if ui.add(edit).changed() {
+                    let (_, color, icon) = self.data.list_look(lid);
+                    self.data.set_list_look(lid, (name.clone(), color, icon));
+                }
+                let what = if synced { format!("from an account, {count} open tasks") } else { format!("{count} open tasks") };
+                ui.label(RichText::new(what).size(13.0).color(muted));
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    if lid == 0 {
+                        ui.label(RichText::new("always there").size(13.0).color(muted));
+                        return;
+                    }
+                    let b = egui::Button::new(RichText::new("Remove").size(14.0).color(RED)).fill(mix(side, text, 0.07)).corner_radius(7);
+                    let resp = ui.add_enabled(!synced, b).on_hover_text("Its tasks go to the Inbox");
+                    if resp.on_disabled_hover_text("Untick it under Integrations to stop syncing it, or sign out of its account there").clicked() {
+                        remove = Some(lid);
+                    }
+                });
+            });
+            let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+            ui.painter().rect_filled(r, 0.0, border);
+        }
+        if let Some(id) = remove {
+            self.snapshot();
+            self.data.remove_own_list(id);
         }
     }
 

@@ -40,3 +40,26 @@ pub const CLOCK: &str = "\u{e087}"; // clock
 pub const PALETTE: &str = "\u{e1dd}"; // palette
 pub const PEN: &str = "\u{e172}"; // square-pen
 pub const BAN: &str = "\u{e051}"; // ban
+
+/// What a task list can show in place of its ring.
+pub const LIST_ICONS: [&str; 19] = [
+    "\u{e0f7}", // inbox
+    "\u{e062}", // briefcase
+    "\u{e0f5}", // home
+    "\u{e19f}", // user
+    "\u{e0f2}", // heart
+    "\u{e176}", // star
+    "\u{e05f}", // book-open
+    "\u{e234}", // graduation-cap
+    "\u{e093}", // code
+    "\u{e1c2}", // lightbulb
+    "\u{e15c}", // shopping-cart
+    "\u{e204}", // wallet
+    "\u{e0d7}", // folder
+    "\u{e3a1}", // dumbbell
+    "\u{e34c}", // music-4
+    "\u{e1de}", // plane
+    "\u{e096}", // coffee
+    "\u{e1b1}", // wrench
+    "\u{e2de}", // leaf
+];

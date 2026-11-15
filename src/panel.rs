@@ -300,7 +300,7 @@ impl App {
         self.commit();
     }
 
-    fn new_list(&mut self, name: &str) -> u64 {
+    pub fn new_list(&mut self, name: &str) -> u64 {
         let id = self.data.new_id();
         let color = EVENT_COLORS[self.data.lists.len() % EVENT_COLORS.len()].0;
         self.data.lists.push(TaskList { id, name: name.to_string(), color, ..Default::default() });
@@ -381,7 +381,7 @@ impl App {
             };
             let mut new_list = |ui: &mut egui::Ui, app: &mut App| {
                 if icon_btn(ui, icons::PLUS, 17.0, "New task list", c).clicked() {
-                    app.new_list_text = Some(String::new());
+                    app.new_list_text = Some((String::new(), true));
                 }
             };
             if right {
@@ -508,9 +508,11 @@ impl App {
                 let soon_from = if p.show_due_tomorrow { 2 } else if p.show_due_today { 1 } else { 0 };
                 let due_soon = ids(&|t| t.due.map(|d| (d - today).num_days() >= soon_from && (d - today).num_days() <= DUE_SOON_DAYS).unwrap_or(false));
                 let visible_in_list = |t: &Task| p.show_scheduled_tasks || !self.data.task_is_scheduled(t.id);
-                let mut lists: Vec<(u64, String, Color32, Vec<u64>)> = vec![(0, "Inbox".into(), Color32::from_rgb(0x35, 0x85, 0xe1), ids(&|t| t.list == 0 && visible_in_list(t)))];
-                for l in &self.data.lists {
-                    lists.push((l.id, l.name.clone(), rgb(l.color), ids(&|t| t.list == l.id && visible_in_list(t))));
+                let mut lists: Vec<(u64, String, String, Color32, Vec<u64>)> = Vec::new();
+                for id in std::iter::once(0).chain(self.data.lists.iter().map(|l| l.id)) {
+                    let (name, color, icon) = self.data.list_look(id);
+                    let name = if id == 0 { self.data.prefs.inbox_name() } else if name.trim().is_empty() { "Untitled list".to_string() } else { name };
+                    lists.push((id, name, icon, rgb(color), ids(&|t| t.list == id && visible_in_list(t))));
                 }
                 let done_ids: Vec<u64> = self.data.tasks.iter().filter(|t| t.done).map(|t| t.id).collect();
 
@@ -533,28 +535,134 @@ impl App {
                         ui.painter().rect_filled(r, 0.0, border);
                         ui.add_space(8.0);
                     }
-                    for (id, name, color, items) in &lists {
-                        self.section(ui, ctx, &format!("list{id}"), name, None, *color, items, Some(*id));
+                    for (id, name, icon, color, items) in &lists {
+                        let glyph = Some((icon.as_str(), *color)).filter(|g| !g.0.is_empty());
+                        self.section(ui, ctx, &format!("list{id}"), name, glyph, *color, items, Some(*id));
                     }
                     if !done_ids.is_empty() {
                         self.section(ui, ctx, "done", "Completed", Some((icons::CHECK, muted)), muted, &done_ids, None);
                     }
                     ui.add_space(10.0);
-                    if let Some(mut name) = self.new_list_text.take() {
+                    if let Some((mut name, fresh)) = self.new_list_text.take() {
                         let r = ui.add(egui::TextEdit::singleline(&mut name).hint_text("List name").desired_width(f32::INFINITY));
-                        r.request_focus();
+                        if fresh {
+                            r.request_focus();
+                            ui.scroll_to_rect(r.rect, None);
+                        }
                         let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        let esc = ui.input(|i| i.key_pressed(egui::Key::Escape));
-                        if enter && !name.trim().is_empty() {
+                        if r.lost_focus() && enter && !name.trim().is_empty() {
                             self.snapshot();
                             self.new_list(name.trim());
                             self.commit();
-                        } else if !esc && !enter {
-                            self.new_list_text = Some(name);
+                        } else if fresh || r.has_focus() {
+                            // a click anywhere else, or Escape, drops it
+                            self.new_list_text = Some((name, false));
                         }
                     }
                     ui.add_space(20.0);
                 });
+        self.ui_list_edit(ctx);
+    }
+
+    /// What a list's menu offers: change how it looks, or remove it.
+    fn list_menu(&mut self, ui: &mut egui::Ui, lid: u64, at: egui::Pos2) {
+        ui.set_min_width(130.0);
+        if ui.button(format!("{}  Edit", icons::PEN)).clicked() {
+            self.list_edit = Some(crate::ListEdit { id: lid, at, fresh: true, snapped: false });
+            ui.close();
+        }
+        if lid == 0 {
+            return;
+        }
+        let synced = self.data.lists.iter().any(|l| l.id == lid && l.account.is_some());
+        let b = ui.add_enabled(!synced, egui::Button::new(RichText::new(format!("{}  Remove", icons::TRASH)).color(RED)));
+        let b = b.on_hover_text("Its tasks go to the Inbox").on_disabled_hover_text("This list comes from an account. It goes when it is switched off under Settings, Calendars.");
+        if b.clicked() {
+            self.snapshot();
+            self.data.remove_own_list(lid);
+            self.commit();
+            ui.close();
+        }
+    }
+
+    /// The little window where a list's name, colour and icon are changed.
+    fn ui_list_edit(&mut self, ctx: &egui::Context) {
+        let Some(mut ed) = self.list_edit.take() else { return };
+        if ed.id != 0 && !self.data.lists.iter().any(|l| l.id == ed.id) {
+            return;
+        }
+        let out = egui::Area::new(Id::unique("list_edit")).order(egui::Order::Foreground).pivot(Align2::RIGHT_TOP).fixed_pos(ed.at).show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_width(236.0);
+                self.list_fields(ui, ed.id, true, ed.fresh, &mut ed.snapped)
+            })
+            .inner
+        });
+        if out.inner {
+            self.commit();
+        }
+        let done = ctx.input(|i| i.key_pressed(egui::Key::Escape) || i.key_pressed(egui::Key::Enter));
+        if !done && (ed.fresh || !out.response.clicked_elsewhere()) {
+            ed.fresh = false;
+            self.list_edit = Some(ed);
+        }
+    }
+
+    /// The fields that change how a list looks. True when one changed;
+    /// the first change is kept for undo unless `snapped` says it was.
+    pub fn list_fields(&mut self, ui: &mut egui::Ui, lid: u64, with_name: bool, focus: bool, snapped: &mut bool) -> bool {
+        let (side, text, muted) = (self.pal.side, self.pal.text, self.pal.muted);
+        let before = self.data.list_look(lid);
+        let mut look = before.clone();
+        if with_name {
+            let r = ui.add(egui::TextEdit::singleline(&mut look.0).hint_text(if lid == 0 { "Inbox" } else { "List name" }).desired_width(f32::INFINITY));
+            if focus {
+                r.request_focus();
+            }
+            ui.add_space(6.0);
+        }
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+            for (col, cname) in EVENT_COLORS.iter() {
+                let (cr, cresp) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
+                ui.painter().circle_filled(cr.center(), 7.5, rgb(*col));
+                if look.1 == *col {
+                    ui.painter().circle_stroke(cr.center(), 10.0, Stroke::new(1.5, text));
+                }
+                if cresp.on_hover_text(*cname).clicked() {
+                    look.1 = *col;
+                }
+            }
+        });
+        ui.add_space(6.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(2.0, 2.0);
+            for glyph in std::iter::once("").chain(icons::LIST_ICONS) {
+                let (gr, gresp) = ui.allocate_exact_size(vec2(27.0, 27.0), Sense::click());
+                let on = look.2 == glyph;
+                if on || gresp.hovered() {
+                    fill_squircle(ui.painter(), gr, RADIUS, mix(side, text, if on { 0.16 } else { 0.08 }));
+                }
+                let c = if on { rgb(look.1) } else { muted };
+                if glyph.is_empty() {
+                    ui.painter().circle_stroke(gr.center(), 5.5, Stroke::new(2.0, c));
+                } else {
+                    ui.painter().text(gr.center(), Align2::CENTER_CENTER, glyph, FontId::proportional(15.0), c);
+                }
+                if gresp.clicked() {
+                    look.2 = glyph.to_string();
+                }
+            }
+        });
+        if look == before {
+            return false;
+        }
+        if !*snapped {
+            self.snapshot();
+            *snapped = true;
+        }
+        self.data.set_list_look(lid, look);
+        true
     }
 
     /// One collapsible group of tasks with its heading.
@@ -573,7 +681,9 @@ impl App {
         let (muted, text, side) = (self.pal.muted, self.pal.text, self.pal.side);
         let collapsed = self.collapsed.contains(key);
         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
-        let glow = ctx.animate_bool_with_time(Id::unique(("sec", key)), resp.hovered(), ANIM_FAST_S);
+        // the menu button sits on the row, so the row itself is not "hovered" there
+        let editing = list.is_some() && self.list_edit.as_ref().map(|e| e.id) == list;
+        let glow = ctx.animate_bool_with_time(Id::unique(("sec", key)), resp.hovered() || ui.rect_contains_pointer(r) || editing, ANIM_FAST_S);
         if glow > 0.0 {
             fill_squircle(ui.painter(), r.expand2(vec2(6.0, 0.0)), RADIUS, mix(side, text, 0.05 * glow));
         }
@@ -604,7 +714,7 @@ impl App {
         let mut add_clicked = false;
         if let Some(_l) = list {
             if glow > 0.0 {
-                let pr = Rect::from_center_size(pos2(r.right() - 38.0, r.center().y), vec2(22.0, 22.0));
+                let pr = Rect::from_center_size(pos2(r.right() - 66.0, r.center().y), vec2(22.0, 22.0));
                 let over = ui.rect_contains_pointer(pr);
                 ui.painter().text(pr.center(), Align2::CENTER_CENTER, "+", FontId::proportional(18.0), if over { text } else { muted.gamma_multiply(glow) });
                 if over && resp.clicked() {
@@ -624,34 +734,23 @@ impl App {
                 self.collapsed.insert(key.to_string());
             }
         }
-        // a list can be renamed, recoloured or removed from its menu
-        if let Some(lid) = list.filter(|l| *l != 0) {
-            resp.context_menu(|ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.set_max_width(200.0);
-                    for (col, cname) in EVENT_COLORS.iter() {
-                        let (cr, cresp) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::click());
-                        ui.painter().circle_filled(cr.center(), 7.0, rgb(*col));
-                        if cresp.on_hover_text(*cname).clicked() {
-                            if let Some(l) = self.data.lists.iter_mut().find(|l| l.id == lid) {
-                                l.color = *col;
-                            }
-                            self.commit();
-                            ui.close();
-                        }
-                    }
-                });
-                ui.separator();
-                if ui.button(RichText::new("Delete list (tasks go to Inbox)").color(RED)).clicked() {
-                    self.snapshot();
-                    self.data.lists.retain(|l| l.id != lid);
-                    for t in self.data.tasks.iter_mut().filter(|t| t.list == lid) {
-                        t.list = 0;
-                    }
-                    self.commit();
-                    ui.close();
+        // a list is renamed, recoloured or removed from its menu: the
+        // three dots at the end of the row, or a right click
+        if let Some(lid) = list {
+            let at = r.right_bottom() + vec2(0.0, 2.0);
+            let dr = Rect::from_center_size(pos2(r.right() - 38.0, r.center().y), vec2(24.0, 24.0));
+            let dots = ui.interact(dr, Id::unique(("listdots", lid)), Sense::click()).on_hover_text("Edit or remove");
+            let menu = egui::Popup::menu(&dots);
+            let open = menu.is_open();
+            if glow > 0.0 || open {
+                if dots.hovered() || open {
+                    fill_squircle(ui.painter(), dr, RADIUS, mix(side, text, 0.10));
                 }
-            });
+                let dc = if dots.hovered() || open { text } else { muted.gamma_multiply(glow) };
+                ui.painter().text(dr.center(), Align2::CENTER_CENTER, icons::ELLIPSIS, FontId::proportional(16.0), dc);
+            }
+            menu.show(|ui| self.list_menu(ui, lid, at));
+            resp.context_menu(|ui| self.list_menu(ui, lid, at));
         }
         let a = ctx.animate_bool_with_time(Id::unique(("open", key)), !collapsed, ANIM_S);
         if a > 0.0 {
@@ -699,7 +798,7 @@ impl App {
                             ui.close();
                         }
                         ui.menu_button("Move to list", |ui| {
-                            let mut options = vec![(0u64, "Inbox".to_string())];
+                            let mut options = vec![(0u64, self.data.prefs.inbox_name())];
                             options.extend(self.data.lists.iter().map(|l| (l.id, l.name.clone())));
                             for (lid, name) in options {
                                 if ui.selectable_label(t.list == lid, name).clicked() {
