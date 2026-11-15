@@ -48,6 +48,54 @@ fn time_drag(ui: &mut egui::Ui, m: &mut i64, lo: i64, hi: i64, hour12: bool, mut
     *m = (h * 60 + mm / 5 * 5).clamp(lo, hi);
 }
 
+/// A "+" beside a dropdown: a small field pops up under it, and Enter
+/// gives back the name typed there.
+fn add_button(ui: &mut egui::Ui, salt: &str, hint: &str) -> Option<String> {
+    let b = ui.add(egui::Button::new("+").min_size(egui::vec2(24.0, 0.0))).on_hover_text(hint);
+    let id = Id::unique(("add_text", salt));
+    let mut out = None;
+    egui::Popup::from_toggle_button_response(&b).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+        let mut text = ui.data(|d| d.get_temp::<String>(id)).unwrap_or_default();
+        let r = ui.add(egui::TextEdit::singleline(&mut text).hint_text(hint).desired_width(160.0));
+        if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+            let name = text.trim().trim_start_matches('#').to_string();
+            if !name.is_empty() {
+                out = Some(name);
+            }
+            text.clear();
+            ui.close();
+        } else {
+            r.request_focus();
+        }
+        ui.data_mut(|d| d.insert_temp(id, text));
+    });
+    out
+}
+
+/// A dropdown where several things can be ticked; it stays open while
+/// ticking. Gives back the place of the one that was clicked.
+fn pick_many(ui: &mut egui::Ui, salt: &str, none: &str, items: &[(String, egui::Color32, bool)]) -> Option<usize> {
+    let on: Vec<&str> = items.iter().filter(|i| i.2).map(|i| i.0.as_str()).collect();
+    let summary = match on.len() {
+        0 => none.to_string(),
+        1 | 2 => on.join(", "),
+        n => format!("{}, {} +{}", on[0], on[1], n - 2),
+    };
+    let mut hit = None;
+    egui::ComboBox::from_id_salt(salt).selected_text(summary).height(320.0).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show_ui(ui, |ui| {
+        if items.is_empty() {
+            ui.label(RichText::new("Nothing yet; add one with +").weak());
+        }
+        for (i, (name, col, ticked)) in items.iter().enumerate() {
+            let mut t = *ticked;
+            if ui.checkbox(&mut t, RichText::new(name).color(*col)).changed() {
+                hit = Some(i);
+            }
+        }
+    });
+    hit
+}
+
 /// The time of day so many minutes after midnight.
 fn time_of(min: i64) -> chrono::NaiveTime {
     chrono::NaiveTime::from_num_seconds_from_midnight_opt((min.clamp(0, 24 * 60 - 1) * 60) as u32, 0).unwrap_or_default()
@@ -71,6 +119,10 @@ impl App {
     fn dlg_create(&mut self, ctx: &egui::Context) {
         let Some(mut c) = self.create.take() else { return };
         let (mut save, mut cancel, mut to_frame) = (false, false, false);
+        let mut new_list: Option<String> = None;
+        let mut all_tags: Vec<String> = self.data.tasks.iter().flat_map(|t| t.tags.iter().cloned()).chain(c.task.tags.iter().cloned()).collect();
+        all_tags.sort_by_key(|t| t.to_lowercase());
+        all_tags.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
         let muted = self.pal.muted;
         let p = self.data.prefs.clone();
         let w = 380.0;
@@ -168,10 +220,35 @@ impl App {
                     if is_task {
                         label(ui, "List");
                         let lname = |id: u64| self.data.lists.iter().find(|l| l.id == id).map(|l| l.name.clone()).unwrap_or_else(|| self.data.prefs.inbox_name());
-                        egui::ComboBox::from_id_salt("clist").selected_text(lname(c.task.list)).height(320.0).show_ui(ui, |ui| {
-                            ui.selectable_value(&mut c.task.list, 0, self.data.prefs.inbox_name());
-                            for l in self.data.lists.iter().filter(|l| !l.read_only) {
-                                ui.selectable_value(&mut c.task.list, l.id, &l.name);
+                        ui.horizontal(|ui| {
+                            egui::ComboBox::from_id_salt("clist").selected_text(lname(c.task.list)).height(320.0).show_ui(ui, |ui| {
+                                ui.selectable_value(&mut c.task.list, 0, self.data.prefs.inbox_name());
+                                for l in self.data.lists.iter().filter(|l| !l.read_only) {
+                                    ui.selectable_value(&mut c.task.list, l.id, &l.name);
+                                }
+                            });
+                            if let Some(name) = add_button(ui, "clist", "New list") {
+                                new_list = Some(name);
+                            }
+                        });
+                        ui.end_row();
+
+                        label(ui, "Tags");
+                        ui.horizontal(|ui| {
+                            let text = ui.visuals().text_color();
+                            let items: Vec<(String, egui::Color32, bool)> = all_tags.iter().map(|t| (format!("#{t}"), text, c.task.tags.iter().any(|x| x.eq_ignore_ascii_case(t)))).collect();
+                            if let Some(i) = pick_many(ui, "ctags", "None", &items) {
+                                let tag = &all_tags[i];
+                                if items[i].2 {
+                                    c.task.tags.retain(|t| !t.eq_ignore_ascii_case(tag));
+                                } else {
+                                    c.task.tags.push(tag.clone());
+                                }
+                            }
+                            if let Some(tag) = add_button(ui, "ctag", "New tag") {
+                                if !c.task.tags.iter().any(|t| t.eq_ignore_ascii_case(&tag)) {
+                                    c.task.tags.push(tag);
+                                }
                             }
                         });
                         ui.end_row();
@@ -214,6 +291,10 @@ impl App {
                     save = true;
                 }
             });
+        if let Some(name) = new_list {
+            c.task.list = self.new_list(&name);
+            self.commit();
+        }
         // a due date that cannot be read keeps the window open
         let due = match c.due_text.trim() {
             "" => None,
@@ -299,6 +380,7 @@ impl App {
             None => win.anchor(Align2::CENTER_CENTER, [0.0, -30.0]),
         };
         let mut back: Option<CreateKind> = None;
+        let mut new_list: Option<String> = None;
         let hours = format!("{} – {}", self.data.prefs.fmt_time(time_of(ed.frame.start_min)), self.data.prefs.fmt_time(time_of(ed.frame.end_min)));
         win.show(ctx, |ui| {
                 ui.set_width(380.0);
@@ -440,34 +522,37 @@ impl App {
                 ui.add_space(2.0);
                 egui::Grid::new("framefilter").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
                     label(ui, "Lists");
-                    ui.horizontal_wrapped(|ui| {
-                        for (id, name, col) in &lists {
-                            let on = ed.frame.filter.lists.contains(id);
-                            let text = RichText::new(format!("{} {name}", icons::CIRCLE)).color(if on { rgb(*col) } else { muted });
-                            if ui.selectable_label(on, text).clicked() {
-                                if on {
-                                    ed.frame.filter.lists.retain(|l| l != id);
-                                } else {
-                                    ed.frame.filter.lists.push(*id);
-                                }
+                    ui.horizontal(|ui| {
+                        let items: Vec<(String, egui::Color32, bool)> = lists.iter().map(|(id, name, col)| (format!("{} {name}", icons::CIRCLE), rgb(*col), ed.frame.filter.lists.contains(id))).collect();
+                        if let Some(i) = pick_many(ui, "flists", "Any list", &items) {
+                            let id = lists[i].0;
+                            if items[i].2 {
+                                ed.frame.filter.lists.retain(|l| *l != id);
+                            } else {
+                                ed.frame.filter.lists.push(id);
                             }
+                        }
+                        if let Some(name) = add_button(ui, "flist", "New list") {
+                            new_list = Some(name);
                         }
                     });
                     ui.end_row();
 
                     label(ui, "Tags");
-                    ui.horizontal_wrapped(|ui| {
-                        if all_tags.is_empty() {
-                            ui.label(RichText::new("No tags yet").color(muted));
+                    ui.horizontal(|ui| {
+                        let text = ui.visuals().text_color();
+                        let items: Vec<(String, egui::Color32, bool)> = all_tags.iter().map(|t| (format!("#{t}"), text, ed.frame.filter.tags.iter().any(|x| x.eq_ignore_ascii_case(t)))).collect();
+                        if let Some(i) = pick_many(ui, "ftags", "Any tag", &items) {
+                            let tag = &all_tags[i];
+                            if items[i].2 {
+                                ed.frame.filter.tags.retain(|t| !t.eq_ignore_ascii_case(tag));
+                            } else {
+                                ed.frame.filter.tags.push(tag.clone());
+                            }
                         }
-                        for tag in &all_tags {
-                            let on = ed.frame.filter.tags.iter().any(|t| t.eq_ignore_ascii_case(tag));
-                            if ui.selectable_label(on, format!("#{tag}")).clicked() {
-                                if on {
-                                    ed.frame.filter.tags.retain(|t| !t.eq_ignore_ascii_case(tag));
-                                } else {
-                                    ed.frame.filter.tags.push(tag.clone());
-                                }
+                        if let Some(tag) = add_button(ui, "ftag", "New tag") {
+                            if !ed.frame.filter.tags.iter().any(|t| t.eq_ignore_ascii_case(&tag)) {
+                                ed.frame.filter.tags.push(tag);
                             }
                         }
                     });
@@ -515,6 +600,12 @@ impl App {
                     save = true;
                 }
             });
+        if let Some(name) = new_list {
+            // a list added from here is taken by the frame at once
+            let id = self.new_list(&name);
+            ed.frame.filter.lists.push(id);
+            self.commit();
+        }
         if let (Some(kind), Some((mut ev, rect))) = (back, ed.from_block.clone()) {
             // back to a task or an event, keeping the name and the calendar
             ev.title = ed.frame.name.clone();
