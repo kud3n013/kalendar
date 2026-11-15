@@ -721,10 +721,10 @@ impl App {
         ui.add(egui::Label::new(RichText::new("Bring calendars in from a link or from an account. Pick a kind to set it up.").size(16.0).color(muted)).wrap());
         ui.add_space(12.0);
         // one button per kind; the chosen one shows its form below
-        const KINDS: [(u8, &str); 5] = [(1, "Calendar feed"), (2, "CalDAV"), (3, "Nextcloud"), (4, "Google"), (5, "Microsoft")];
+        const KINDS: [(u8, &str); 6] = [(1, "Calendar feed"), (2, "CalDAV"), (3, "Nextcloud"), (4, "Google"), (5, "Microsoft"), (6, "Proton")];
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(10.0, 10.0);
-            let w = ((ui.available_width() - 40.0) / 5.0).floor().clamp(96.0, 230.0);
+            let w = ((ui.available_width() - 50.0) / 6.0).floor().clamp(96.0, 230.0);
             for (kind, label) in KINDS {
                 let on = self.sub_kind == kind;
                 let b = egui::Button::new(RichText::new(label).size(15.0))
@@ -818,6 +818,21 @@ impl App {
                         field(ui, &mut self.g_secret, "Client secret", true);
                         if go(ui, "Sign in with Google…", !waiting) {
                             self.connect_google(ctx);
+                        }
+                    }
+                    6 => {
+                        help(ui, "Proton has no official way in for other calendar programs. kalendar signs in the way Proton's own apps do and decrypts your events on this computer. Your password is used once to sign in and is not kept; the keyring holds the session. For now Proton calendars can only be read here, and Proton may stop this from working at any time.");
+                        field(ui, &mut self.pr_user, "Your Proton address or user name", false);
+                        field(ui, &mut self.pr_pass, "Password", true);
+                        field(ui, &mut self.pr_code, "Two-factor code, if you use one", false);
+                        field(ui, &mut self.pr_second, "Second (mailbox) password, if your account has one", true);
+                        if self.pr_busy {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label(RichText::new("Signing in to Proton…").size(14.0).color(muted));
+                            });
+                        } else if go(ui, "Sign in to Proton", true) {
+                            self.connect_proton(ctx);
                         }
                     }
                     _ => {
@@ -936,7 +951,7 @@ impl App {
                     ui.add_space(10.0);
                     ui.label(RichText::new(a.label()).size(17.0));
                     let when = a.last_sync.as_ref().map(|t| format!("  ·  synced {t}")).unwrap_or_default();
-                    let kind = if a.microsoft { "Microsoft account" } else if a.google { "Google account" } else if a.nextcloud { "Nextcloud account" } else { "CalDAV account" };
+                    let kind = if a.proton { "Proton account" } else if a.microsoft { "Microsoft account" } else if a.google { "Google account" } else if a.nextcloud { "Nextcloud account" } else { "CalDAV account" };
                     ui.label(RichText::new(format!("{kind}{when}")).size(14.0).color(muted));
                 });
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

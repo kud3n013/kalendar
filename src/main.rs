@@ -38,6 +38,8 @@ pub enum SyncDone {
     NextcloudDone { res: Result<sync::nextcloud::Granted, sync::SyncError> },
     /// the person signed in on Google's page, or it failed
     GoogleDone { res: Result<GoogleGrant, sync::SyncError> },
+    /// a sign-in to Proton went through, wants a check first, or failed
+    ProtonDone { username: String, res: Result<sync::proton::SignIn, sync::SyncError> },
 }
 
 pub struct GoogleGrant {
@@ -58,6 +60,20 @@ pub type TokenCache = std::sync::Arc<std::sync::Mutex<std::collections::HashMap<
 /// holds for it: an app password, or for Google the refresh token, from
 /// which an access token is had when the last one has run out.
 fn open_account(a: &Account, secret: &str, tokens: &TokenCache, allow_file: bool) -> Result<Box<dyn Provider>, sync::SyncError> {
+    if a.proton {
+        let (uid, refresh, key_pass) = sync::proton::unpack(secret).ok_or(sync::SyncError::Auth)?;
+        let access = tokens.lock().ok().and_then(|t| t.get(&a.id).map(|(t, _)| t.clone())).unwrap_or_default();
+        // Proton hands out a new refresh token with every access token;
+        // the newest is the one to keep
+        let (id, cache, kept_uid, kept_pass) = (a.id, tokens.clone(), uid.clone(), key_pass.clone());
+        let renewed = move |access: &str, refresh: &str| {
+            if let Ok(mut c) = cache.lock() {
+                c.insert(id, (access.to_string(), std::time::Instant::now()));
+            }
+            let _ = secrets::set(&secrets::account_key(id), &sync::proton::pack(&kept_uid, refresh, &kept_pass), allow_file);
+        };
+        return Ok(Box::new(sync::proton::Proton::new(&uid, &access, &refresh, &key_pass, Some(Box::new(renewed)))));
+    }
     if !a.google && !a.microsoft {
         return Ok(Box::new(CalDav::new(&a.server, &a.username, secret, a.home.clone())));
     }
@@ -90,6 +106,7 @@ fn open_account(a: &Account, secret: &str, tokens: &TokenCache, allow_file: bool
 /// Why an account's sync failed, in words that say what to do.
 fn account_error(a: Option<&Account>, e: &sync::SyncError) -> String {
     match (a, e) {
+        (Some(a), sync::SyncError::Auth) if a.proton => "Proton wants you to sign in again (the session ended or the password changed): sign out of this account here, then sign in once more.".into(),
         (Some(a), sync::SyncError::Auth) if a.microsoft => "Microsoft wants you to sign in again: sign out of this account here, then sign in once more.".into(),
         (Some(a), sync::SyncError::Auth) if a.google => "Google wants you to sign in again: sign out of this account here, then sign in once more. While a Google Cloud project is in Testing, a sign-in lasts 7 days.".into(),
         _ => e.text(),
@@ -510,6 +527,14 @@ pub struct App {
     /// the Microsoft sign-in form
     pub ms_email: String,
     pub ms_client_id: String,
+    /// the Proton sign-in form; the passwords are cleared once signed in
+    pub pr_user: String,
+    pub pr_pass: String,
+    pub pr_code: String,
+    pub pr_second: String,
+    /// the token of a check Proton asked for, for the next try
+    pub pr_human: Option<String>,
+    pub pr_busy: bool,
     pub side_scroll: f32,
     pub sort_by: usize,
     pub filter_tag: Option<String>,
@@ -617,6 +642,12 @@ impl App {
             g_secret: String::new(),
             ms_email: String::new(),
             ms_client_id: String::new(),
+            pr_user: String::new(),
+            pr_pass: String::new(),
+            pr_code: String::new(),
+            pr_second: String::new(),
+            pr_human: None,
+            pr_busy: false,
             side_scroll: 0.0,
             sort_by: 0,
             filter_tag: None,
@@ -1119,6 +1150,12 @@ impl App {
                 let key = secrets::account_key(id);
                 // a Nextcloud app password is taken back at the server too
                 // a Google sign-in likewise
+                // a Proton session is ended there as well
+                if let Some((uid, refresh, _)) = gone.as_ref().filter(|a| a.proton).and_then(|_| secrets::get(&key, allow_file).ok()).and_then(|s| sync::proton::unpack(&s)) {
+                    if let Ok((access, _)) = sync::proton::refresh(sync::proton::API, &uid, &refresh) {
+                        sync::proton::sign_out(sync::proton::API, &uid, &access);
+                    }
+                }
                 if let Some(a) = gone.filter(|a| a.nextcloud || a.google) {
                     if let Ok(pass) = secrets::get(&key, allow_file) {
                         match sync::google::unpack(&pass).filter(|_| a.google) {
@@ -1411,6 +1448,42 @@ impl App {
                         Err(e) => self.acct_error = Some(e.text()),
                     }
                 }
+                SyncDone::ProtonDone { username, res } => {
+                    self.pr_busy = false;
+                    match res {
+                        Ok(sync::proton::SignIn::Done(g)) => {
+                            let server = format!("proton:{}", username.to_lowercase());
+                            if self.data.accounts.iter().any(|a| a.server == server) {
+                                self.acct_error = Some("This account is already connected.".into());
+                                std::thread::spawn(move || sync::proton::sign_out(sync::proton::API, &g.uid, &g.access));
+                            } else {
+                                let id = self.data.new_id();
+                                self.data.accounts.push(Account { id, server, username, proton: true, ..Default::default() });
+                                if let Ok(mut cache) = self.tokens.lock() {
+                                    cache.insert(id, (g.access, std::time::Instant::now()));
+                                }
+                                self.pr_pass.clear();
+                                self.pr_code.clear();
+                                self.pr_second.clear();
+                                self.pr_human = None;
+                                self.sub_kind = 0;
+                                self.sync_account(ctx, id, Some(sync::proton::pack(&g.uid, &g.refresh, &g.key_pass)));
+                            }
+                        }
+                        Ok(sync::proton::SignIn::Human { token, url }) => {
+                            self.pr_human = Some(token);
+                            let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+                            self.acct_error = Some("Proton asks for a check that you are human. Finish it on the page that opened in your browser, then press the sign-in button again.".into());
+                        }
+                        Err(e) => {
+                            self.pr_human = None;
+                            self.acct_error = Some(match e {
+                                sync::SyncError::Auth => "Proton refused the user name or password.".into(),
+                                e => e.text(),
+                            });
+                        }
+                    }
+                }
                 SyncDone::Link { cal, res } => {
                     let Some(c) = self.data.calendar_mut(cal) else { continue };
                     match res {
@@ -1620,6 +1693,26 @@ impl App {
                 None => Err(sync::SyncError::Other("Microsoft signed you in but gave nothing to stay signed in with. Check that the app registration allows the offline_access permission.".into())),
             });
             send(SyncDone::GoogleDone { res });
+        });
+    }
+
+    /// Signs in to Proton with what the form holds. The password is used
+    /// for this one sign-in and not kept.
+    pub fn connect_proton(&mut self, ctx: &egui::Context) {
+        let username = self.pr_user.trim().to_string();
+        if username.is_empty() || self.pr_pass.is_empty() {
+            self.acct_error = Some("Fill in your Proton address and password.".into());
+            return;
+        }
+        if self.shot.is_some() || self.pr_busy {
+            return;
+        }
+        self.acct_error = None;
+        self.pr_busy = true;
+        let (pass, code, second, human) = (self.pr_pass.clone(), self.pr_code.clone(), self.pr_second.clone(), self.pr_human.clone());
+        self.in_background(ctx, move |send| {
+            let res = sync::proton::sign_in(sync::proton::API, &username, &pass, &code, &second, human.as_deref());
+            send(SyncDone::ProtonDone { username, res });
         });
     }
 

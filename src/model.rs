@@ -292,6 +292,9 @@ pub struct Account {
     /// signed in through Nextcloud's own page; its app password can be
     /// taken back on signing out
     pub nextcloud: bool,
+    /// a Proton account, read-only; the keyring holds its session and
+    /// what opens its keys, never the password
+    pub proton: bool,
 }
 
 /// An event deleted here that the server still has.
@@ -305,7 +308,7 @@ pub struct PendingDelete {
 impl Account {
     /// "name @ server" for lists.
     pub fn label(&self) -> String {
-        if self.google || self.microsoft {
+        if self.google || self.microsoft || self.proton {
             return self.username.clone();
         }
         let host = self.server.split("://").last().unwrap_or("").split('/').next().unwrap_or("");

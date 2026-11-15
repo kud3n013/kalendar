@@ -15,6 +15,14 @@ roxmltree = "0.21.2"
 keyring-core = "1.0.1"
 zbus-secret-service-keyring-store = { version = "1.0.1", features = ["crypto-rust"] }
 sha2 = "0.11"
+pgp = "0.21.1"
+bcrypt = "0.19.3"
+num-bigint = "0.5.1"
+base64 = "0.23.1"
+getrandom = "0.4.3"
 
 [profile.dev]
 opt-level = 1
+
+[dev-dependencies]
+rand = "0.8"

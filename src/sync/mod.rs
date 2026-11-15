@@ -5,6 +5,9 @@ pub mod google;
 pub mod graph;
 pub mod nextcloud;
 pub mod oauth;
+pub mod proton;
+pub mod proton_keys;
+pub mod proton_srp;
 
 use crate::ics::{FeedEvent, FeedTask};
 use crate::model::{Event, RemoteKey, Task};

@@ -365,7 +365,19 @@ What kalendar can offer instead:
   - "Limited" (busy only) or "Full" view.
   - The URL embeds the decryption key.
   - Proton itself notes that third-party apps stop fetching updates from shared links after some time, as a known issue.
-- Recommendation: keep `ics::is_proton` and the existing read-only feed path.
+- **Update (2026-11-15): read-only account access is implemented** in `src/sync/proton*.rs`, alongside the feed path.
+  - It follows Proton's own open-source clients, not an official API: WebClients (GPL-3.0, read for behaviour only, no code copied;
+    https://github.com/ProtonMail/WebClients), go-proton-api and go-srp (both MIT; https://github.com/ProtonMail/go-proton-api,
+    https://github.com/ProtonMail/go-srp).
+  - Sign-in is SRP with a bcrypt-hashed password; the modulus must carry Proton's signature. Two-factor codes, a second (mailbox)
+    password and the human check are handled. The password is not kept: the keyring holds the session and the key passphrase derived from it.
+  - Key chain: key passphrase → user key → address key (through a signed token) → calendar passphrase → calendar key → per-event session keys.
+  - Events are the merged iCalendar parts (`SharedEvents`, `CalendarEvents`); `modelevents/latest` tells whether anything changed.
+  - Not done: writing, checking who signed calendar passphrases and event parts (needed before writing), attendees, reminders, security keys.
+  - Risks: the API is private and may change; Proton's terms allow automated access only when it looks like normal client use
+    (https://proton.me/legal/terms); the client names itself `Other` in `x-pm-appversion`, which Proton's servers may refuse.
+  - Tested only against an in-process stand-in server and go-srp's published values, not against Proton itself.
+- Recommendation for links: keep `ics::is_proton` and the existing read-only feed path.
   - Treat the link as a secret: it contains a key, so move it out of plain `data.json` into the keyring along with
     the other credentials.
   - Show Proton's staleness caveat in the UI.
