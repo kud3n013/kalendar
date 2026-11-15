@@ -681,7 +681,7 @@ impl App {
                 } else if o.x >= x0 {
                     let anchor = snap_dt(pos_to(o), snap, -1);
                     self.editor = None;
-                    self.create = None;
+                    self.close_block_window();
                     self.selected = None;
                     self.drag = Some(Drag::Create {
                         anchor,
@@ -790,6 +790,7 @@ impl App {
                         .map(|it| it.rect)
                         .reduce(|a, b| a.union(b))
                         .unwrap_or_else(|| Rect::from_center_size(rect.center(), vec2(120.0, 40.0)));
+                    self.close_block_window();
                     self.create = Some(CreateEdit::new(draft, CreateKind::Task, anchor));
                 }
                 Some(Drag::Move { id, .. }) | Some(Drag::Resize { id }) if self.session_kept_out(id).is_some() => {
@@ -833,9 +834,9 @@ impl App {
                         }
                         _ => self.selected = Some(id),
                     }
-                } else if self.editor.is_some() || self.create.is_some() {
+                } else if self.editor.is_some() || self.block_window_open() {
                     self.editor = None;
-                    self.create = None;
+                    self.close_block_window();
                 } else if self.selected.is_some() {
                     self.selected = None;
                 } else if pos.x >= x0 {

@@ -869,7 +869,22 @@ impl App {
     }
 
     /// Opens the small create window beside a block drawn on the calendar.
+    /// Whether the window beside a drawn block is up, as a task, an event
+    /// or a frame: there is only ever one.
+    pub fn block_window_open(&self) -> bool {
+        self.create.is_some() || self.frame_editor.as_ref().is_some_and(|f| f.from_block.is_some())
+    }
+
+    /// Closes the window beside a drawn block, whichever kind it shows.
+    pub fn close_block_window(&mut self) {
+        self.create = None;
+        if self.frame_editor.as_ref().is_some_and(|f| f.from_block.is_some()) {
+            self.frame_editor = None;
+        }
+    }
+
     pub fn open_create(&mut self, start: NaiveDateTime, mins: i64, anchor_rect: egui::Rect) {
+        self.close_block_window();
         let id = self.data.new_id();
         self.create = Some(CreateEdit::new(
             Event {
