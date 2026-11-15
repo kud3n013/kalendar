@@ -951,7 +951,9 @@ impl Data {
         }
     }
     /// Takes in what a pull brought back and remembers where it stopped.
-    pub fn apply(&mut self, cal: u64, d: crate::sync::Delta) {
+    pub fn apply(&mut self, cal: u64, mut d: crate::sync::Delta) {
+        // what is waiting to be deleted on the server does not come back
+        d.upserts.retain(|f| !f.href.as_ref().is_some_and(|h| self.outbox.iter().any(|o| o.calendar == cal && &o.href == h)));
         if d.full {
             self.apply_full(cal, d.upserts);
         } else {

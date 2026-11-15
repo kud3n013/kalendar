@@ -1536,6 +1536,18 @@ impl App {
     }
 
     /// Takes in how the changes sent to a server fared.
+    /// Something was written to the server while it was removed or
+    /// replaced here: the server's copy has to go too, or it would come
+    /// back as a second one.
+    fn forget_on_server(&mut self, cal: u64, href: String, etag: Option<String>) {
+        match self.data.outbox.iter_mut().find(|d| d.calendar == cal && d.href == href) {
+            // already to be deleted, but the write gave it a new version
+            Some(d) => d.etag = etag,
+            None => self.data.outbox.push(PendingDelete { calendar: cal, href, etag }),
+        }
+        self.outbox_changed = Some(f64::NAN);
+    }
+
     fn take_push_results(&mut self, ctx: &egui::Context, cal: u64, results: Vec<sync::PushResult>) {
         use sync::PushResult::*;
         let (mut conflicts, mut task_conflicts) = (0, 0);
@@ -1543,7 +1555,10 @@ impl App {
         for r in results {
             match r {
                 Saved { sent, uid, href, etag } => {
-                    let Some(e) = self.data.event_mut(sent.id).filter(|e| e.calendar == cal) else { continue };
+                    let Some(e) = self.data.event_mut(sent.id).filter(|e| e.calendar == cal) else {
+                        self.forget_on_server(cal, href, etag);
+                        continue;
+                    };
                     // changed again while it was on its way: it goes out once more
                     e.dirty = !e.same_content(&sent);
                     e.remote = true;
@@ -1563,7 +1578,10 @@ impl App {
                     conflicts += 1;
                 }
                 TaskSaved { sent, uid, href, etag } => {
-                    let Some(t) = self.data.task_mut(sent.id).filter(|t| t.list == cal) else { continue };
+                    let Some(t) = self.data.task_mut(sent.id).filter(|t| t.list == cal) else {
+                        self.forget_on_server(cal, href, etag);
+                        continue;
+                    };
                     t.dirty = !t.same_content(&sent);
                     (t.uid, t.href, t.etag) = (Some(uid), Some(href), etag);
                 }
@@ -2739,6 +2757,16 @@ mod tests {
         f.title = "Server's, later".into();
         app.data.apply_delta(901, vec![f], &[]);
         assert_eq!(app.data.event(500).unwrap().title, "Mine again");
+
+        // an event that was removed here while it was being written: the
+        // server's fresh copy is deleted too, at its new version
+        let mut gone = app.data.event(501).unwrap().clone();
+        gone.id = 777;
+        app.take_push_results(&ctx, 901, vec![sync::PushResult::Saved { sent: gone.clone(), uid: "g".into(), href: "gone".into(), etag: Some("1".into()) }]);
+        assert_eq!(app.data.outbox, vec![PendingDelete { calendar: 901, href: "gone".into(), etag: Some("1".into()) }]);
+        app.take_push_results(&ctx, 901, vec![sync::PushResult::Saved { sent: gone, uid: "g".into(), href: "gone".into(), etag: Some("2".into()) }]);
+        assert_eq!(app.data.outbox, vec![PendingDelete { calendar: 901, href: "gone".into(), etag: Some("2".into()) }]);
+        assert!(app.outbox_changed.is_some());
 
         // deletions leave the outbox either way
         app.data.outbox = vec![PendingDelete { calendar: 901, href: "a".into(), etag: None }, PendingDelete { calendar: 901, href: "b".into(), etag: None }];
