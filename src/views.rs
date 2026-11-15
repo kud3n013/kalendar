@@ -213,11 +213,21 @@ fn overlap_layout(boxes: &[(f32, f32)], inset: f32) -> Vec<(f32, f32, usize)> {
 }
 
 impl App {
+    /// The name of the frame that keeps this task session out of where it
+    /// now sits, if one does.
+    fn session_kept_out(&self, id: u64) -> Option<String> {
+        let e = self.data.event(id)?;
+        let t = self.data.task(e.task_id?)?;
+        self.data.frame_keeping_out(t, e.start, e.end).map(|f| f.name.clone())
+    }
+
     pub fn ui_drag_ghost(&mut self, ctx: &egui::Context) {
         let Some(id) = self.drag_task else { return };
         let Some(pos) = ctx.input(|i| i.pointer.latest_pos()) else { return };
         let Some(t) = self.data.task(id) else { return };
-        let misfit = ctx.data_mut(|d| d.remove_temp::<bool>(Id::unique("drag_misfit"))).unwrap_or(false);
+        // Some(true): the frame under it keeps this task out altogether
+        let refused = ctx.data_mut(|d| d.remove_temp::<bool>(Id::unique("drag_misfit")));
+        let misfit = refused.is_some();
         let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, Id::unique("ghost")));
         let h = if misfit { 50.0 } else { 34.0 };
         let r = Rect::from_min_size(pos + vec2(10.0, 8.0), vec2(230.0, h));
@@ -230,7 +240,7 @@ impl App {
             clip.text(
                 pos2(r.left() + 10.0, r.bottom() - 14.0),
                 Align2::LEFT_CENTER,
-                "Not in this frame's filter",
+                if refused == Some(true) { "This frame keeps other tasks out" } else { "Not in this frame's filter" },
                 FontId::proportional(11.0),
                 self.pal.muted,
             );
@@ -782,6 +792,14 @@ impl App {
                         .unwrap_or_else(|| Rect::from_center_size(rect.center(), vec2(120.0, 40.0)));
                     self.create = Some(CreateEdit::new(draft, CreateKind::Task, anchor));
                 }
+                Some(Drag::Move { id, .. }) | Some(Drag::Resize { id }) if self.session_kept_out(id).is_some() => {
+                    // back to where it was: the drag began with a snapshot
+                    let name = self.session_kept_out(id).unwrap_or_default();
+                    if let Some(d) = self.undo.pop() {
+                        self.data = d;
+                    }
+                    self.say(&ctx, format!("\"{name}\" keeps other tasks out"), false);
+                }
                 Some(Drag::Move { id, .. }) => {
                     let sched = self.data.event(id).and_then(|e| e.task_id.map(|t| (t, e.start.date())));
                     if let Some((tid, day)) = sched {
@@ -921,8 +939,10 @@ impl App {
                     let ab = ctx.animate_value_with_time(key.with("b"), r.bottom() - rect.top(), secs);
                     let r = Rect::from_min_max(pos2(x0 + ax, rect.top() + at), pos2(x0 + ax + r.width(), rect.top() + ab));
                     // over a frame the ghost takes its colour, dimmed when the
-                    // frame would not take this task; the drop works either way
+                    // frame would not take this task; a frame that keeps
+                    // other tasks out refuses the drop
                     let over = frame_at(pos).filter(|b| b.day == start.date() && !b.skipped);
+                    let kept_out = self.data.task(tid).and_then(|t| self.data.frame_keeping_out(t, start, start + Duration::minutes(mins))).map(|f| f.name.clone());
                     let fits = over.is_none_or(|b| {
                         let f = self.data.frame(b.id);
                         let t = self.data.task(tid);
@@ -937,12 +957,15 @@ impl App {
                     fill_squircle(&painter, r, RADIUS, fill);
                     stroke_squircle(&painter, r.shrink(0.5), RADIUS, Stroke::new(1.0, line));
                     painter.text(r.left_top() + vec2(8.0, 4.0), Align2::LEFT_TOP, p.fmt_time(start.time()), FontId::proportional(11.0), text);
-                    if !fits {
+                    if !fits || kept_out.is_some() {
                         // shown under the title by ui_drag_ghost, which runs after the grid
-                        ctx.data_mut(|d| d.insert_temp(Id::unique("drag_misfit"), true));
+                        ctx.data_mut(|d| d.insert_temp(Id::unique("drag_misfit"), kept_out.is_some()));
                     }
                     if ctx.input(|i| i.pointer.any_released()) {
-                        self.schedule_task(&ctx, tid, start);
+                        match kept_out {
+                            Some(name) => self.say(&ctx, format!("\"{name}\" keeps other tasks out"), false),
+                            None => self.schedule_task(&ctx, tid, start),
+                        }
                         self.drag_task = None;
                     }
                 }

@@ -629,15 +629,6 @@ impl App {
                     });
                     ui.end_row();
 
-                    if !ed.frame.filter.lists.is_empty() && !ed.frame.filter.tags.is_empty() {
-                        label(ui, "Needs");
-                        ui.horizontal(|ui| {
-                            ui.selectable_value(&mut ed.frame.filter.both, false, "List or tag").on_hover_text("A task in one of the lists, or with the tags, goes here");
-                            ui.selectable_value(&mut ed.frame.filter.both, true, "List and tag").on_hover_text("Only a task in one of the lists that also has the tags goes here");
-                        });
-                        ui.end_row();
-                    }
-
                     if ed.frame.filter.tags.len() > 1 {
                         label(ui, "Match");
                         ui.horizontal(|ui| {

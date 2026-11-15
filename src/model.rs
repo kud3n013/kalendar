@@ -22,6 +22,7 @@ pub const SNAP_CHOICES: [i64; 3] = [5, 15, 30];
 pub const UNDO_CHOICES: [u32; 5] = [0, 5, 10, 15, 30];
 pub const PLAN_SPAN_DAYS: i64 = 3; // the planner fills this many days
 pub const PLAN_MAX_SPAN_DAYS: i64 = 8; // longest look-ahead
+pub const PLAN_OWN_FRAME_DAYS: i64 = 15; // how far ahead a task's own frame is looked for
 /// Whether things move at all; follows the setting under Appearance.
 pub static ANIMATE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
@@ -510,9 +511,6 @@ pub struct FrameFilter {
     pub tags_all: bool,
     /// longest task it takes, in minutes
     pub max_min: Option<i64>,
-    /// with lists and tags both set, a task needs one of the lists and
-    /// the tags; otherwise a list or the tags is enough
-    pub both: bool,
 }
 
 impl FrameFilter {
@@ -591,8 +589,8 @@ impl Frame {
             (true, true) => true,
             (false, true) => list_ok,
             (true, false) => tags_ok,
-            (false, false) if f.both => list_ok && tags_ok,
-            (false, false) => list_ok || tags_ok,
+            // both picked: the task needs both
+            (false, false) => list_ok && tags_ok,
         };
         if !ok {
             return false;
@@ -1426,37 +1424,69 @@ impl Data {
     /// free time inside matching frames, and free working time outside the
     /// exclusive frames it does not match (empty when that is not allowed).
     /// Without a task, plain free working time.
-    fn task_windows(&self, t: Option<&Task>, day0: NaiveDate, from: NaiveDateTime, days: i64) -> (Vec<Window>, Vec<Window>) {
+    fn task_windows(&self, t: Option<&Task>, day0: NaiveDate, from: NaiveDateTime, days: i64, own_days: i64) -> (Vec<Window>, Vec<Window>, Vec<Window>) {
         let task_cal = self.task_calendar();
         let frames = self.frames_active() && t.is_some();
-        let (mut inside, mut outside) = (vec![], vec![]);
-        for d in 0..days {
+        let (mut own, mut open, mut outside) = (vec![], vec![], vec![]);
+        // `days` for frames open to anything and for free time; a task's
+        // own frames are looked for further ahead, over `own_days`
+        for d in 0..days.max(own_days) {
             let day = day0 + Duration::days(d);
             if t.and_then(|t| t.earliest).is_some_and(|e| day < e) {
                 continue;
             }
+            // first what is closed to this task: frames that keep others out
             let mut cuts = vec![];
+            let mut takes = vec![];
             if let Some(t) = t.filter(|_| frames) {
                 for o in self.frames_on(day) {
                     let Some(f) = self.frame(o.frame) else { continue };
                     if f.matches(t, self.prefs.default_task_min) {
-                        for (s, e) in self.free_gaps_in(o.start.max(from), o.end) {
-                            inside.push(Window { start: s, end: e, calendar: f.calendar, spec: f.filter.specificity() });
-                        }
+                        takes.push((o, f));
                     } else if f.exclusive {
                         cuts.push((o.start, o.end));
                     }
                 }
             }
-            if !frames || self.prefs.plan_outside_frames {
+            // then the frames that take it, less any closed time they share
+            for (o, f) in takes {
+                let asks = !f.filter.lists.is_empty() || !f.filter.tags.is_empty();
+                for (s, e) in subtract(self.free_gaps_in(o.start.max(from), o.end), &cuts) {
+                    let w = Window { start: s, end: e, calendar: f.calendar, spec: f.filter.specificity() };
+                    if asks {
+                        own.push(w);
+                    } else if d < days {
+                        open.push(w);
+                    }
+                }
+            }
+            if d < days && (!frames || self.prefs.plan_outside_frames) {
                 for (s, e) in subtract(self.free_gaps(day, from), &cuts) {
                     outside.push(Window { start: s, end: e, calendar: task_cal, spec: 0 });
                 }
             }
         }
         // earliest first; where two frames start together the more specific wins
-        inside.sort_by_key(|w| (w.start, std::cmp::Reverse(w.spec), w.end));
-        (inside, outside)
+        own.sort_by_key(|w| (w.start, std::cmp::Reverse(w.spec), w.end));
+        open.sort_by_key(|w| (w.start, w.end));
+        (own, open, outside)
+    }
+
+    /// The frame that keeps this task out of a stretch of time, if one does:
+    /// it runs then, takes only its own kind, and this task is not that.
+    pub fn frame_keeping_out(&self, t: &Task, start: NaiveDateTime, end: NaiveDateTime) -> Option<&Frame> {
+        let mut day = start.date();
+        while day <= end.date() {
+            for o in self.frames_on(day) {
+                if o.start < end && o.end > start {
+                    if let Some(f) = self.frame(o.frame).filter(|f| f.exclusive && !f.matches(t, self.prefs.default_task_min)) {
+                        return Some(f);
+                    }
+                }
+            }
+            day += Duration::days(1);
+        }
+        None
     }
 
     /// First place `mins` minutes long at or after `from`, looking up to
@@ -1464,8 +1494,8 @@ impl Data {
     pub fn next_free_slot(&self, from: NaiveDateTime, mins: i64, task: Option<&Task>) -> Option<NaiveDateTime> {
         let m = from.hour() as i64 * 60 + from.minute() as i64;
         let from = from.date().and_hms_opt(0, 0, 0).unwrap() + Duration::minutes((m + 14) / 15 * 15);
-        let (inside, outside) = self.task_windows(task, from.date(), from, PLAN_MAX_SPAN_DAYS);
-        [inside, outside]
+        let (own, open, outside) = self.task_windows(task, from.date(), from, PLAN_MAX_SPAN_DAYS, PLAN_OWN_FRAME_DAYS);
+        [own, open, outside]
             .iter()
             .find_map(|ws| ws.iter().find(|w| (w.end - w.start).num_minutes() >= mins).map(|w| w.start))
     }
@@ -1498,8 +1528,10 @@ impl Data {
         for t in todo {
             let need = t.duration_min.unwrap_or(self.prefs.default_task_min);
             let can_split = self.prefs.split_long_tasks && need >= PLAN_CHUNK_FROM;
-            let (inside, outside) = self.task_windows(Some(&t), now.date(), from, PLAN_SPAN_DAYS);
-            let Some(placed) = fit(&inside, need, can_split).or_else(|| fit(&outside, need, can_split)) else {
+            // its own frames first, as far as two weeks ahead; then frames
+            // open to any task, then free working time, over the next days
+            let (own, open, outside) = self.task_windows(Some(&t), now.date(), from, PLAN_SPAN_DAYS, PLAN_OWN_FRAME_DAYS);
+            let Some(placed) = fit(&own, need, can_split).or_else(|| fit(&open, need, can_split)).or_else(|| fit(&outside, need, can_split)) else {
                 left += 1;
                 continue;
             };
@@ -1721,12 +1753,10 @@ mod tests {
         f.filter.lists = vec![0, 1];
         assert!(f.matches(&t, 60));
         f.filter.tags = vec!["nope".into()];
-        assert!(f.matches(&t, 60), "the list alone is enough");
+        assert!(!f.matches(&t, 60), "list and tags picked: both are needed");
         f.filter.lists = vec![0];
         f.filter.tags = vec!["x".into()];
-        assert!(f.matches(&t, 60), "the tag alone is enough");
-        f.filter.both = true;
-        assert!(!f.matches(&t, 60), "both asked for");
+        assert!(!f.matches(&t, 60));
         f.filter.lists = vec![0, 1];
         f.filter.tags = vec!["deep-work".into(), "y".into()];
         assert!(f.matches(&t, 60), "any tag, case does not matter");
@@ -1817,6 +1847,39 @@ mod tests {
         add_task(&mut d, "Write", 60, &["Deep"]);
         assert_eq!(d.plan_tasks(monday_8()), (1, 0));
         assert_eq!(sessions(&d), ["Mon 14:00 15:00 Write c1"]);
+    }
+
+    #[test]
+    fn a_task_waits_for_its_own_frame() {
+        // its frame runs on Fridays only: neither an open frame nor free
+        // time earlier in the week takes it
+        let mut d = empty();
+        let mut fri = deep_frame(1, 1, 9, 11);
+        fri.days = 1 << 4;
+        let mut any = deep_frame(2, 0, 9, 11);
+        any.filter = FrameFilter::default();
+        d.frames = vec![fri, any];
+        add_task(&mut d, "Write", 60, &["deep"]);
+        let other = add_task(&mut d, "Email", 60, &[]);
+        d.plan_tasks(monday_8());
+        assert_eq!(sessions(&d), ["Fri 09:00 10:00 Write c1", "Mon 09:00 10:00 Email c0"]);
+        // and the frame that keeps others out says so
+        let t = d.task(other).unwrap().clone();
+        let fri9 = ymd(11, 20).and_hms_opt(9, 30, 0).unwrap();
+        assert!(d.frame_keeping_out(&t, fri9, fri9 + Duration::minutes(30)).is_some());
+        assert!(d.frame_keeping_out(&t, fri9 + Duration::hours(3), fri9 + Duration::hours(4)).is_none());
+    }
+
+    #[test]
+    fn a_closed_frame_cuts_into_an_open_one() {
+        let mut d = empty();
+        let deep = deep_frame(1, 1, 9, 10);
+        let mut any = deep_frame(2, 0, 9, 11);
+        any.filter = FrameFilter::default();
+        d.frames = vec![deep, any];
+        add_task(&mut d, "Email", 60, &[]);
+        d.plan_tasks(monday_8());
+        assert_eq!(sessions(&d), ["Mon 10:00 11:00 Email c0"]);
     }
 
     #[test]

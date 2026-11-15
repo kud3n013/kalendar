@@ -612,7 +612,7 @@ impl App {
             what.push(tags.join(if f.tags_all { " + " } else { " or " }));
         }
         if !what.is_empty() {
-            parts.push(what.join(if f.both { " and " } else { " or " }));
+            parts.push(what.join(" and "));
         }
         if let Some(m) = f.max_min {
             parts.push(format!("up to {}", fmt_duration(m)));
