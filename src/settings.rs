@@ -718,51 +718,138 @@ impl App {
         }
         let (muted, border, side, text) = (self.pal.muted, self.pal.border, self.pal.side, self.pal.text);
         heading(ui, "Integrate your calendars");
-        ui.label(RichText::new("Bring other calendars in by subscribing to their link. Subscribed calendars are read-only.").size(16.0).color(muted));
+        ui.add(egui::Label::new(RichText::new("Bring calendars in from a link or from an account. Pick a kind to set it up.").size(16.0).color(muted)).wrap());
         ui.add_space(12.0);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 12.0;
-            let on = self.sub_kind != 0;
-            let b = egui::Button::new(RichText::new("   Calendar feed").size(17.0))
-                .min_size(vec2(((ui.available_width() - 12.0) / 2.0).clamp(150.0, 260.0), 52.0))
-                .corner_radius(8)
-                .fill(mix(side, text, if on { 0.16 } else { 0.09 }));
-            if ui.add(b).clicked() {
-                self.sub_kind = if on { 0 } else { 1 };
+        // one button per kind; the chosen one shows its form below
+        const KINDS: [(u8, &str); 5] = [(1, "Calendar feed"), (2, "CalDAV"), (3, "Nextcloud"), (4, "Google"), (5, "Microsoft")];
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing = vec2(10.0, 10.0);
+            let w = ((ui.available_width() - 40.0) / 5.0).floor().clamp(96.0, 230.0);
+            for (kind, label) in KINDS {
+                let on = self.sub_kind == kind;
+                let b = egui::Button::new(RichText::new(label).size(15.0))
+                    .min_size(vec2(w, 48.0))
+                    .corner_radius(8)
+                    .fill(mix(side, text, if on { 0.2 } else { 0.09 }))
+                    .stroke(Stroke::new(1.0, if on { self.pal.accent } else { Color32::TRANSPARENT }));
+                if ui.add(b).clicked() {
+                    self.sub_kind = if on { 0 } else { kind };
+                    self.acct_error = None;
+                }
             }
         });
         if self.sub_kind != 0 {
             ui.add_space(12.0);
             egui::Frame::new().fill(mix(side, text, 0.04)).stroke(Stroke::new(1.0, border)).corner_radius(10).inner_margin(Margin::same(16)).show(ui, |ui| {
-                // one field takes every kind of link: plain .ics feeds, webcal,
-                // and shared links from Proton, Google, Outlook or iCloud
-                let help = "Paste the calendar's link: an https://, http:// or webcal:// address, such as a .ics feed or a shared link from Proton, Google, Outlook or iCloud. For Proton Calendar, open Settings > Calendars, pick the calendar, choose \"Share with anyone\" and copy the link.";
-                ui.label(RichText::new(help).size(14.0).color(muted));
-                ui.add_space(6.0);
-                let r = ui.add(
-                    egui::TextEdit::singleline(&mut self.sub_url)
-                        .hint_text("https://…/calendar.ics  or  webcal://…")
-                        .font(FontId::proportional(15.0))
-                        .margin(Margin::symmetric(10, 8))
-                        .desired_width(f32::INFINITY),
-                );
-                let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                let normal = ics::normalize_url(&self.sub_url).ok();
-                if normal.as_deref().map(ics::is_proton).unwrap_or(false) {
-                    ui.label(RichText::new("Proton Calendar link recognised").size(13.0).color(GREEN));
-                }
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    ui.add(egui::TextEdit::singleline(&mut self.sub_name).hint_text("Name (optional)").font(FontId::proportional(15.0)).margin(Margin::symmetric(10, 8)).desired_width(260.0));
-                    let b = egui::Button::new(RichText::new("Subscribe").size(15.0).color(Color32::WHITE)).fill(self.pal.accent).corner_radius(8);
-                    if ui.add(b).clicked() || enter {
-                        let count = self.data.calendars.len();
-                        self.subscribe(ctx);
-                        if self.data.calendars.len() > count {
-                            self.sub_kind = 0;
+                let help = |ui: &mut egui::Ui, t: &str| {
+                    ui.add(egui::Label::new(RichText::new(t).size(14.0).color(muted)).wrap());
+                    ui.add_space(6.0);
+                };
+                let field = |ui: &mut egui::Ui, value: &mut String, hint: &str, secret: bool| {
+                    let r = ui.add(
+                        egui::TextEdit::singleline(value)
+                            .hint_text(hint)
+                            .password(secret)
+                            .font(FontId::proportional(15.0))
+                            .margin(Margin::symmetric(10, 8))
+                            .desired_width(f32::INFINITY),
+                    );
+                    ui.add_space(4.0);
+                    r
+                };
+                let accent = self.pal.accent;
+                let go = |ui: &mut egui::Ui, label: &str, enabled: bool| {
+                    ui.add_space(2.0);
+                    ui.add_enabled(enabled, egui::Button::new(RichText::new(label).size(15.0).color(Color32::WHITE)).fill(accent).corner_radius(8)).clicked()
+                };
+                let waiting = self.nextcloud_wait.is_some();
+                let both_ways = "Its calendars come in and stay in step both ways: what you change here is sent to the server. Repeating events can't be changed here yet.";
+                match self.sub_kind {
+                    1 => {
+                        // one field takes every kind of link: plain .ics feeds, webcal,
+                        // and shared links from Proton, Google, Outlook or iCloud
+                        help(ui, "Paste the calendar's link: an https://, http:// or webcal:// address, such as a .ics feed or a shared link from Proton, Google, Outlook or iCloud. A calendar brought in by its link is read-only. For Proton Calendar, open Settings > Calendars, pick the calendar, choose \"Share with anyone\" and copy the link.");
+                        let r = field(ui, &mut self.sub_url, "https://…/calendar.ics  or  webcal://…", false);
+                        let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        if ics::normalize_url(&self.sub_url).ok().as_deref().map(ics::is_proton).unwrap_or(false) {
+                            ui.label(RichText::new("Proton Calendar link recognised").size(13.0).color(GREEN));
+                        }
+                        ui.horizontal(|ui| {
+                            ui.add(egui::TextEdit::singleline(&mut self.sub_name).hint_text("Name (optional)").font(FontId::proportional(15.0)).margin(Margin::symmetric(10, 8)).desired_width(260.0));
+                            let b = egui::Button::new(RichText::new("Subscribe").size(15.0).color(Color32::WHITE)).fill(accent).corner_radius(8);
+                            if ui.add(b).clicked() || enter {
+                                let count = self.data.calendars.len();
+                                self.subscribe(ctx);
+                                if self.data.calendars.len() > count {
+                                    self.sub_kind = 0;
+                                }
+                            }
+                        });
+                    }
+                    2 => {
+                        help(ui, &format!("Sign in to a calendar server that speaks CalDAV, such as Fastmail, Radicale or Baïkal. {both_ways}"));
+                        field(ui, &mut self.acct_server, "Server address, such as https://cloud.example.org", false);
+                        field(ui, &mut self.acct_user, "User name", false);
+                        let r = field(ui, &mut self.acct_pass, "App password", true);
+                        let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                        help(ui, "Make an app password in the server's security settings and use it here, not your main password. It is kept in your desktop's keyring, never in kalendar's files.");
+                        let connecting = self.data.accounts.iter().any(|a| a.home.is_none() && self.syncing.contains(&a.id));
+                        ui.horizontal(|ui| {
+                            if (go(ui, "Connect", !connecting) || enter) && !connecting {
+                                self.connect_account(ctx);
+                            }
+                            if connecting {
+                                ui.spinner();
+                                ui.label(RichText::new("Connecting…").size(15.0).color(muted));
+                            }
+                        });
+                    }
+                    3 => {
+                        help(ui, &format!("Only the server's address is needed. Nextcloud's own sign-in page opens in your browser and hands kalendar an app password of its own, which goes into your desktop's keyring. {both_ways}"));
+                        field(ui, &mut self.acct_server, "Server address, such as https://cloud.example.org", false);
+                        if go(ui, "Sign in with Nextcloud…", !waiting) {
+                            self.connect_nextcloud(ctx);
                         }
                     }
-                });
+                    4 => {
+                        help(ui, "kalendar has no registration of its own with Google, so you bring one: in the Google Cloud console, make a project, switch on the CalDAV API, add yourself as a test user on the consent screen, and make an OAuth client ID of the type \"Desktop app\". Paste its client ID and client secret here. While the project is in Testing, Google asks you to sign in again every 7 days.");
+                        field(ui, &mut self.g_email, "Your Google address", false);
+                        field(ui, &mut self.g_client_id, "Client ID, ending in .apps.googleusercontent.com", false);
+                        field(ui, &mut self.g_secret, "Client secret", true);
+                        if go(ui, "Sign in with Google…", !waiting) {
+                            self.connect_google(ctx);
+                        }
+                    }
+                    _ => {
+                        help(ui, "For Microsoft 365 and Outlook.com. kalendar has no registration of its own with Microsoft, so you bring one: in the Microsoft Entra admin center, register an app for accounts in any organisation and personal accounts, add the platform \"Mobile and desktop applications\" with the redirect address http://localhost, and allow the delegated Graph permission Calendars.ReadWrite. Paste its Application (client) ID here; there is no secret.");
+                        field(ui, &mut self.ms_email, "Your Microsoft address", false);
+                        field(ui, &mut self.ms_client_id, "Application (client) ID", false);
+                        if go(ui, "Sign in with Microsoft…", !waiting) {
+                            self.connect_microsoft(ctx);
+                        }
+                    }
+                }
+                // a sign-in that is waiting for the browser
+                if let Some((login, _)) = self.nextcloud_wait.clone().filter(|_| self.sub_kind >= 3) {
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(RichText::new("Waiting for you to sign in on the page that opened in your browser…").size(14.0).color(muted));
+                        if ui.add(egui::Button::new(RichText::new("Cancel").size(14.0)).corner_radius(7)).clicked() {
+                            self.cancel_nextcloud();
+                        }
+                    });
+                    if !login.is_empty() {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(RichText::new("If no page opened, open this one:").size(13.0).color(muted));
+                            ui.hyperlink_to(RichText::new("the sign-in page").size(13.0), &login);
+                        });
+                    }
+                }
+                if let Some(e) = self.acct_error.as_ref().filter(|_| self.sub_kind >= 2) {
+                    ui.add_space(4.0);
+                    ui.add(egui::Label::new(RichText::new(e).size(14.0).color(RED)).wrap());
+                }
             });
         }
         divider(ui, border);
@@ -770,8 +857,8 @@ impl App {
         let mut refresh: Option<u64> = None;
         let mut remove: Option<u64> = None;
         let subs: Vec<(u64, Calendar)> = self.data.calendars.iter().filter(|c| c.url.is_some()).map(|c| (c.id, c.clone())).collect();
-        if subs.is_empty() {
-            ui.label(RichText::new("No subscribed calendars yet.").size(15.0).color(muted));
+        if subs.is_empty() && !self.data.accounts.iter().any(|a| a.home.is_some()) {
+            ui.label(RichText::new("Nothing is connected yet.").size(15.0).color(muted));
         }
         for (i, c) in subs {
             let url = c.url.clone().unwrap_or_default();
@@ -830,142 +917,9 @@ impl App {
         self.accounts_section(ui, ctx);
     }
 
-    /// Calendar servers the person signed in to, and the form to add one.
+    /// The accounts the person signed in to, each with its calendars.
     fn accounts_section(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let (muted, border, side, text) = (self.pal.muted, self.pal.border, self.pal.side, self.pal.text);
-        divider(ui, border);
-        heading(ui, "Accounts");
-        ui.add(
-            egui::Label::new(
-                RichText::new("Sign in to a calendar server that speaks CalDAV, such as Nextcloud, Fastmail, Radicale or Baïkal. All its calendars come in and stay in step both ways: what you change here is sent to the server. Repeating events can't be changed here yet.")
-                    .size(15.0)
-                    .color(muted),
-            )
-            .wrap(),
-        );
-        ui.add_space(10.0);
-        egui::Frame::new().fill(mix(side, text, 0.04)).stroke(Stroke::new(1.0, border)).corner_radius(10).inner_margin(Margin::same(16)).show(ui, |ui| {
-            let field = |ui: &mut egui::Ui, value: &mut String, hint: &str, secret: bool| {
-                ui.add(
-                    egui::TextEdit::singleline(value)
-                        .hint_text(hint)
-                        .password(secret)
-                        .font(FontId::proportional(15.0))
-                        .margin(Margin::symmetric(10, 8))
-                        .desired_width(f32::INFINITY),
-                )
-            };
-            field(ui, &mut self.acct_server, "Server address, such as https://cloud.example.org", false);
-            ui.add_space(4.0);
-            field(ui, &mut self.acct_user, "User name", false);
-            ui.add_space(4.0);
-            let r = field(ui, &mut self.acct_pass, "App password", true);
-            let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            ui.add_space(2.0);
-            ui.add(
-                egui::Label::new(
-                    RichText::new("Make an app password in the server's security settings and use it here, not your main password. It is kept in your desktop's keyring, never in kalendar's files.")
-                        .size(13.0)
-                        .color(muted),
-                )
-                .wrap(),
-            );
-            ui.add_space(6.0);
-            let connecting = self.data.accounts.iter().any(|a| a.home.is_none() && self.syncing.contains(&a.id));
-            ui.horizontal(|ui| {
-                let b = egui::Button::new(RichText::new("Connect").size(15.0).color(Color32::WHITE)).fill(self.pal.accent).corner_radius(8);
-                if (ui.add_enabled(!connecting, b).clicked() || enter) && !connecting {
-                    self.connect_account(ctx);
-                }
-                let waiting = self.nextcloud_wait.is_some();
-                let nc = egui::Button::new(RichText::new("Sign in with Nextcloud…").size(15.0)).corner_radius(8);
-                if ui.add_enabled(!connecting && !waiting, nc).on_hover_text("Only the server address is needed. Nextcloud's own sign-in page opens in your browser and hands kalendar an app password.").clicked() {
-                    self.connect_nextcloud(ctx);
-                }
-                if connecting {
-                    ui.spinner();
-                    ui.label(RichText::new("Connecting…").size(15.0).color(muted));
-                }
-            });
-            if let Some((login, _)) = self.nextcloud_wait.clone() {
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label(RichText::new("Waiting for you to sign in on the page that opened in your browser…").size(14.0).color(muted));
-                    if ui.add(egui::Button::new(RichText::new("Cancel").size(14.0)).corner_radius(7)).clicked() {
-                        self.cancel_nextcloud();
-                    }
-                });
-                if !login.is_empty() {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.label(RichText::new("If no page opened, open this one:").size(13.0).color(muted));
-                        ui.hyperlink_to(RichText::new(&login).size(13.0), &login);
-                    });
-                }
-            }
-            // Google: its own fields, shown on request
-            ui.add_space(8.0);
-            let label = if self.g_open { "Hide Google Calendar" } else { "Google Calendar…" };
-            if ui.add(egui::Button::new(RichText::new(label).size(15.0)).corner_radius(8)).clicked() {
-                self.g_open = !self.g_open;
-            }
-            if self.g_open {
-                ui.add(
-                    egui::Label::new(
-                        RichText::new("kalendar has no registration of its own with Google, so you bring one: in the Google Cloud console, make a project, switch on the CalDAV API, add yourself as a test user on the consent screen, and make an OAuth client ID of the type \"Desktop app\". Paste its client ID and client secret here. While the project is in Testing, Google asks you to sign in again every 7 days.")
-                            .size(13.0)
-                            .color(muted),
-                    )
-                    .wrap(),
-                );
-                ui.add_space(4.0);
-                field(ui, &mut self.g_email, "Your Google address", false);
-                ui.add_space(4.0);
-                field(ui, &mut self.g_client_id, "Client ID, ending in .apps.googleusercontent.com", false);
-                ui.add_space(4.0);
-                field(ui, &mut self.g_secret, "Client secret", true);
-                ui.add_space(6.0);
-                let waiting = self.nextcloud_wait.is_some();
-                let b = egui::Button::new(RichText::new("Sign in with Google…").size(15.0).color(Color32::WHITE)).fill(self.pal.accent).corner_radius(8);
-                if ui.add_enabled(!waiting, b).clicked() {
-                    self.connect_google(ctx);
-                }
-            }
-            // Microsoft: likewise
-            ui.add_space(6.0);
-            let label = if self.ms_open { "Hide Microsoft 365 / Outlook.com" } else { "Microsoft 365 / Outlook.com…" };
-            if ui.add(egui::Button::new(RichText::new(label).size(15.0)).corner_radius(8)).clicked() {
-                self.ms_open = !self.ms_open;
-            }
-            if self.ms_open {
-                ui.add(
-                    egui::Label::new(
-                        RichText::new("kalendar has no registration of its own with Microsoft, so you bring one: in the Microsoft Entra admin center, register an app for accounts in any organisation and personal accounts, add the platform \"Mobile and desktop applications\" with the redirect address http://localhost, and allow the delegated Graph permission Calendars.ReadWrite. Paste its Application (client) ID here; there is no secret.")
-                            .size(13.0)
-                            .color(muted),
-                    )
-                    .wrap(),
-                );
-                ui.add_space(4.0);
-                field(ui, &mut self.ms_email, "Your Microsoft address", false);
-                ui.add_space(4.0);
-                field(ui, &mut self.ms_client_id, "Application (client) ID", false);
-                ui.add_space(6.0);
-                let waiting = self.nextcloud_wait.is_some();
-                let b = egui::Button::new(RichText::new("Sign in with Microsoft…").size(15.0).color(Color32::WHITE)).fill(self.pal.accent).corner_radius(8);
-                if ui.add_enabled(!waiting, b).clicked() {
-                    self.connect_microsoft(ctx);
-                }
-            }
-            if let Some(e) = &self.acct_error {
-                ui.add_space(4.0);
-                ui.add(egui::Label::new(RichText::new(e).size(14.0).color(RED)).wrap());
-            }
-        });
-        ui.add_space(8.0);
-        ui.checkbox(&mut self.data.prefs.plaintext_secrets, RichText::new("Keep passwords in a file when no keyring is running").size(14.0))
-            .on_hover_text(format!("Off by default. When on, and only if no keyring answers, passwords go to {} as plain text that only you can read.", secrets::file_path().display()));
-
+        let (muted, border) = (self.pal.muted, self.pal.border);
         let mut sync_now: Option<u64> = None;
         let mut remove: Option<u64> = None;
         let mut changed = false;
@@ -1043,6 +997,9 @@ impl App {
         if let Some(id) = remove {
             self.remove_account(id);
         }
+        ui.add_space(14.0);
+        ui.checkbox(&mut self.data.prefs.plaintext_secrets, RichText::new("Keep passwords in a file when no keyring is running").size(14.0))
+            .on_hover_text(format!("Off by default. When on, and only if no keyring answers, passwords go to {} as plain text that only you can read.", secrets::file_path().display()));
     }
 
     /// Takes the next key combination typed while a shortcut is being

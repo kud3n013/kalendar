@@ -500,12 +500,10 @@ pub struct App {
     pub nextcloud_wait: Option<(String, std::sync::Arc<std::sync::atomic::AtomicBool>)>,
     pub tokens: TokenCache,
     /// the Google sign-in form
-    pub g_open: bool,
     pub g_email: String,
     pub g_client_id: String,
     pub g_secret: String,
     /// the Microsoft sign-in form
-    pub ms_open: bool,
     pub ms_email: String,
     pub ms_client_id: String,
     pub side_scroll: f32,
@@ -604,11 +602,9 @@ impl App {
             outbox_changed: None,
             nextcloud_wait: None,
             tokens: Default::default(),
-            g_open: false,
             g_email: String::new(),
             g_client_id: String::new(),
             g_secret: String::new(),
-            ms_open: std::env::var_os("KALENDAR_DEMO_ACCOUNT").is_some(),
             ms_email: String::new(),
             ms_client_id: String::new(),
             side_scroll: 0.0,
@@ -1252,6 +1248,7 @@ impl App {
                             self.take_calendar_list(account, home, &list);
                             self.backoff.remove(&account);
                             if first {
+                                self.sub_kind = 0;
                                 self.acct_server.clear();
                                 self.acct_user.clear();
                                 let n = list.len();
@@ -1315,8 +1312,7 @@ impl App {
                                     cache.insert(id, (g.access, std::time::Instant::now() + std::time::Duration::from_secs(g.expires_in.saturating_sub(60))));
                                 }
                                 self.g_secret.clear();
-                                self.g_open = false;
-                                self.ms_open = false;
+                                self.sub_kind = 0;
                                 self.sync_account(ctx, id, Some(g.secret));
                             }
                         }
@@ -2097,6 +2093,10 @@ impl eframe::App for App {
             }
             if let Ok(q) = std::env::var("KALENDAR_SHORTCUT_QUERY") {
                 self.shortcut_query = q;
+            }
+            // for screenshots: which kind of integration is being set up
+            if let Some(k) = std::env::var("KALENDAR_SUB_KIND").ok().and_then(|k| k.parse().ok()) {
+                self.sub_kind = k;
             }
             if let Ok(u) = std::env::var("KALENDAR_SUB_URL") {
                 self.sub_kind = 1;
