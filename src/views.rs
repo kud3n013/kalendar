@@ -389,21 +389,30 @@ impl App {
         if ui.rect_contains_pointer(ui.available_rect_before_wrap()) {
             let (zoom, side) = ctx.input(|i| (i.zoom_delta(), i.smooth_scroll_delta.x));
             if (zoom - 1.0).abs() > 0.001 {
-                let was = self.data.prefs.hour_height();
-                let h = (was * zoom).clamp(HOUR_H_MIN, HOUR_H_MAX);
-                self.data.prefs.hour_height_px = Some(h);
-                // the hour under the mouse stays under the mouse
-                if let Some(pos) = ctx.pointer_latest_pos() {
-                    let (off, top) = self.grid_scroll;
-                    let my = (pos.y - top).max(0.0);
-                    sa = sa.vertical_scroll_offset(((off + my) * h / was - my).max(0.0));
-                }
+                // the zoom heads for a goal and glides there; the hour under
+                // the mouse stays under the mouse
+                let from = self.zoom_goal.map_or(self.data.prefs.hour_height(), |g| g.0);
+                let my = ctx.pointer_latest_pos().map_or(0.0, |p| (p.y - self.grid_scroll.1).max(0.0));
+                self.zoom_goal = Some(((from * zoom).clamp(HOUR_H_MIN, HOUR_H_MAX), my));
             }
             self.side_scroll += side;
             if self.side_scroll.abs() > 60.0 {
                 self.anchor -= Duration::days(self.side_scroll.signum() as i64);
                 self.side_scroll = 0.0;
             }
+        }
+        if let Some((goal, my)) = self.zoom_goal {
+            let was = self.data.prefs.hour_height();
+            let dt = ctx.input(|i| i.stable_dt).min(0.05);
+            let mut h = was + (goal - was) * (1.0 - (-dt * ZOOM_RATE).exp());
+            if (goal - h).abs() < 0.25 {
+                h = goal;
+                self.zoom_goal = None;
+            } else {
+                ctx.request_repaint();
+            }
+            self.data.prefs.hour_height_px = Some(h);
+            sa = sa.vertical_scroll_offset(((self.grid_scroll.0 + my) * h / was - my).max(0.0));
         }
         let out = sa.show(ui, |ui| self.grid_body(ui, &days, col_w, now));
         self.grid_scroll = (out.state.clamped_offset().y, out.inner_rect.top());
@@ -470,12 +479,14 @@ impl App {
                 // dark theme, a plain tint on a light one
                 let wash = if self.pal.dark { mix(color, Color32::WHITE, 0.25).gamma_multiply(0.20) } else { color.gamma_multiply(0.13) };
                 fill_squircle(&painter, r, RADIUS, wash);
-                let stripe = Rect::from_min_max(r.left_top() + vec2(2.0, 3.0), pos2(r.left() + 5.0, r.bottom() - 3.0));
-                if stripe.height() > 0.0 {
-                    painter.rect_filled(stripe, 1.5, color);
+                // a line of its colour along the top and the bottom
+                if r.height() > 8.0 {
+                    for y in [r.top() + 1.0, r.bottom() - 3.0] {
+                        painter.rect_filled(Rect::from_min_max(pos2(r.left() + 4.0, y), pos2(r.right() - 4.0, y + 2.0)), 1.0, color);
+                    }
                 }
                 let label = painter.with_clip_rect(r.intersect(painter.clip_rect())).text(
-                    r.left_top() + vec2(10.0, 3.0),
+                    r.left_top() + vec2(6.0, 5.0),
                     Align2::LEFT_TOP,
                     &f.name,
                     FontId::proportional(11.0),
