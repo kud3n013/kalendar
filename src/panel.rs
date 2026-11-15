@@ -368,6 +368,16 @@ impl App {
                 if icon_btn(ui, icons::SHUFFLE, 15.0, "Plan my tasks: fit open tasks into free working time", c).clicked() {
                     app.run(ctx, Cmd::Plan);
                 }
+                // undo appears while there is something to take back
+                let a = ctx.animate_bool_with_time(Id::unique("undo_btn"), !app.undo.is_empty(), ANIM_S);
+                if a > 0.0 {
+                    ui.scope(|ui| {
+                        ui.set_opacity(a);
+                        if icon_btn(ui, icons::UNDO, 16.0, &app.tip("Undo", Cmd::Undo), c).clicked() {
+                            app.do_undo(ctx);
+                        }
+                    });
+                }
             };
             let mut new_list = |ui: &mut egui::Ui, app: &mut App| {
                 if icon_btn(ui, icons::PLUS, 17.0, "New task list", c).clicked() {
@@ -454,16 +464,6 @@ impl App {
                 })
                 .response
                 .on_hover_text("List options");
-                // undo appears while there is something to take back
-                let a = ctx.animate_bool_with_time(Id::unique("undo_btn"), !self.undo.is_empty(), ANIM_S);
-                if a > 0.0 {
-                    ui.scope(|ui| {
-                        ui.set_opacity(a);
-                        if icon_btn(ui, icons::UNDO, 16.0, &self.tip("Undo", Cmd::Undo), c).clicked() {
-                            self.do_undo(ctx);
-                        }
-                    });
-                }
             });
         });
         // tags as a quick filter
