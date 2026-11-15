@@ -74,6 +74,9 @@ fn add_button(ui: &mut egui::Ui, salt: &str, hint: &str) -> Option<String> {
 
 /// A dropdown where several things can be ticked; it stays open while
 /// ticking. Gives back the place of the one that was clicked.
+/// What `pick_many` gives back when its first row clears the picks.
+const CLEAR: usize = usize::MAX;
+
 fn pick_many(ui: &mut egui::Ui, salt: &str, none: &str, items: &[(String, egui::Color32, bool)]) -> Option<usize> {
     let on: Vec<&str> = items.iter().filter(|i| i.2).map(|i| i.0.as_str()).collect();
     let summary = match on.len() {
@@ -83,6 +86,10 @@ fn pick_many(ui: &mut egui::Ui, salt: &str, none: &str, items: &[(String, egui::
     };
     let mut hit = None;
     egui::ComboBox::from_id_salt(salt).selected_text(summary).height(320.0).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show_ui(ui, |ui| {
+        // the first row clears every pick
+        if ui.selectable_label(on.is_empty(), none).clicked() && !on.is_empty() {
+            hit = Some(CLEAR);
+        }
         if items.is_empty() {
             ui.label(RichText::new("Nothing yet; add one with +").weak());
         }
@@ -94,6 +101,61 @@ fn pick_many(ui: &mut egui::Ui, salt: &str, none: &str, items: &[(String, egui::
         }
     });
     hit
+}
+
+/// Starts the part of a window that changes with what is being made. It
+/// comes back as a `Ui` of its own: the fields drawn in it fade in after
+/// `kind` changes, and the room they take glides to their height.
+fn morph_begin(ui: &mut egui::Ui, kind: u8) -> egui::Ui {
+    let ctx = ui.ctx().clone();
+    let id = ui.scope_id().with("morph");
+    let frame = ctx.cumulative_frame_nr();
+    let now = ctx.input(|i| i.time);
+    // (height of the fields, the frame they were drawn in, the kind, when it changed)
+    let last = ctx.data(|d| d.get_temp::<(f32, u64, u8, f64)>(id)).filter(|l| l.1 + 1 >= frame);
+    let since = match last {
+        Some(l) if l.2 == kind => l.3,
+        Some(_) => now,
+        None => now - 10.0,
+    };
+    let secs = anim(ANIM_LONG_S);
+    let h = last.map(|l| ctx.animate_value_with_time(id.with("h"), l.0, secs));
+    ctx.data_mut(|d| d.insert_temp(id.with("now"), (frame, kind, since)));
+    let top = ui.cursor().min;
+    let w = ui.available_width();
+    let rect = match h {
+        Some(h) => ui.allocate_exact_size(egui::vec2(w, h), egui::Sense::hover()).0,
+        None => egui::Rect::from_min_size(top, egui::vec2(w, 0.0)),
+    };
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(egui::Rect::from_min_size(rect.min, egui::vec2(w, f32::INFINITY))));
+    if h.is_some() {
+        child.set_clip_rect(rect.expand2(egui::vec2(4.0, 0.0)).intersect(ui.clip_rect()));
+    }
+    let fade = if secs > 0.0 { (((now - since) as f32) / secs).clamp(0.0, 1.0) } else { 1.0 };
+    if fade < 1.0 {
+        child.set_opacity(fade);
+        ctx.request_repaint();
+    }
+    if h.is_none() {
+        // nothing was set aside yet: the fields take their room as they come
+        ctx.data_mut(|d| d.insert_temp(id.with("grow"), true));
+    }
+    child
+}
+
+/// Ends what `morph_begin` began, with the `Ui` it gave.
+fn morph_end(outer: &mut egui::Ui, child: &egui::Ui) {
+    let ctx = outer.ctx().clone();
+    let id = outer.scope_id().with("morph");
+    let real = child.min_rect().height();
+    if ctx.data_mut(|d| d.remove_temp::<bool>(id.with("grow"))).is_some() {
+        outer.allocate_space(egui::vec2(child.min_rect().width(), real));
+        // a window that just opened is its own size at once
+        ctx.animate_value_with_time(id.with("h"), real, 0.0);
+    }
+    if let Some((frame, kind, since)) = ctx.data(|d| d.get_temp::<(u64, u8, f64)>(id.with("now"))) {
+        ctx.data_mut(|d| d.insert_temp(id, (real, frame, kind, since)));
+    }
 }
 
 /// The time of day so many minutes after midnight.
@@ -165,6 +227,11 @@ impl App {
                 if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     save = true;
                 }
+                // the fields below change with the kind: they fade in and the
+                // window grows or shrinks to them
+                let outer_ui = ui;
+                let mut morph = morph_begin(outer_ui, c.kind as u8);
+                let ui = &mut morph;
                 ui.add_space(4.0);
                 let label = |ui: &mut egui::Ui, t: &str| {
                     ui.label(RichText::new(t).color(muted));
@@ -266,12 +333,16 @@ impl App {
                         ui.horizontal(|ui| {
                             let text = ui.visuals().text_color();
                             let items: Vec<(String, egui::Color32, bool)> = all_tags.iter().map(|t| (format!("#{t}"), text, c.task.tags.iter().any(|x| x.eq_ignore_ascii_case(t)))).collect();
-                            if let Some(i) = pick_many(ui, "ctags", "None", &items) {
-                                let tag = &all_tags[i];
-                                if items[i].2 {
-                                    c.task.tags.retain(|t| !t.eq_ignore_ascii_case(tag));
+                            if let Some(i) = pick_many(ui, "ctags", "No tags", &items) {
+                                if i == CLEAR {
+                                    c.task.tags.clear();
                                 } else {
-                                    c.task.tags.push(tag.clone());
+                                    let tag = &all_tags[i];
+                                    if items[i].2 {
+                                        c.task.tags.retain(|t| !t.eq_ignore_ascii_case(tag));
+                                    } else {
+                                        c.task.tags.push(tag.clone());
+                                    }
                                 }
                             }
                             if let Some(tag) = add_button(ui, "ctag", "New tag") {
@@ -307,6 +378,8 @@ impl App {
                     ui.add(egui::TextEdit::multiline(&mut c.ev.notes).hint_text("Add a note").desired_rows(3).desired_width(f32::INFINITY));
                     ui.end_row();
                 });
+                morph_end(outer_ui, &morph);
+                let ui = outer_ui;
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     if ui.button(RichText::new("Save").strong()).on_hover_text("Enter").clicked() {
@@ -443,11 +516,12 @@ impl App {
         let mut lists: Vec<(u64, String, [u8; 3])> = vec![(0, self.data.prefs.inbox_name(), [128, 128, 128])];
         lists.extend(self.data.lists.iter().map(|l| (l.id, l.name.clone(), l.color)));
         let hour12 = self.data.prefs.hour12;
-        let win = egui::Window::new(if ed.is_new { "New frame" } else { "Frame" }).id(Id::unique("frame_editor")).collapsible(false).resizable(false);
-        // begun from a drawn block, it sits beside that block like the
-        // task and event window it took over from
+        // begun from a drawn block, it is the very window the task and the
+        // event are set up in: same place, same width, only the fields change
+        let win_id = if ed.from_block.is_some() { Id::unique("create_popup") } else { Id::unique("frame_editor") };
+        let win = egui::Window::new(if ed.is_new { "New frame" } else { "Frame" }).id(win_id).collapsible(false).resizable(false);
         let win = match &ed.from_block {
-            Some((_, r)) => win.title_bar(false).fixed_pos(place_beside(ctx, Id::unique("frame_editor"), *r, egui::vec2(400.0, 520.0))),
+            Some((_, r)) => win.title_bar(false).fixed_pos(place_beside(ctx, win_id, *r, egui::vec2(400.0, 400.0))),
             None => win.anchor(Align2::CENTER_CENTER, [0.0, -30.0]),
         };
         let mut back: Option<CreateKind> = None;
@@ -480,6 +554,11 @@ impl App {
                 if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     save = true;
                 }
+                // the fields below change with the kind: they fade in and the
+                // window grows or shrinks to them
+                let outer_ui = ui;
+                let mut morph = morph_begin(outer_ui, 2);
+                let ui = &mut morph;
                 ui.add_space(4.0);
                 let label = |ui: &mut egui::Ui, t: &str| {
                     ui.label(RichText::new(t).color(muted));
@@ -589,18 +668,22 @@ impl App {
 
                 ui.add_space(6.0);
                 ui.label(RichText::new("Tasks it takes").strong());
-                ui.label(RichText::new("Nothing picked means any task.").size(11.5).color(muted));
+                ui.label(RichText::new("With no list and no tags it takes any task.").size(11.5).color(muted));
                 ui.add_space(2.0);
                 egui::Grid::new("framefilter").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
                     label(ui, "Lists");
                     ui.horizontal(|ui| {
                         let items: Vec<(String, egui::Color32, bool)> = lists.iter().map(|(id, name, col)| (format!("{} {name}", icons::CIRCLE), rgb(*col), ed.frame.filter.lists.contains(id))).collect();
-                        if let Some(i) = pick_many(ui, "flists", "Any list", &items) {
-                            let id = lists[i].0;
-                            if items[i].2 {
-                                ed.frame.filter.lists.retain(|l| *l != id);
+                        if let Some(i) = pick_many(ui, "flists", "No list", &items) {
+                            if i == CLEAR {
+                                ed.frame.filter.lists.clear();
                             } else {
-                                ed.frame.filter.lists.push(id);
+                                let id = lists[i].0;
+                                if items[i].2 {
+                                    ed.frame.filter.lists.retain(|l| *l != id);
+                                } else {
+                                    ed.frame.filter.lists.push(id);
+                                }
                             }
                         }
                         if let Some(name) = add_button(ui, "flist", "New list") {
@@ -613,12 +696,16 @@ impl App {
                     ui.horizontal(|ui| {
                         let text = ui.visuals().text_color();
                         let items: Vec<(String, egui::Color32, bool)> = all_tags.iter().map(|t| (format!("#{t}"), text, ed.frame.filter.tags.iter().any(|x| x.eq_ignore_ascii_case(t)))).collect();
-                        if let Some(i) = pick_many(ui, "ftags", "Any tag", &items) {
-                            let tag = &all_tags[i];
-                            if items[i].2 {
-                                ed.frame.filter.tags.retain(|t| !t.eq_ignore_ascii_case(tag));
+                        if let Some(i) = pick_many(ui, "ftags", "No tags", &items) {
+                            if i == CLEAR {
+                                ed.frame.filter.tags.clear();
                             } else {
-                                ed.frame.filter.tags.push(tag.clone());
+                                let tag = &all_tags[i];
+                                if items[i].2 {
+                                    ed.frame.filter.tags.retain(|t| !t.eq_ignore_ascii_case(tag));
+                                } else {
+                                    ed.frame.filter.tags.push(tag.clone());
+                                }
                             }
                         }
                         if let Some(tag) = add_button(ui, "ftag", "New tag") {
@@ -651,6 +738,8 @@ impl App {
                 ui.checkbox(&mut ed.frame.exclusive, "Keep other tasks out")
                     .on_hover_text("The planner puts no other task here");
                 ui.checkbox(&mut ed.frame.enabled, "Enabled");
+                morph_end(outer_ui, &morph);
+                let ui = outer_ui;
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     if ui.button(RichText::new("Save").strong()).on_hover_text("Ctrl+Enter").clicked() {

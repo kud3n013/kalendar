@@ -999,35 +999,41 @@ impl App {
         // as wide as its longest line; the colours come in two rows of seven
         ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
         ui.spacing_mut().button_padding = vec2(10.0, 7.0);
+        // the lines between parts are drawn last, across the width the
+        // content took: a separator would take all the room it is offered
+        let mut seps: Vec<f32> = vec![];
         // colour dots: "no colour" first, then the palette
         ui.add_space(4.0);
         let mut pick: Option<Option<[u8; 3]>> = None;
-        ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
-            ui.add_space(8.0);
-            let (r, resp) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
-            let c = if resp.hovered() { self.pal.text } else { muted };
-            ui.painter().circle_stroke(r.center(), 8.5, Stroke::new(2.0, c));
-            ui.painter().line_segment([r.center() + vec2(-6.0, -6.0), r.center() + vec2(6.0, 6.0)], Stroke::new(2.0, c));
-            if resp.on_hover_text("Calendar colour").clicked() {
-                pick = Some(None);
-            }
-            for (i, (col, name)) in EVENT_COLORS.iter().enumerate() {
-                if i == 6 {
-                    ui.end_row();
-                    ui.add_space(8.0);
+        // two rows of seven, each only as wide as its dots, so the menu is as
+        // wide as its longest line and no wider
+        for row in 0..2 {
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+                ui.add_space(8.0);
+                if row == 0 {
+                    let (r, resp) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
+                    let c = if resp.hovered() { self.pal.text } else { muted };
+                    ui.painter().circle_stroke(r.center(), 8.5, Stroke::new(2.0, c));
+                    ui.painter().line_segment([r.center() + vec2(-6.0, -6.0), r.center() + vec2(6.0, 6.0)], Stroke::new(2.0, c));
+                    if resp.on_hover_text("Calendar colour").clicked() {
+                        pick = Some(None);
+                    }
                 }
-                let (r, resp) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
-                let grow = ctx.animate_bool_with_time(Id::unique(("dot", i)), resp.hovered(), anim(ANIM_FAST_S));
-                ui.painter().circle_filled(r.center(), 9.0 + 2.0 * grow, rgb(*col));
-                if ev.color == Some(*col) {
-                    ui.painter().circle_stroke(r.center(), 12.0, Stroke::new(1.5, self.pal.text));
+                let (from, to) = if row == 0 { (0, 6) } else { (6, EVENT_COLORS.len()) };
+                for (i, (col, name)) in EVENT_COLORS.iter().enumerate().take(to).skip(from) {
+                    let (r, resp) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
+                    let grow = ctx.animate_bool_with_time(Id::unique(("dot", i)), resp.hovered(), anim(ANIM_FAST_S));
+                    ui.painter().circle_filled(r.center(), 9.0 + 2.0 * grow, rgb(*col));
+                    if ev.color == Some(*col) {
+                        ui.painter().circle_stroke(r.center(), 12.0, Stroke::new(1.5, self.pal.text));
+                    }
+                    if resp.on_hover_text(*name).clicked() {
+                        pick = Some(Some(*col));
+                    }
                 }
-                if resp.on_hover_text(*name).clicked() {
-                    pick = Some(Some(*col));
-                }
-            }
-        });
+            });
+        }
         if let Some(c) = pick {
             self.snapshot();
             if let Some(e) = self.data.event_mut(id) {
@@ -1036,7 +1042,7 @@ impl App {
             self.commit();
             ui.close();
         }
-        ui.separator();
+        seps.push(menu_gap(ui));
         let big = |t: &str| RichText::new(t).size(15.0);
         if let Some(tid) = ev.task_id {
             if ui.button(big(&format!("{}   Copy task session", icons::COPY))).clicked() {
@@ -1044,7 +1050,7 @@ impl App {
                 self.run(&ctx, Cmd::Copy);
                 ui.close();
             }
-            ui.separator();
+            seps.push(menu_gap(ui));
             ui.horizontal(|ui| {
                 ui.add_space(10.0);
                 ui.label(RichText::new("Planner").size(14.0).color(muted));
@@ -1080,24 +1086,24 @@ impl App {
                 }
             });
             let mut flexible = self.data.task(tid).map(|t| t.flexible).unwrap_or(false);
+            // the tick sits right after the words: a right-aligned one would
+            // stretch the menu to its widest
             ui.horizontal(|ui| {
                 ui.add_space(10.0);
                 ui.label(big(&format!("{}   Flexible task", icons::SHUFFLE)));
                 ui.label(RichText::new("(i)").size(11.0).color(muted)).on_hover_text(
                     "The planner may move flexible tasks to make room for more important ones.",
                 );
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.add_space(6.0);
-                    if ui.checkbox(&mut flexible, "").changed() {
-                        self.snapshot();
-                        if let Some(t) = self.data.task_mut(tid) {
-                            t.flexible = flexible;
-                        }
-                        self.commit();
+                ui.add_space(6.0);
+                if ui.checkbox(&mut flexible, "").changed() {
+                    self.snapshot();
+                    if let Some(t) = self.data.task_mut(tid) {
+                        t.flexible = flexible;
                     }
-                });
+                    self.commit();
+                }
             });
-            ui.separator();
+            seps.push(menu_gap(ui));
             if ui.button(big(&format!("{}   Unschedule session", icons::X)).color(red)).clicked() {
                 self.delete_event(&ctx, id);
                 ui.close();
@@ -1112,13 +1118,18 @@ impl App {
                 self.run(&ctx, Cmd::Copy);
                 ui.close();
             }
-            ui.separator();
+            seps.push(menu_gap(ui));
             if ui.button(big(&format!("{}   Delete event", icons::TRASH)).color(red)).clicked() {
                 self.delete_event(&ctx, id);
                 ui.close();
             }
         }
         ui.add_space(2.0);
+        let x = ui.min_rect().x_range();
+        let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+        for y in seps {
+            ui.painter().hline(x, y, stroke);
+        }
     }
 
     // ---------------------------------------------------------------- month
@@ -1323,4 +1334,11 @@ impl App {
             });
         });
     }
+}
+
+/// Leaves a gap where a line goes between parts of a menu, and gives the
+/// height to draw it at once the menu's width is known.
+fn menu_gap(ui: &mut egui::Ui) -> f32 {
+    let (r, _) = ui.allocate_exact_size(vec2(0.0, 7.0), Sense::hover());
+    r.center().y
 }
