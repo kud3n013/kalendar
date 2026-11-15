@@ -1,7 +1,7 @@
 //! CalDAV: finding a person's calendars on a server and reading them.
 
 use super::{Delta, Guard, Provider, RemoteCalendar, SyncError};
-use crate::ics::{self, FeedEvent};
+use crate::ics::{self, FeedEvent, FeedTask};
 use crate::model::RemoteKey;
 use chrono::{Duration, NaiveDate, NaiveDateTime};
 use roxmltree::{Document, Node};
@@ -267,37 +267,43 @@ impl CalDav {
     }
 
     /// The events inside an answer that carries calendar data.
-    fn events_in(base: &str, body: &str, now: NaiveDateTime) -> Result<Vec<FeedEvent>, SyncError> {
+    fn events_in(base: &str, body: &str, now: NaiveDateTime) -> Result<(Vec<FeedEvent>, Vec<FeedTask>), SyncError> {
         let doc = Document::parse(body).map_err(|_| Self::bad_answer())?;
         let mut out = vec![];
+        let mut tasks = vec![];
         for resp in responses(&doc) {
             let (Some(href), Some(data)) = (child(resp, "href").map(text_of), prop(resp, "calendar-data")) else { continue };
             let etag = prop(resp, "getetag").map(text_of);
             let text: String = data.children().filter_map(|c| c.text()).collect();
             let Ok(feed) = ics::parse(&text, now) else { continue };
             let href = join(base, &href);
+            tasks.extend(ics::parse_todos(&text).into_iter().map(|mut t| {
+                t.href = Some(href.clone());
+                t.etag = etag.clone();
+                t
+            }));
             out.extend(feed.events.into_iter().map(|mut e| {
                 e.href = Some(href.clone());
                 e.etag = etag.clone();
                 e
             }));
         }
-        Ok(out)
+        Ok((out, tasks))
     }
 
-    /// Everything the calendar holds around `now`.
-    fn pull_all(&self, cal: &RemoteCalendar, now: NaiveDateTime) -> Result<Delta, SyncError> {
+    /// Everything the calendar holds: its events around `now`, or all of
+    /// its tasks.
+    fn pull_all(&self, cal: &RemoteCalendar, now: NaiveDateTime, tasks: bool) -> Result<Delta, SyncError> {
         // the token is read first: a change made while reading comes again
         let (ctag, token) = self.tags(cal)?;
         let stamp = |d: NaiveDateTime| d.format("%Y%m%dT000000Z").to_string();
         let (from, to) = (stamp(now - Duration::days(ics::PAST_DAYS + 1)), stamp(now + Duration::days(ics::AHEAD_DAYS + 1)));
-        let body = format!(
-            "<c:calendar-query {NS}><d:prop><d:getetag/><c:calendar-data/></d:prop><c:filter><c:comp-filter name=\"VCALENDAR\"><c:comp-filter name=\"VEVENT\"><c:time-range start=\"{from}\" end=\"{to}\"/></c:comp-filter></c:comp-filter></c:filter></c:calendar-query>"
-        );
+        let filter = if tasks { "<c:comp-filter name=\"VTODO\"/>".to_string() } else { format!("<c:comp-filter name=\"VEVENT\"><c:time-range start=\"{from}\" end=\"{to}\"/></c:comp-filter>") };
+        let body = format!("<c:calendar-query {NS}><d:prop><d:getetag/><c:calendar-data/></d:prop><c:filter><c:comp-filter name=\"VCALENDAR\">{filter}</c:comp-filter></c:filter></c:calendar-query>");
         let r = self.ask("REPORT", &cal.id, Some("1"), &body)?;
-        let upserts = Self::events_in(&r.url, &r.body, now)?;
+        let (upserts, found) = Self::events_in(&r.url, &r.body, now)?;
         let state = format!("{}|{}", now.date().format("%Y-%m-%d"), token.unwrap_or_default());
-        Ok(Delta { upserts, full: true, state: Some(state), ctag, ..Default::default() })
+        Ok(Delta { upserts, tasks: found, full: true, state: Some(state), ctag, ..Default::default() })
     }
 
     /// What changed since the token was given.
@@ -325,16 +331,19 @@ impl CalDav {
                 changed.push(href);
             }
         }
-        let mut upserts = vec![];
+        let (mut upserts, mut tasks) = (vec![], vec![]);
         for batch in changed.chunks(MULTIGET_BATCH) {
             let hrefs: String = batch.iter().map(|h| format!("<d:href>{}</d:href>", xml_escape(h))).collect();
             let body = format!("<c:calendar-multiget {NS}><d:prop><d:getetag/><c:calendar-data/></d:prop>{hrefs}</c:calendar-multiget>");
             let m = self.ask("REPORT", &cal.id, Some("1"), &body)?;
-            upserts.extend(Self::events_in(&m.url, &m.body, now)?);
+            let (events, found) = Self::events_in(&m.url, &m.body, now)?;
+            upserts.extend(events);
+            tasks.extend(found);
         }
         let ctag = if changed.is_empty() && gone.is_empty() { cal.ctag.clone() } else { None };
         Ok(Delta {
             upserts,
+            tasks,
             changed: changed.iter().map(|h| join(&r.url, h)).collect(),
             deletes: gone.iter().map(|h| RemoteKey::Href(join(&r.url, h))).collect(),
             full: false,
@@ -362,12 +371,13 @@ impl Provider for CalDav {
             if !prop(resp, "resourcetype").is_some_and(|t| child(t, "calendar").is_some()) {
                 continue;
             }
-            // task lists and journals are left out
-            if let Some(set) = prop(resp, "supported-calendar-component-set") {
-                let comps: Vec<&str> = set.children().filter_map(|c| c.attribute("name")).collect();
-                if !comps.is_empty() && !comps.iter().any(|c| c.eq_ignore_ascii_case("VEVENT")) {
-                    continue;
-                }
+            // what it can hold: events, tasks or both; journals are left out
+            let comps: Vec<&str> = prop(resp, "supported-calendar-component-set").map(|set| set.children().filter_map(|c| c.attribute("name")).collect()).unwrap_or_default();
+            let holds = |kind: &str| comps.iter().any(|c| c.eq_ignore_ascii_case(kind));
+            // a server that does not say is taken to hold events
+            let (events, tasks) = (comps.is_empty() || holds("VEVENT"), holds("VTODO"));
+            if !events && !tasks {
+                continue;
             }
             let read_only = prop(resp, "current-user-privilege-set").is_some_and(|set| {
                 !set.descendants().any(|n| matches!(n.tag_name().name(), "write" | "write-content" | "all"))
@@ -379,6 +389,8 @@ impl Provider for CalDav {
                 color: prop(resp, "calendar-color").and_then(|c| parse_color(&text_of(c))),
                 ctag: prop(resp, "getctag").map(text_of).filter(|t| !t.is_empty()),
                 read_only,
+                events,
+                tasks,
             });
         }
         self.home = Some(home);
@@ -413,6 +425,17 @@ impl Provider for CalDav {
 
     /// `state` is "day of the last full read|sync token".
     fn pull(&mut self, cal: &RemoteCalendar, state: Option<&str>, now: NaiveDateTime) -> Result<Delta, SyncError> {
+        self.pull_kind(cal, state, now, false)
+    }
+
+    fn pull_tasks(&mut self, cal: &RemoteCalendar, state: Option<&str>, now: NaiveDateTime) -> Result<Delta, SyncError> {
+        self.pull_kind(cal, state, now, true)
+    }
+}
+
+impl CalDav {
+    /// Events or tasks: what changed since `state`, or everything.
+    fn pull_kind(&mut self, cal: &RemoteCalendar, state: Option<&str>, now: NaiveDateTime, tasks: bool) -> Result<Delta, SyncError> {
         let known = state.and_then(|s| s.split_once('|')).and_then(|(day, token)| {
             let day = NaiveDate::parse_from_str(day, "%Y-%m-%d").ok()?;
             ((now.date() - day).num_days().abs() < FULL_EVERY_DAYS).then_some((day, token))
@@ -432,7 +455,7 @@ impl Provider for CalDav {
                 }
             }
         }
-        self.pull_all(cal, now)
+        self.pull_all(cal, now, tasks)
     }
 }
 
@@ -510,7 +533,7 @@ mod tests {
         // listing
         let cals = dav.list_calendars().expect("list");
         let cal = cals.iter().find(|c| c.id == cal_url).expect("the new calendar is listed").clone();
-        assert_eq!((cal.name.as_str(), cal.color, cal.read_only), ("Test & Co", Some([0xff, 0x8f, 0x1e]), false));
+        assert_eq!((cal.name.as_str(), cal.color, cal.read_only, cal.events, cal.tasks), ("Test & Co", Some([0xff, 0x8f, 0x1e]), false, true, false));
 
         // the first pull reads everything
         let d = dav.pull(&cal, None, now).expect("full pull");
@@ -599,5 +622,32 @@ mod tests {
         assert!(matches!(r[0], PushResult::Deleted { .. }) && matches!(r[1], PushResult::Conflict { .. }), "{r:?}");
 
         dav.ask("DELETE", &cal_url, None, "").expect("clean up");
+
+        // --- tasks ---
+        use crate::model::Task;
+        let list_url = format!("{home}{name}-tasks/");
+        let mk = format!("<c:mkcalendar {NS}><d:set><d:prop><d:displayname>To do</d:displayname><c:supported-calendar-component-set><c:comp name=\"VTODO\"/></c:supported-calendar-component-set></d:prop></d:set></c:mkcalendar>");
+        dav.ask("MKCALENDAR", &list_url, None, &mk).expect("mkcalendar for tasks");
+        let list = dav.list_calendars().unwrap().into_iter().find(|c| c.id == list_url).expect("the task list is listed");
+        assert!(list.tasks && !list.events);
+        // a new task, read back by a pull
+        let task = Task { id: 7, title: "Buy milk".into(), notes: "Two".into(), due: NaiveDate::from_ymd_opt(2026, 11, 20), priority: 1, ..Default::default() };
+        let r = push(&mut dav, &list, &[PushJob::SaveTask(task.clone())], stamp);
+        let PushResult::TaskSaved { uid, href, etag, .. } = r[0].clone() else { panic!("not saved: {r:?}") };
+        let d = dav.pull_tasks(&list, None, now).expect("pull of tasks");
+        assert!(d.full && d.upserts.is_empty());
+        assert_eq!(d.tasks.len(), 1);
+        let t = &d.tasks[0];
+        assert_eq!((t.uid.as_str(), t.title.as_str(), t.notes.as_str(), t.due, t.priority, t.done, t.href.as_deref()), (uid.as_str(), "Buy milk", "Two", task.due, 1, false, Some(href.as_str())));
+        // ticked off here, then seen as a change
+        let done = Task { done: true, uid: Some(uid.clone()), href: Some(href.clone()), etag: etag.clone(), ..task.clone() };
+        let r = push(&mut dav, &list, &[PushJob::SaveTask(done.clone())], stamp);
+        assert!(matches!(r[0], PushResult::TaskSaved { .. }), "{r:?}");
+        let d2 = dav.pull_tasks(&list, d.state.as_deref(), now).expect("pull of task changes");
+        assert!(!d2.full && d2.tasks.len() == 1 && d2.tasks[0].done);
+        // a change from a stale copy is a conflict
+        let r = push(&mut dav, &list, &[PushJob::SaveTask(Task { title: "Stale".into(), ..done })], stamp);
+        assert!(matches!(r[0], PushResult::TaskConflict { task: 7 }), "{r:?}");
+        dav.ask("DELETE", &list_url, None, "").expect("clean up");
     }
 }

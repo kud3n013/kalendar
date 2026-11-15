@@ -923,6 +923,9 @@ impl App {
         let mut sync_now: Option<u64> = None;
         let mut remove: Option<u64> = None;
         let mut changed = false;
+        // a calendar whose tasks are to be brought in, or no longer
+        let mut tasks_toggle: Option<(u64, bool)> = None;
+        let with_tasks: std::collections::HashSet<u64> = self.data.calendars.iter().filter(|c| self.calendar_tasks_on(c.id)).map(|c| c.id).collect();
         // accounts still signing in for the first time are not listed yet
         let accounts: Vec<Account> = self.data.accounts.iter().filter(|a| a.home.is_some()).cloned().collect();
         for a in &accounts {
@@ -981,6 +984,25 @@ impl App {
                     if let Some(e) = &c.error {
                         ui.label(RichText::new("could not sync").size(13.0).color(RED)).on_hover_text(e);
                     }
+                    if c.holds_tasks {
+                        let mut on = with_tasks.contains(&c.id);
+                        if ui.checkbox(&mut on, RichText::new("tasks too").size(13.0).color(muted)).on_hover_text("Bring the tasks kept in this calendar in as a task list").changed() {
+                            tasks_toggle = Some((c.id, on));
+                        }
+                    }
+                });
+            }
+            // lists on the server that hold only tasks
+            for l in self.data.lists.iter().filter(|l| l.account == Some(a.id) && !self.data.calendars.iter().any(|c| c.account == l.account && c.remote_id == l.remote_id)) {
+                ui.horizontal(|ui| {
+                    ui.add_space(42.0);
+                    let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
+                    ui.painter().circle_filled(r.center(), 6.0, rgb(l.color));
+                    ui.label(RichText::new(&l.name).size(15.0));
+                    ui.label(RichText::new(if l.read_only { "task list, read-only" } else { "task list" }).size(13.0).color(muted));
+                    if let Some(e) = &l.error {
+                        ui.label(RichText::new("could not sync").size(13.0).color(RED)).on_hover_text(e);
+                    }
                 });
             }
             ui.add_space(6.0);
@@ -989,6 +1011,9 @@ impl App {
         }
         if changed {
             self.commit();
+        }
+        if let Some((cal, on)) = tasks_toggle {
+            self.set_calendar_tasks(ctx, cal, on);
         }
         if let Some(id) = sync_now {
             self.backoff.remove(&id);

@@ -220,7 +220,7 @@ impl App {
     fn new_list(&mut self, name: &str) -> u64 {
         let id = self.data.new_id();
         let color = EVENT_COLORS[self.data.lists.len() % EVENT_COLORS.len()].0;
-        self.data.lists.push(TaskList { id, name: name.to_string(), color });
+        self.data.lists.push(TaskList { id, name: name.to_string(), color, ..Default::default() });
         id
     }
 

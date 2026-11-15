@@ -216,6 +216,8 @@ impl Provider for Graph {
                         Some([p(0)?, p(2)?, p(4)?])
                     }),
                     ctag: None,
+                    events: true,
+                    tasks: false,
                     read_only: v["canEdit"].as_bool() == Some(false),
                 })
             })

@@ -28,6 +28,8 @@ pub enum SyncDone {
     Link { cal: u64, res: Result<String, String> },
     /// a private link was put into the keyring
     LinkKept { cal: u64, res: Result<(), String> },
+    /// a task list's tasks were read
+    PulledTasks { list: u64, res: Result<sync::Delta, sync::SyncError> },
     /// changes made here were sent to the server
     Pushed { cal: u64, results: Vec<sync::PushResult> },
     /// Nextcloud's sign-in page is open in the browser
@@ -493,6 +495,8 @@ pub struct App {
     /// synced events as the server last knew them, to tell what was
     /// changed here since
     pub shadow: std::collections::HashMap<u64, Event>,
+    /// the same for the tasks of synced lists
+    pub task_shadow: std::collections::HashMap<u64, Task>,
     /// something was changed here that a server should hear of, and when
     pub outbox_changed: Option<f64>,
     /// a Nextcloud sign-in is waiting for the browser: its page, and the
@@ -545,10 +549,15 @@ impl App {
                     visible,
                     account: Some(900),
                     remote_id: Some(format!("https://cloud.example.org/dav/calendars/sam/{i}/")),
-                    read_only: true,
+                    read_only: i == 2,
+                    holds_tasks: i < 2,
                     ..Default::default()
                 });
             }
+        }
+        if shot.is_some() && std::env::var_os("KALENDAR_DEMO_ACCOUNT").is_some() {
+            data.lists.push(TaskList { id: 910, name: "Shopping".into(), color: EVENT_COLORS[4].0, account: Some(900), remote_id: Some("https://cloud.example.org/dav/calendars/sam/shopping/".into()), ..Default::default() });
+            data.lists.push(TaskList { id: 911, name: "Home".into(), color: EVENT_COLORS[6].0, account: Some(900), remote_id: Some("https://cloud.example.org/dav/calendars/sam/0/".into()), ..Default::default() });
         }
         let view = data.prefs.initial_view;
         let scroll = (opening_scroll_min(Self::now()) - data.prefs.grid_start_h * 60) as f32 / 60.0 * data.prefs.hour_height();
@@ -599,6 +608,7 @@ impl App {
             acct_pass: String::new(),
             acct_error: None,
             shadow: Default::default(),
+            task_shadow: Default::default(),
             outbox_changed: None,
             nextcloud_wait: None,
             tokens: Default::default(),
@@ -898,6 +908,52 @@ impl App {
     pub fn reshadow(&mut self) {
         let writable: std::collections::HashSet<u64> = self.data.calendars.iter().filter(|c| c.is_synced_writable()).map(|c| c.id).collect();
         self.shadow = self.data.events.iter().filter(|e| writable.contains(&e.calendar)).map(|e| (e.id, e.clone())).collect();
+        let lists: std::collections::HashSet<u64> = self.data.lists.iter().filter(|l| l.is_synced_writable()).map(|l| l.id).collect();
+        self.task_shadow = self.data.tasks.iter().filter(|t| lists.contains(&t.list)).map(|t| (t.id, t.clone())).collect();
+    }
+
+    /// The same as `note_edits`, for tasks in lists that sync both ways.
+    fn note_task_edits(&mut self) -> bool {
+        let lists: std::collections::HashSet<u64> = self.data.lists.iter().filter(|l| l.is_synced_writable()).map(|l| l.id).collect();
+        if lists.is_empty() && self.task_shadow.is_empty() {
+            return false;
+        }
+        let mut touched = false;
+        let mut here = std::collections::HashSet::new();
+        for t in &mut self.data.tasks {
+            here.insert(t.id);
+            let old = self.task_shadow.get(&t.id);
+            if let Some(o) = old.filter(|o| o.list != t.list) {
+                // moved to another list: gone from the old one, new in this.
+                // A list that was removed here keeps its tasks on the server.
+                if let Some(href) = o.href.as_ref().filter(|_| lists.contains(&o.list)) {
+                    self.data.outbox.push(PendingDelete { calendar: o.list, href: href.clone(), etag: o.etag.clone() });
+                    touched = true;
+                }
+                t.detach();
+            } else if old.is_none() && t.href.is_some() && lists.contains(&t.list) {
+                // a copy of a synced task, or one brought back by undo
+                t.detach();
+            }
+            if !lists.contains(&t.list) {
+                continue;
+            }
+            let same = old.is_some_and(|o| o.list == t.list && o.same_content(t));
+            if !same {
+                t.dirty = true;
+                touched = true;
+            }
+        }
+        for (id, o) in &self.task_shadow {
+            if here.contains(id) || !lists.contains(&o.list) {
+                continue;
+            }
+            if let Some(href) = o.href.clone().filter(|h| !self.data.outbox.iter().any(|d| &d.href == h)) {
+                self.data.outbox.push(PendingDelete { calendar: o.list, href, etag: o.etag.clone() });
+                touched = true;
+            }
+        }
+        touched
     }
 
     /// Finds what was changed here in calendars that sync both ways, and
@@ -905,10 +961,14 @@ impl App {
     /// ones are noted in the outbox. Runs on every save.
     fn note_edits(&mut self) {
         let writable: std::collections::HashSet<u64> = self.data.calendars.iter().filter(|c| c.is_synced_writable()).map(|c| c.id).collect();
+        let mut touched = self.note_task_edits();
         if writable.is_empty() && self.shadow.is_empty() {
+            self.reshadow();
+            if touched {
+                self.outbox_changed = Some(f64::NAN);
+            }
             return;
         }
-        let mut touched = false;
         let mut here = std::collections::HashSet::new();
         for e in &mut self.data.events {
             here.insert(e.id);
@@ -1120,7 +1180,8 @@ impl App {
         if self.shot.is_some() {
             return;
         }
-        let mut jobs: Vec<(u64, sync::RemoteCalendar, Option<String>, Vec<sync::PushJob>)> = vec![];
+        // the last part says whether it is a task list
+        let mut jobs: Vec<(u64, sync::RemoteCalendar, Option<String>, Vec<sync::PushJob>, bool)> = vec![];
         for c in self.data.calendars.iter().filter(|c| c.account == Some(account) && c.visible) {
             let Some(id) = c.remote_id.clone() else { continue };
             if !self.syncing.insert(c.id) {
@@ -1132,7 +1193,20 @@ impl App {
                 out.extend(self.data.events.iter().filter(|e| e.calendar == c.id && e.dirty).cloned().map(sync::PushJob::Save));
                 out.extend(self.data.outbox.iter().filter(|d| d.calendar == c.id).map(|d| sync::PushJob::Delete { href: d.href.clone(), etag: d.etag.clone() }));
             }
-            jobs.push((c.id, sync::RemoteCalendar { id, ctag: c.ctag.clone(), ..Default::default() }, c.sync_state.clone(), out));
+            jobs.push((c.id, sync::RemoteCalendar { id, ctag: c.ctag.clone(), ..Default::default() }, c.sync_state.clone(), out, false));
+        }
+        // and its task lists
+        for l in self.data.lists.iter().filter(|l| l.account == Some(account)) {
+            let Some(id) = l.remote_id.clone() else { continue };
+            if !self.syncing.insert(l.id) {
+                continue;
+            }
+            let mut out: Vec<sync::PushJob> = vec![];
+            if l.is_synced_writable() {
+                out.extend(self.data.tasks.iter().filter(|t| t.list == l.id && t.dirty).cloned().map(sync::PushJob::SaveTask));
+                out.extend(self.data.outbox.iter().filter(|d| d.calendar == l.id).map(|d| sync::PushJob::Delete { href: d.href.clone(), etag: d.etag.clone() }));
+            }
+            jobs.push((l.id, sync::RemoteCalendar { id, ctag: l.ctag.clone(), ..Default::default() }, l.sync_state.clone(), out, true));
         }
         if jobs.is_empty() {
             return;
@@ -1147,21 +1221,22 @@ impl App {
                 Ok(d) => (Some(d), Ok(())),
                 Err(e) => (None, Err(e)),
             };
-            for (cal, remote, mut state, out) in jobs {
+            for (cal, remote, mut state, out, tasks) in jobs {
                 if let (Some(dav), false) = (&mut dav, out.is_empty()) {
                     let results = sync::push(dav.as_mut(), &remote, &out, chrono::Utc::now().naive_utc());
                     // after a conflict the server's copy is read afresh
-                    if results.iter().any(|r| matches!(r, sync::PushResult::Conflict { .. } | sync::PushResult::DeleteConflict { .. })) {
+                    if results.iter().any(|r| matches!(r, sync::PushResult::Conflict { .. } | sync::PushResult::TaskConflict { .. } | sync::PushResult::DeleteConflict { .. })) {
                         state = None;
                     }
                     send(SyncDone::Pushed { cal, results });
                 }
                 let res = match (&mut dav, &pass) {
+                    (Some(dav), _) if tasks => dav.pull_tasks(&remote, state.as_deref(), now),
                     (Some(dav), _) => dav.pull(&remote, state.as_deref(), now),
                     (None, Err(e)) => Err(e.clone()),
                     (None, Ok(_)) => unreachable!(),
                 };
-                send(SyncDone::Pulled { cal, res });
+                send(if tasks { SyncDone::PulledTasks { list: cal, res } } else { SyncDone::Pulled { cal, res } });
             }
         });
     }
@@ -1272,6 +1347,23 @@ impl App {
                         }
                     }
                 }
+                SyncDone::PulledTasks { list, res } => {
+                    self.syncing.remove(&list);
+                    let Some(account) = self.data.lists.iter().find(|l| l.id == list).and_then(|l| l.account) else { continue };
+                    match res {
+                        Ok(delta) => self.data.apply_tasks(list, delta),
+                        Err(e) => {
+                            let why = account_error(self.data.account(account), &e);
+                            if let Some(l) = self.data.lists.iter_mut().find(|l| l.id == list) {
+                                l.error = Some(e.text());
+                            }
+                            if let Some(a) = self.data.account_mut(account) {
+                                a.error = Some(why);
+                            }
+                            self.back_off(account, time);
+                        }
+                    }
+                }
                 SyncDone::Pushed { cal, results } => self.take_push_results(ctx, cal, results),
                 SyncDone::NextcloudOpened { login } => {
                     if let Some(w) = &mut self.nextcloud_wait {
@@ -1373,7 +1465,7 @@ impl App {
     /// Takes in how the changes sent to a server fared.
     fn take_push_results(&mut self, ctx: &egui::Context, cal: u64, results: Vec<sync::PushResult>) {
         use sync::PushResult::*;
-        let mut conflicts = 0;
+        let (mut conflicts, mut task_conflicts) = (0, 0);
         let mut failed: Option<String> = None;
         for r in results {
             match r {
@@ -1397,6 +1489,22 @@ impl App {
                     self.data.events.push(copy);
                     conflicts += 1;
                 }
+                TaskSaved { sent, uid, href, etag } => {
+                    let Some(t) = self.data.task_mut(sent.id).filter(|t| t.list == cal) else { continue };
+                    t.dirty = !t.same_content(&sent);
+                    (t.uid, t.href, t.etag) = (Some(uid), Some(href), etag);
+                }
+                TaskConflict { task } => {
+                    // the server's copy wins; the edit made here is kept in the Inbox
+                    let Some(t) = self.data.task_mut(task) else { continue };
+                    t.dirty = false;
+                    let mut copy = t.clone();
+                    copy.detach();
+                    copy.list = 0;
+                    copy.id = self.data.new_id();
+                    self.data.tasks.push(copy);
+                    task_conflicts += 1;
+                }
                 Deleted { href } => self.data.outbox.retain(|d| d.href != href),
                 DeleteConflict { href } => {
                     // changed on the server since: it stays, and comes back
@@ -1409,11 +1517,15 @@ impl App {
         let own = self.data.calendar(self.data.first_own_calendar()).map(|c| c.name.clone()).unwrap_or_default();
         if conflicts > 0 {
             self.say(ctx, format!("Conflict: the event was changed on the server, whose copy was kept. Your edit was saved as a copy in {own}."), false);
+        } else if task_conflicts > 0 {
+            self.say(ctx, "Conflict: the task was changed on the server, whose copy was kept. Your edit was saved as a copy in the Inbox.", false);
         } else if let Some(e) = &failed {
             self.say(ctx, format!("A change could not be sent and will be tried again. {e}"), false);
         }
         if let Some(c) = self.data.calendar_mut(cal) {
             c.error = failed;
+        } else if let Some(l) = self.data.lists.iter_mut().find(|l| l.id == cal) {
+            l.error = failed;
         }
     }
 
@@ -1517,6 +1629,47 @@ impl App {
         }
     }
 
+    fn add_synced_list(&mut self, account: u64, remote_id: String, name: &str, color: Option<[u8; 3]>, read_only: bool) -> u64 {
+        let n = self.data.lists.len();
+        let id = self.data.new_id();
+        self.data.lists.push(TaskList {
+            id,
+            name: name.to_string(),
+            color: color.unwrap_or(EVENT_COLORS[(n * 3 + 1) % EVENT_COLORS.len()].0),
+            account: Some(account),
+            remote_id: Some(remote_id),
+            read_only,
+            ..Default::default()
+        });
+        id
+    }
+
+    /// Whether the tasks kept in a synced calendar are brought in as a list.
+    pub fn calendar_tasks_on(&self, cal: u64) -> bool {
+        let Some(c) = self.data.calendar(cal) else { return false };
+        self.data.lists.iter().any(|l| l.account == c.account && l.account.is_some() && l.remote_id == c.remote_id)
+    }
+
+    /// Brings the tasks kept in a synced calendar in as a task list, or
+    /// takes that list away again. The server keeps its tasks either way.
+    pub fn set_calendar_tasks(&mut self, ctx: &egui::Context, cal: u64, on: bool) {
+        let Some(c) = self.data.calendar(cal).cloned() else { return };
+        let (Some(account), Some(remote_id)) = (c.account, c.remote_id.clone()) else { return };
+        if on && !self.calendar_tasks_on(cal) {
+            self.add_synced_list(account, remote_id, &c.name, Some(c.color), c.read_only);
+            self.reshadow();
+            self.commit();
+            self.pull_account(ctx, account);
+        } else if !on {
+            let lists: Vec<u64> = self.data.lists.iter().filter(|l| l.account == Some(account) && l.remote_id.as_ref() == Some(&remote_id)).map(|l| l.id).collect();
+            for l in lists {
+                self.data.remove_synced_list(l);
+            }
+            self.reshadow();
+            self.commit();
+        }
+    }
+
     /// Brings the account's calendars in line with the server's list: new
     /// ones are added, ones that are gone leave with their events.
     fn take_calendar_list(&mut self, account: u64, home: Option<String>, list: &[sync::RemoteCalendar]) {
@@ -1535,7 +1688,24 @@ impl App {
         for id in gone {
             self.data.remove_calendar(id);
         }
-        for r in list {
+        // task lists: one for each collection that holds only tasks; one
+        // for a calendar that holds both only where the person asked for it
+        let gone: Vec<u64> = self.data.lists.iter().filter(|l| l.account == Some(account) && !list.iter().any(|r| r.tasks && Some(&r.id) == l.remote_id.as_ref())).map(|l| l.id).collect();
+        for id in gone {
+            self.data.remove_synced_list(id);
+        }
+        for r in list.iter().filter(|r| r.tasks) {
+            if let Some(l) = self.data.lists.iter_mut().find(|l| l.account == Some(account) && l.remote_id.as_ref() == Some(&r.id)) {
+                l.read_only = r.read_only;
+            } else if !r.events {
+                self.add_synced_list(account, r.id.clone(), &r.name, r.color, r.read_only);
+            }
+            // whether it can hold tasks is kept with the calendar, for settings
+            if let Some(c) = self.data.calendars.iter_mut().find(|c| c.account == Some(account) && c.remote_id.as_ref() == Some(&r.id)) {
+                c.holds_tasks = true;
+            }
+        }
+        for r in list.iter().filter(|r| r.events) {
             if let Some(c) = self.data.calendars.iter_mut().find(|c| c.account == Some(account) && c.remote_id.as_ref() == Some(&r.id)) {
                 c.read_only = r.read_only;
                 continue;
@@ -2360,6 +2530,71 @@ mod tests {
         app.commit();
         let e = app.data.event(500).unwrap();
         assert!(e.dirty && e.href.is_none());
+    }
+
+    #[test]
+    fn task_edits_in_a_synced_list_are_marked_to_send() {
+        let ctx = egui::Context::default();
+        let mut app = synced_app();
+        app.data.tasks.clear();
+        app.data.lists.push(TaskList { id: 950, name: "Synced".into(), account: Some(900), remote_id: Some("https://x.example/dav/t/".into()), ..Default::default() });
+        // what the server sends comes in without being marked
+        let ft = |uid: &str, title: &str, done: bool| ics::FeedTask { uid: uid.into(), title: title.into(), done, href: Some(format!("https://x.example/dav/t/{uid}.ics")), etag: Some("\"1\"".into()), ..Default::default() };
+        app.data.apply_tasks(950, sync::Delta { tasks: vec![ft("a", "A", false), ft("b", "B", false)], full: true, state: Some("s".into()), ..Default::default() });
+        app.reshadow();
+        app.commit();
+        assert_eq!(app.data.tasks.len(), 2);
+        assert!(app.data.tasks.iter().all(|t| !t.dirty && t.list == 950));
+        let (a, b) = (app.data.tasks[0].id, app.data.tasks[1].id);
+
+        // ticking one off marks it; a new one is marked too; a task elsewhere is not
+        app.data.task_mut(a).unwrap().done = true;
+        app.data.tasks.push(Task { id: 960, title: "New".into(), list: 950, ..Default::default() });
+        app.data.tasks.push(Task { id: 961, title: "Own".into(), list: 1, ..Default::default() });
+        app.commit();
+        assert!(app.data.task(a).unwrap().dirty && app.data.task(960).unwrap().dirty && !app.data.task(961).unwrap().dirty && !app.data.task(b).unwrap().dirty);
+        assert!(app.outbox_changed.is_some());
+
+        // a pull does not write over the edit, and brings the rest up to date
+        app.data.apply_tasks(950, sync::Delta { tasks: vec![ft("a", "A from the server", false), ft("b", "B renamed", false)], changed: vec!["https://x.example/dav/t/a.ics".into(), "https://x.example/dav/t/b.ics".into()], state: Some("s2".into()), ..Default::default() });
+        assert!(app.data.task(a).unwrap().done && app.data.task(a).unwrap().title == "A");
+        assert_eq!(app.data.task(b).unwrap().title, "B renamed");
+        assert!(app.data.task(960).is_some(), "a task not sent yet stays through a pull");
+
+        // saved: the flag goes; a conflict keeps the edit in the Inbox
+        let sent = app.data.task(a).unwrap().clone();
+        app.take_push_results(&ctx, 950, vec![sync::PushResult::TaskSaved { sent, uid: "a".into(), href: "https://x.example/dav/t/a.ics".into(), etag: Some("\"2\"".into()) }]);
+        assert!(!app.data.task(a).unwrap().dirty && app.data.task(a).unwrap().etag.as_deref() == Some("\"2\""));
+        app.reshadow();
+        app.data.task_mut(b).unwrap().title = "My B".into();
+        app.commit();
+        app.take_push_results(&ctx, 950, vec![sync::PushResult::TaskConflict { task: b }]);
+        let copy = app.data.tasks.last().unwrap();
+        assert_eq!((copy.title.as_str(), copy.list, copy.href.is_none()), ("My B", 0, true));
+        assert!(!app.data.task(b).unwrap().dirty);
+        app.reshadow();
+
+        // deleting one is noted; moving one out deletes it on the server and makes it one's own
+        app.data.tasks.retain(|t| t.id != a);
+        app.data.task_mut(b).unwrap().list = 1;
+        app.commit();
+        let hrefs: Vec<&str> = app.data.outbox.iter().map(|d| d.href.as_str()).collect();
+        assert!(hrefs.contains(&"https://x.example/dav/t/a.ics") && hrefs.contains(&"https://x.example/dav/t/b.ics"), "{hrefs:?}");
+        assert!(app.data.task(b).unwrap().href.is_none() && !app.data.task(b).unwrap().dirty);
+
+        // a full pull drops what the server no longer has, but not what was never sent
+        app.data.outbox.clear();
+        app.data.apply_tasks(950, sync::Delta { tasks: vec![], full: true, ..Default::default() });
+        let left: Vec<u64> = app.data.tasks.iter().filter(|t| t.list == 950).map(|t| t.id).collect();
+        assert_eq!(left, vec![960]);
+
+        // taking the list away here says nothing to the server
+        app.reshadow();
+        app.data.tasks.push(Task { id: 970, title: "Kept on the server".into(), list: 950, href: Some("h".into()), uid: Some("k".into()), ..Default::default() });
+        app.reshadow();
+        app.data.remove_synced_list(950);
+        app.commit();
+        assert!(app.data.outbox.is_empty() && app.data.tasks.iter().all(|t| t.list != 950));
     }
 
     #[test]

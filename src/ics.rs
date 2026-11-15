@@ -631,13 +631,19 @@ fn escape(v: &str) -> String {
 /// Where the event to read or change sits among the lines: the main one
 /// of a repeating event rather than a changed occurrence.
 fn main_event(lines: &[String]) -> Option<(usize, usize)> {
+    main_part(lines, "VEVENT")
+}
+
+/// The same for any kind of component: "VEVENT" or "VTODO".
+fn main_part(lines: &[String], kind: &str) -> Option<(usize, usize)> {
+    let (begin_line, end_line) = (format!("BEGIN:{kind}"), format!("END:{kind}"));
     let is = |l: &String, what: &str| l.trim().eq_ignore_ascii_case(what);
     let mut found: Option<(usize, usize)> = None;
     let mut begin = None;
     for (i, l) in lines.iter().enumerate() {
-        if is(l, "BEGIN:VEVENT") {
+        if is(l, &begin_line) {
             begin = Some(i);
-        } else if is(l, "END:VEVENT") {
+        } else if is(l, &end_line) {
             let Some(b) = begin.take() else { continue };
             let occurrence = lines[b..i].iter().any(|l| l.to_uppercase().starts_with("RECURRENCE-ID"));
             if !occurrence {
@@ -803,6 +809,161 @@ pub fn write_event(raw: Option<&str>, uid: &str, f: &EventFields, stamp: NaiveDa
         }
         match key.as_str() {
             "DURATION" if !keep_duration => {}
+            "SEQUENCE" => {
+                seen.insert(key);
+                out.push(format!("SEQUENCE:{}", value.trim().parse::<i64>().unwrap_or(0) + 1));
+            }
+            "DTSTAMP" | "LAST-MODIFIED" => {
+                seen.insert(key.clone());
+                out.push(format!("{key}:{stamp_text}"));
+            }
+            _ => out.push(line.clone()),
+        }
+    }
+    for (name, new) in &wanted {
+        if let Some(n) = new.as_ref().filter(|_| !seen.contains(*name)) {
+            out.push(n.clone());
+        }
+    }
+    if !seen.contains("SEQUENCE") {
+        out.push(format!("SEQUENCE:{}", if is_new { 0 } else { 1 }));
+    }
+    for name in ["DTSTAMP", "LAST-MODIFIED"] {
+        if !seen.contains(name) {
+            out.push(format!("{name}:{stamp_text}"));
+        }
+    }
+    out.extend_from_slice(&lines[e..]);
+    fold(&out)
+}
+
+/// One task read from a server.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct FeedTask {
+    pub uid: String,
+    pub title: String,
+    pub notes: String,
+    pub due: Option<NaiveDate>,
+    /// as iCalendar counts it: 0 none, 1 highest, 9 lowest
+    pub priority: u8,
+    pub done: bool,
+    pub href: Option<String>,
+    pub etag: Option<String>,
+}
+
+/// The tasks (VTODO) in a calendar text. Repeating tasks are left out:
+/// ticking one off means something else on every server.
+pub fn parse_todos(text: &str) -> Vec<FeedTask> {
+    let lines = unfold(text);
+    let mut out = vec![];
+    let mut rest: &[String] = &lines;
+    while let Some((b, e)) = main_part(rest, "VTODO") {
+        let mut t = FeedTask::default();
+        let (mut repeats, mut cancelled, mut completed) = (false, false, false);
+        for (depth, line) in own_lines(&rest[b + 1..e]) {
+            let Some((key, params, value)) = split_line(line) else { continue };
+            if depth > 0 {
+                continue;
+            }
+            match key.as_str() {
+                "UID" => t.uid = value.trim().to_string(),
+                "SUMMARY" => t.title = unescape(value).trim().to_string(),
+                "DESCRIPTION" => t.notes = unescape(value).trim().to_string(),
+                "DUE" => t.due = parse_when(value, &params).map(|(w, all_day)| if all_day { w.wall.date() } else { w.local().date() }),
+                "PRIORITY" => t.priority = value.trim().parse::<u8>().unwrap_or(0).min(9),
+                "STATUS" => {
+                    t.done |= value.trim().eq_ignore_ascii_case("COMPLETED");
+                    cancelled = value.trim().eq_ignore_ascii_case("CANCELLED");
+                }
+                "COMPLETED" => completed = true,
+                "RRULE" | "RECURRENCE-ID" => repeats = true,
+                _ => {}
+            }
+        }
+        t.done |= completed;
+        if !repeats && !cancelled && !t.uid.is_empty() {
+            if t.title.is_empty() {
+                t.title = "Task".into();
+            }
+            out.push(t);
+        }
+        rest = &rest[e + 1..];
+    }
+    out
+}
+
+/// The parts of a task that travel to a server.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub struct TaskFields {
+    pub title: String,
+    pub notes: String,
+    pub due: Option<NaiveDate>,
+    pub priority: u8,
+    pub done: bool,
+}
+
+/// Writes a task for a server. With `raw`, the task as the server sent
+/// it, only the title, notes, due date, priority and done state are
+/// changed, and only where they differ; the rest stays as it was.
+/// `stamp` is the time now, in UTC.
+pub fn write_todo(raw: Option<&str>, uid: &str, f: &TaskFields, stamp: NaiveDateTime) -> String {
+    let fresh = || -> Vec<String> {
+        ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//kalendar//EN", "BEGIN:VTODO", &format!("UID:{uid}"), "END:VTODO", "END:VCALENDAR"].iter().map(|s| s.to_string()).collect()
+    };
+    let mut lines = raw.map(unfold).unwrap_or_else(fresh);
+    let mut is_new = raw.is_none();
+    let (b, e) = match main_part(&lines, "VTODO") {
+        Some(x) => x,
+        None => {
+            lines = fresh();
+            is_new = true;
+            (3, 5)
+        }
+    };
+    let stamp_text = stamp.format("%Y%m%dT%H%M%SZ").to_string();
+    let text = |name: &str, v: &str| (!v.trim().is_empty()).then(|| format!("{name}:{}", escape(v)));
+    // the new line of each property; None leaves it out
+    let wanted: Vec<(&str, Option<String>)> = vec![
+        ("SUMMARY", text("SUMMARY", &f.title)),
+        ("DESCRIPTION", text("DESCRIPTION", &f.notes)),
+        ("DUE", f.due.map(|d| format!("DUE;VALUE=DATE:{}", d.format("%Y%m%d")))),
+        ("PRIORITY", (f.priority > 0).then(|| format!("PRIORITY:{}", f.priority))),
+        ("STATUS", Some(format!("STATUS:{}", if f.done { "COMPLETED" } else { "NEEDS-ACTION" }))),
+        ("COMPLETED", f.done.then(|| format!("COMPLETED:{stamp_text}"))),
+        ("PERCENT-COMPLETE", f.done.then(|| "PERCENT-COMPLETE:100".to_string())),
+    ];
+    let mut out: Vec<String> = lines[..=b].to_vec();
+    let mut seen: HashSet<String> = HashSet::new();
+    for (depth, line) in own_lines(&lines[b + 1..e]) {
+        let parts = split_line(line).filter(|_| depth == 0);
+        let Some((key, params, value)) = parts else {
+            out.push(line.clone());
+            continue;
+        };
+        if let Some((_, new)) = wanted.iter().find(|(n, _)| *n == key) {
+            if !seen.insert(key.clone()) {
+                continue;
+            }
+            let v = value.trim();
+            let same = match key.as_str() {
+                "SUMMARY" => unescape(value).trim() == f.title.trim(),
+                "DESCRIPTION" => unescape(value).trim() == f.notes.trim(),
+                // a due time on the same day stays as the server has it
+                "DUE" => parse_when(value, &params).map(|(w, all_day)| if all_day { w.wall.date() } else { w.local().date() }) == f.due,
+                "PRIORITY" => v.parse::<u8>().unwrap_or(0) == f.priority,
+                "STATUS" => v.eq_ignore_ascii_case("COMPLETED") == f.done && !v.eq_ignore_ascii_case("CANCELLED"),
+                // when it was ticked off stays; a task in progress keeps its share done
+                "COMPLETED" => f.done,
+                _ => f.done == (v == "100"),
+            };
+            if same {
+                out.push(line.clone());
+            } else if let Some(n) = new {
+                out.push(n.clone());
+            }
+            continue;
+        }
+        match key.as_str() {
             "SEQUENCE" => {
                 seen.insert(key);
                 out.push(format!("SEQUENCE:{}", value.trim().parse::<i64>().unwrap_or(0) + 1));
@@ -1057,6 +1218,62 @@ mod tests {
         d.end += Duration::minutes(15);
         let longer = write_event(Some(dur), "d", &d, stamp());
         assert!(!longer.contains("DURATION") && longer.contains("DTEND:"));
+    }
+
+    const TODOS: &str = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:t1\r\nDTSTAMP:20260101T000000Z\r\nSUMMARY:Buy milk\\, bread\r\nDESCRIPTION:Two of each\r\nDUE;TZID=Europe/Zurich:20261120T180000\r\nPRIORITY:1\r\nPERCENT-COMPLETE:40\r\nCATEGORIES:home\r\nX-APPLE-SORT-ORDER:7\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Reminder\r\nTRIGGER:-PT1H\r\nEND:VALARM\r\nEND:VTODO\r\nBEGIN:VTODO\r\nUID:t2\r\nSUMMARY:Done one\r\nDUE;VALUE=DATE:20261101\r\nSTATUS:COMPLETED\r\nCOMPLETED:20261102T100000Z\r\nEND:VTODO\r\nBEGIN:VTODO\r\nUID:t3\r\nSUMMARY:Every week\r\nRRULE:FREQ=WEEKLY\r\nEND:VTODO\r\nBEGIN:VTODO\r\nUID:t4\r\nSUMMARY:Dropped\r\nSTATUS:CANCELLED\r\nEND:VTODO\r\nBEGIN:VEVENT\r\nUID:e\r\nSUMMARY:An event\r\nDTSTART:20261120T100000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+
+    #[test]
+    fn reads_tasks() {
+        let t = parse_todos(TODOS);
+        assert_eq!(t.len(), 2, "repeating and cancelled tasks are left out");
+        assert_eq!((t[0].uid.as_str(), t[0].title.as_str(), t[0].notes.as_str(), t[0].priority, t[0].done), ("t1", "Buy milk, bread", "Two of each", 1, false));
+        assert_eq!(t[0].due, NaiveDate::from_ymd_opt(2026, 11, 20));
+        assert_eq!((t[1].title.as_str(), t[1].done, t[1].due), ("Done one", true, NaiveDate::from_ymd_opt(2026, 11, 1)));
+        // the event beside them is still read as an event
+        assert_eq!(parse(TODOS, now()).unwrap().events.len(), 1);
+        assert!(parse_todos("BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n").is_empty());
+    }
+
+    #[test]
+    fn writes_tasks_back() {
+        let one = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VTODO\r\nUID:t1\r\nDTSTAMP:20260101T000000Z\r\nSUMMARY:Buy milk\\, bread\r\nDESCRIPTION:Two of each\r\nDUE;TZID=Europe/Zurich:20261120T180000\r\nPRIORITY:1\r\nPERCENT-COMPLETE:40\r\nCATEGORIES:home\r\nX-APPLE-SORT-ORDER:7\r\nBEGIN:VALARM\r\nACTION:DISPLAY\r\nDESCRIPTION:Reminder\r\nTRIGGER:-PT1H\r\nEND:VALARM\r\nEND:VTODO\r\nEND:VCALENDAR\r\n";
+        let read = parse_todos(one).remove(0);
+        let mut f = TaskFields { title: read.title, notes: read.notes, due: read.due, priority: read.priority, done: read.done };
+        // unchanged: everything stays, the due time and the share done included
+        let same = unfold(&write_todo(Some(one), "t1", &f, stamp()));
+        for l in unfold(one) {
+            if l.starts_with("DTSTAMP") {
+                continue;
+            }
+            assert!(same.contains(&l), "lost: {l}");
+        }
+        assert!(same.contains(&"STATUS:NEEDS-ACTION".to_string()));
+
+        // ticked off, renamed, moved to another day, priority dropped
+        f.done = true;
+        f.title = "Buy milk".into();
+        f.due = NaiveDate::from_ymd_opt(2026, 11, 21);
+        f.priority = 0;
+        let text = write_todo(Some(one), "t1", &f, stamp());
+        let out = unfold(&text);
+        for want in ["SUMMARY:Buy milk", "DUE;VALUE=DATE:20261121", "STATUS:COMPLETED", "COMPLETED:20261114T200000Z", "PERCENT-COMPLETE:100", "CATEGORIES:home", "X-APPLE-SORT-ORDER:7", "TRIGGER:-PT1H", "DESCRIPTION:Reminder", "SEQUENCE:1"] {
+            assert!(out.contains(&want.to_string()), "missing: {want}\n{text}");
+        }
+        assert!(!out.iter().any(|l| l.starts_with("PRIORITY")));
+        let back = parse_todos(&text).remove(0);
+        assert_eq!((back.title.as_str(), back.due, back.priority, back.done), ("Buy milk", f.due, 0, true));
+
+        // unticked again: the marks of being done go
+        f.done = false;
+        let again = unfold(&write_todo(Some(&text), "t1", &f, stamp()));
+        assert!(again.contains(&"STATUS:NEEDS-ACTION".to_string()));
+        assert!(!again.iter().any(|l| l.starts_with("COMPLETED") || l.starts_with("PERCENT-COMPLETE")));
+
+        // a new one
+        let new = write_todo(None, "n1", &TaskFields { title: "New; task".into(), priority: 5, ..Default::default() }, stamp());
+        let t = parse_todos(&new).remove(0);
+        assert_eq!((t.uid.as_str(), t.title.as_str(), t.priority, t.done, t.due), ("n1", "New; task", 5, false, None));
+        assert!(unfold(&new).contains(&"SEQUENCE:0".to_string()));
     }
 
     #[test]

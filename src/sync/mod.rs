@@ -6,8 +6,8 @@ pub mod graph;
 pub mod nextcloud;
 pub mod oauth;
 
-use crate::ics::FeedEvent;
-use crate::model::{Event, RemoteKey};
+use crate::ics::{FeedEvent, FeedTask};
+use crate::model::{Event, RemoteKey, Task};
 use chrono::NaiveDateTime;
 
 /// Why a sync did not go through.
@@ -51,6 +51,10 @@ pub struct RemoteCalendar {
     /// changes whenever anything in the calendar does
     pub ctag: Option<String>,
     pub read_only: bool,
+    /// it can hold events
+    pub events: bool,
+    /// it can hold tasks
+    pub tasks: bool,
 }
 
 /// What a pull brought back.
@@ -58,6 +62,8 @@ pub struct RemoteCalendar {
 pub struct Delta {
     /// new and changed events
     pub upserts: Vec<FeedEvent>,
+    /// new and changed tasks
+    pub tasks: Vec<FeedTask>,
     /// addresses that changed: their events not among `upserts` are gone
     pub changed: Vec<String>,
     pub deletes: Vec<RemoteKey>,
@@ -77,6 +83,10 @@ pub trait Provider: Send {
     /// What changed since `state`, or everything without one. Repeating
     /// events are written out around `now`.
     fn pull(&mut self, cal: &RemoteCalendar, state: Option<&str>, now: NaiveDateTime) -> Result<Delta, SyncError>;
+    /// The same for the tasks of a list. Not every service has them.
+    fn pull_tasks(&mut self, _cal: &RemoteCalendar, _state: Option<&str>, _now: NaiveDateTime) -> Result<Delta, SyncError> {
+        Err(SyncError::Other("Tasks are not synced with this kind of account.".into()))
+    }
     /// Where the account's calendars were found, to skip the search next time.
     fn home(&self) -> Option<String> {
         None
@@ -110,7 +120,7 @@ pub struct IcsFeed {
 
 impl Provider for IcsFeed {
     fn list_calendars(&mut self) -> Result<Vec<RemoteCalendar>, SyncError> {
-        Ok(vec![RemoteCalendar { id: self.url.clone(), name: crate::ics::default_name(&self.url), read_only: true, ..Default::default() }])
+        Ok(vec![RemoteCalendar { id: self.url.clone(), name: crate::ics::default_name(&self.url), read_only: true, events: true, ..Default::default() }])
     }
     fn pull(&mut self, _cal: &RemoteCalendar, _state: Option<&str>, now: NaiveDateTime) -> Result<Delta, SyncError> {
         let feed = crate::ics::fetch(&self.url, now).map_err(SyncError::Other)?;
@@ -134,6 +144,8 @@ pub enum Guard {
 pub enum PushJob {
     /// a new or changed event
     Save(Event),
+    /// a new or changed task
+    SaveTask(Task),
     /// an event deleted here
     Delete { href: String, etag: Option<String> },
 }
@@ -145,6 +157,8 @@ pub enum PushResult {
     Saved { sent: Event, uid: String, href: String, etag: Option<String> },
     /// the server's copy changed or went in the meantime; it wins
     Conflict { event: u64 },
+    TaskSaved { sent: Task, uid: String, href: String, etag: Option<String> },
+    TaskConflict { task: u64 },
     Deleted { href: String },
     /// the event changed on the server before it could be deleted; it stays
     DeleteConflict { href: String },
@@ -169,7 +183,9 @@ fn new_uid() -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static N: AtomicU64 = AtomicU64::new(0);
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-    format!("{:x}-{:x}-{:x}@kalendar", nanos, std::process::id(), N.fetch_add(1, Ordering::Relaxed))
+    // only letters, digits and dashes: it is also the event's address, and
+    // servers hand addresses back with other signs rewritten
+    format!("{:x}-{:x}-{:x}-kalendar", nanos, std::process::id(), N.fetch_add(1, Ordering::Relaxed))
 }
 
 fn save(p: &mut dyn Provider, cal: &RemoteCalendar, e: &Event, stamp: NaiveDateTime) -> PushResult {
@@ -221,6 +237,36 @@ fn save(p: &mut dyn Provider, cal: &RemoteCalendar, e: &Event, stamp: NaiveDateT
     }
 }
 
+fn save_task(p: &mut dyn Provider, cal: &RemoteCalendar, t: &Task, stamp: NaiveDateTime) -> PushResult {
+    use crate::ics::{write_todo, TaskFields};
+    let f = TaskFields { title: t.title.clone(), notes: t.notes.clone(), due: t.due, priority: t.priority, done: t.done };
+    let done = |res: Result<Option<String>, SyncError>, uid: String, href: String| match res {
+        Ok(etag) => PushResult::TaskSaved { sent: t.clone(), uid, href, etag },
+        Err(SyncError::Conflict | SyncError::Gone) => PushResult::TaskConflict { task: t.id },
+        Err(error) => PushResult::Failed { error },
+    };
+    match &t.href {
+        Some(href) => {
+            let (raw, server_etag) = match p.get(href) {
+                Ok(x) => x,
+                Err(SyncError::Gone) => return PushResult::TaskConflict { task: t.id },
+                Err(error) => return PushResult::Failed { error },
+            };
+            let uid = t.uid.clone().or_else(|| crate::ics::parse_todos(&raw).into_iter().next().map(|x| x.uid)).unwrap_or_default();
+            let guard = match t.etag.clone().or(server_etag) {
+                Some(e) => Guard::Match(e),
+                None => Guard::Any,
+            };
+            done(p.put(cal, href, &write_todo(Some(&raw), &uid, &f, stamp), &guard), uid, href.clone())
+        }
+        None => {
+            let uid = new_uid();
+            let href = format!("{}/{}.ics", cal.id.trim_end_matches('/'), uid);
+            done(p.put(cal, &href, &write_todo(None, &uid, &f, stamp), &Guard::New), uid, href)
+        }
+    }
+}
+
 /// Sends the changes made here to the server, one by one. `stamp` is the
 /// time now, in UTC.
 pub fn push(p: &mut dyn Provider, cal: &RemoteCalendar, jobs: &[PushJob], stamp: NaiveDateTime) -> Vec<PushResult> {
@@ -230,6 +276,7 @@ pub fn push(p: &mut dyn Provider, cal: &RemoteCalendar, jobs: &[PushJob], stamp:
                 Some(r) => r,
                 None => save(p, cal, e, stamp),
             },
+            PushJob::SaveTask(t) => save_task(p, cal, t, stamp),
             PushJob::Delete { href, etag } => match p.delete(cal, href, etag.as_deref()) {
                 // already gone is as good as deleted
                 Ok(()) | Err(SyncError::Gone) => PushResult::Deleted { href: href.clone() },

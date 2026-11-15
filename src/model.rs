@@ -256,6 +256,9 @@ pub struct Calendar {
     /// its events cannot be changed here
     #[serde(default)]
     pub read_only: bool,
+    /// on its server it can hold tasks as well as events
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub holds_tasks: bool,
     /// its link is private and kept in the keyring; data.json holds
     /// `SECRET_URL` in its place
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -378,7 +381,7 @@ impl Event {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, Default)]
+#[derive(Clone, Serialize, Deserialize, Default, Debug)]
 pub struct Task {
     pub id: u64,
     pub title: String,
@@ -584,11 +587,45 @@ pub struct FrameOcc {
     pub end: NaiveDateTime,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, Default)]
 pub struct TaskList {
     pub id: u64,
     pub name: String,
     pub color: [u8; 3],
+    /// the synced account it belongs to; None for one's own lists
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account: Option<u64>,
+    /// its address on the server
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sync_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ctag: Option<String>,
+    /// the server does not take changes to it
+    #[serde(default)]
+    pub read_only: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl TaskList {
+    /// A synced list whose server takes changes.
+    pub fn is_synced_writable(&self) -> bool {
+        self.account.is_some() && !self.read_only
+    }
+}
+
+impl Task {
+    /// Forgets where the task lives on a server: it becomes a new one.
+    pub fn detach(&mut self) {
+        self.dirty = false;
+        (self.uid, self.href, self.etag, self.raw) = (None, None, None, None);
+    }
+    /// The parts a server keeps are the same in both.
+    pub fn same_content(&self, o: &Task) -> bool {
+        self.title == o.title && self.notes == o.notes && self.due == o.due && self.priority == o.priority && self.done == o.done
+    }
 }
 
 /// What typing in the quick task field means: "#tag", "!high", ">List",
@@ -931,8 +968,67 @@ impl Data {
             c.ctag = d.ctag;
         }
     }
+    /// Takes in the tasks a pull brought back for a synced list. A task
+    /// already here is matched by its UID; one changed here and not yet
+    /// sent is left alone.
+    pub fn apply_tasks(&mut self, list: u64, d: crate::sync::Delta) {
+        use std::collections::HashSet;
+        let got: HashSet<&str> = d.tasks.iter().map(|t| t.uid.as_str()).collect();
+        self.tasks.retain(|t| {
+            if t.list != list || t.dirty {
+                return true;
+            }
+            let Some(href) = &t.href else { return true }; // not sent yet
+            let named = t.uid.as_deref().is_some_and(|u| got.contains(u));
+            if d.full {
+                named
+            } else {
+                // gone, or its address changed and no longer holds it
+                !(d.deletes.contains(&RemoteKey::Href(href.clone())) || (d.changed.contains(href) && !named))
+            }
+        });
+        for f in d.tasks {
+            let i = match self.tasks.iter().position(|t| t.list == list && t.uid.as_deref() == Some(f.uid.as_str())) {
+                Some(i) => i,
+                None => {
+                    let id = self.new_id();
+                    self.tasks.push(Task { id, list, ..Default::default() });
+                    self.tasks.len() - 1
+                }
+            };
+            let t = &mut self.tasks[i];
+            if t.dirty {
+                continue;
+            }
+            t.title = f.title;
+            t.notes = f.notes;
+            t.due = f.due;
+            t.priority = f.priority;
+            t.done = f.done;
+            t.uid = Some(f.uid);
+            t.href = f.href;
+            t.etag = f.etag;
+        }
+        if let Some(l) = self.lists.iter_mut().find(|l| l.id == list) {
+            l.sync_state = d.state;
+            l.ctag = d.ctag;
+            l.error = None;
+        }
+    }
+    /// Removes a synced task list with its tasks. The server keeps them.
+    pub fn remove_synced_list(&mut self, list: u64) {
+        self.outbox.retain(|d| d.calendar != list);
+        self.tasks.retain(|t| t.list != list);
+        let sessions: std::collections::HashSet<u64> = self.tasks.iter().map(|t| t.id).collect();
+        self.events.retain(|e| e.task_id.is_none_or(|t| sessions.contains(&t)));
+        self.lists.retain(|l| l.id != list);
+    }
     /// Removes an account with its calendars.
     pub fn remove_account(&mut self, id: u64) {
+        let lists: Vec<u64> = self.lists.iter().filter(|l| l.account == Some(id)).map(|l| l.id).collect();
+        for l in lists {
+            self.remove_synced_list(l);
+        }
         let cals: Vec<u64> = self.calendars.iter().filter(|c| c.account == Some(id)).map(|c| c.id).collect();
         for c in cals {
             self.remove_calendar(c);
@@ -1034,9 +1130,9 @@ impl Data {
     /// Neutral sample content for a first start.
     pub fn sample(today: NaiveDate) -> Data {
         let lists = vec![
-            TaskList { id: 1, name: "Work".into(), color: [0x77, 0x7b, 0xf0] },
-            TaskList { id: 2, name: "Personal".into(), color: [0xf1, 0x76, 0xa8] },
-            TaskList { id: 3, name: "Study".into(), color: [0xa2, 0x41, 0xf1] },
+            TaskList { id: 1, name: "Work".into(), color: [0x77, 0x7b, 0xf0], ..Default::default() },
+            TaskList { id: 2, name: "Personal".into(), color: [0xf1, 0x76, 0xa8], ..Default::default() },
+            TaskList { id: 3, name: "Study".into(), color: [0xa2, 0x41, 0xf1], ..Default::default() },
         ];
         let mut d = Data {
             lists,
