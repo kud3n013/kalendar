@@ -849,7 +849,7 @@ impl App {
         }
     }
 
-    fn step(&mut self, dir: i64) {
+    pub fn step(&mut self, dir: i64) {
         self.anchor = match self.view {
             View::Days(n) => self.anchor + Duration::days(dir * n as i64),
             View::Week | View::Agenda => self.anchor + Duration::days(7 * dir),

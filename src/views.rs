@@ -722,6 +722,51 @@ impl App {
                 }
             }
         }
+        // held at an edge, a drag carries on past it: up and down the day
+        // scrolls, and a block being moved turns the page after a moment
+        let edge_id = Id::unique("drag_edge");
+        let mut at_edge: Option<(i64, f64)> = None;
+        if resp.dragged_by(PointerButton::Primary) && self.drag.is_some() {
+            if let Some(pos) = ctx.pointer_latest_pos() {
+                let view = rect.intersect(ui.clip_rect());
+                let dt = ctx.input(|i| i.stable_dt).min(0.05);
+                let zone = 26.0;
+                let push = if pos.y < view.top() + zone {
+                    (view.top() + zone - pos.y).min(zone * 2.0)
+                } else if pos.y > view.bottom() - zone {
+                    -(pos.y - (view.bottom() - zone)).min(zone * 2.0)
+                } else {
+                    0.0
+                };
+                if push != 0.0 {
+                    ui.scroll_with_delta(vec2(0.0, push * 14.0 * dt));
+                    ctx.request_repaint();
+                }
+                if matches!(self.drag, Some(Drag::Move { .. })) {
+                    let dir = if pos.x > view.right() - zone { 1 } else if pos.x < x0 + zone { -1 } else { 0 };
+                    if dir != 0 {
+                        let now_s = ctx.input(|i| i.time);
+                        let since = ctx.data(|d| d.get_temp::<(i64, f64)>(edge_id)).filter(|e| e.0 == dir).map_or(now_s, |e| e.1);
+                        if now_s - since > 0.55 {
+                            self.step(dir);
+                            // and again, a little slower, while it stays there
+                            at_edge = Some((dir, now_s + 0.35));
+                        } else {
+                            at_edge = Some((dir, since));
+                        }
+                        ctx.request_repaint();
+                    }
+                }
+            }
+        }
+        match at_edge {
+            Some(e) => {
+                ctx.data_mut(|d| d.insert_temp(edge_id, e));
+            }
+            None => {
+                ctx.data_mut(|d| d.remove_temp::<(i64, f64)>(edge_id));
+            }
+        }
         if resp.drag_stopped() {
             match self.drag.take() {
                 Some(Drag::Create { mut draft, .. }) => {
