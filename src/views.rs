@@ -458,8 +458,10 @@ impl App {
                 let col_l = x0 + di as f32 * col_w;
                 let r = Rect::from_min_max(pos2(col_l + 2.0, y_of(s)), pos2(col_l + col_w - 2.0, y_of(e)));
                 let color = rgb(self.data.frame_color(f));
-                let tint = if self.pal.dark { 0.16 } else { 0.10 };
-                fill_squircle(&painter, r, RADIUS, mix(self.pal.bg, color, tint));
+                // see-through, so the grid lines stay visible: lightened on a
+                // dark theme, a plain tint on a light one
+                let wash = if self.pal.dark { mix(color, Color32::WHITE, 0.25).gamma_multiply(0.20) } else { color.gamma_multiply(0.13) };
+                fill_squircle(&painter, r, RADIUS, wash);
                 let stripe = Rect::from_min_max(r.left_top() + vec2(2.0, 3.0), pos2(r.left() + 5.0, r.bottom() - 3.0));
                 if stripe.height() > 0.0 {
                     painter.rect_filled(stripe, 1.5, color);

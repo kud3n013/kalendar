@@ -67,7 +67,7 @@ pub fn due_label(d: NaiveDate, today: NaiveDate) -> String {
 
 impl App {
     /// The small month for jumping to a date.
-    fn ui_quick_nav(&mut self, ctx: &egui::Context) {
+    fn ui_quick_nav(&mut self, ctx: &egui::Context, at: egui::Pos2) {
         let a = ctx.animate_bool_with_time(Id::unique("quicknav"), self.quick_nav, ANIM_S);
         if a <= 0.0 {
             return;
@@ -78,10 +78,9 @@ impl App {
         let (muted, text, accent) = (self.pal.muted, self.pal.text, self.pal.accent);
         let mut go: Option<NaiveDate> = None;
         let mut step = 0;
-        let right = self.data.prefs.sidebar_side == PanelSide::Right;
-        let (anchor, dx) = if right { (Align2::RIGHT_TOP, -14.0) } else { (Align2::LEFT_TOP, 14.0) };
         egui::Area::new(Id::unique("quicknav_area"))
-            .anchor(anchor, [dx, 96.0 + (1.0 - a) * 12.0])
+            .fixed_pos(at + vec2(0.0, (1.0 - a) * 12.0))
+            .constrain(true)
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 ui.set_opacity(a);
@@ -137,11 +136,52 @@ impl App {
         }
     }
 
+    /// The menu that picks the view: day, week, month and so on.
+    fn view_menu(&mut self, ui: &mut egui::Ui) {
+        let muted = self.pal.muted;
+        let mut v = self.view;
+        ui.menu_button(RichText::new(format!("{}  {}", v.label(), icons::CHEVRON_DOWN)).size(13.5).color(muted), |ui| {
+            ui.set_min_width(170.0);
+            for (o, key) in [
+                (View::Days(1), "D"),
+                (View::Week, "W"),
+                (View::Month, "M"),
+                (View::Agenda, "A"),
+                (View::TwoWeeks, "X"),
+            ] {
+                ui.horizontal(|ui| {
+                    if ui.selectable_label(v == o, o.label()).clicked() {
+                        v = o;
+                        ui.close();
+                    }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.label(RichText::new(key).monospace().size(11.0).color(muted));
+                    });
+                });
+            }
+            ui.separator();
+            ui.menu_button("Number of days", |ui| {
+                for n in 2..=9u8 {
+                    if ui.selectable_label(v == View::Days(n), format!("{n} days")).clicked() {
+                        v = View::Days(n);
+                        ui.close();
+                    }
+                }
+            });
+        })
+        .response
+        .on_hover_text("Calendar view");
+        self.view = v;
+    }
+
     // ------------------------------------------------------------ top bar
 
     pub fn ui_toolbar(&mut self, ui: &mut egui::Ui) {
         let (muted, text) = (self.pal.muted, self.pal.text);
-        let closed_left = !self.data.prefs.sidebar_open && self.data.prefs.sidebar_side == PanelSide::Left;
+        let closed = !self.data.prefs.sidebar_open;
+        let closed_left = closed && self.data.prefs.sidebar_side == PanelSide::Left;
+        let closed_right = closed && !closed_left;
+        let mut go_at = egui::Pos2::ZERO;
         egui::Panel::top("bar")
             .show_separator_line(false)
             .frame(egui::Frame::new().fill(self.pal.bg).inner_margin(Margin { left: 24, right: 16, top: 12, bottom: 6 }))
@@ -164,12 +204,26 @@ impl App {
                     let narrow = ui.available_width() < 900.0;
                     let tiny = ui.available_width() < 760.0;
                     ui.spacing_mut().item_spacing.x = 7.0;
+                    let r = icon_btn(ui, icons::CALENDAR_DAYS, 17.0, "Go to a date", (self.pal.bg, muted, text));
+                    if r.clicked() {
+                        self.quick_nav = !self.quick_nav;
+                    }
+                    go_at = r.rect.left_bottom() + vec2(0.0, 6.0);
                     ui.label(RichText::new(month.to_lowercase()).font(bold(if narrow { 20.0 } else { 26.0 })).color(text));
                     if !tiny {
                         ui.label(RichText::new(last.year().to_string()).size(if narrow { 20.0 } else { 26.0 }).color(muted));
                     }
+                    // the view menu sits in the far corner
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if closed_right {
+                            ui.add_space(36.0);
+                        }
+                        self.view_menu(ui);
+                    });
                 });
             });
+        let ctx = ui.ctx().clone();
+        self.ui_quick_nav(&ctx, go_at);
     }
 
     // --------------------------------------------------------- task panel
@@ -262,7 +316,6 @@ impl App {
                 }
             });
         }
-        self.ui_quick_nav(ctx);
     }
 
     /// The row of buttons at the bottom of the panel: the new-list button in
@@ -306,15 +359,16 @@ impl App {
     /// the task lists.
     fn panel_main(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, right: bool, today: NaiveDate, c: (Color32, Color32, Color32)) {
         let (muted, border) = (self.pal.muted, self.pal.border);
-        // collapse toggle in the outer corner, navigation in the inner one,
-        // the refresh button beside the navigation
+        // collapse toggle in the outer corner, navigation in the inner one:
+        // refresh, then back, today and forward
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             let mut nav = |ui: &mut egui::Ui, app: &mut App, flipped: bool| {
                 // drawn right to left when flipped
-                let order: [(&str, f32, &str, Cmd); 3] = if flipped {
+                let order: [(&str, f32, &str, Cmd); 4] = if flipped {
                     [
                         (icons::CHEVRON_RIGHT, 17.0, "Next", Cmd::Next),
+                        (icons::CALENDAR_CHECK, 16.0, "Today", Cmd::Today),
                         (icons::CHEVRON_LEFT, 17.0, "Previous", Cmd::Prev),
                         (icons::REFRESH, 15.0, "Refresh", Cmd::Refresh),
                     ]
@@ -322,6 +376,7 @@ impl App {
                     [
                         (icons::REFRESH, 15.0, "Refresh", Cmd::Refresh),
                         (icons::CHEVRON_LEFT, 17.0, "Previous", Cmd::Prev),
+                        (icons::CALENDAR_CHECK, 16.0, "Today", Cmd::Today),
                         (icons::CHEVRON_RIGHT, 17.0, "Next", Cmd::Next),
                     ]
                 };
@@ -345,15 +400,9 @@ impl App {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| nav(ui, self, true));
             }
         });
-        // today, go to a date, calendars, the view — and undo while it applies
+        // calendars — and undo while it applies
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            if icon_btn(ui, icons::CALENDAR_CHECK, 16.0, &self.tip("Today", Cmd::Today), c).clicked() {
-                self.run(ctx, Cmd::Today);
-            }
-            if icon_btn(ui, icons::CALENDAR_DAYS, 16.0, "Go to a date", c).clicked() {
-                self.quick_nav = !self.quick_nav;
-            }
             ui.menu_button(RichText::new(icons::CALENDAR).size(16.0).color(muted), |ui| {
                 ui.label(RichText::new("Calendars").color(muted));
                 let mut changed = false;
@@ -375,39 +424,6 @@ impl App {
             })
             .response
             .on_hover_text("Calendars");
-            let mut v = self.view;
-            ui.menu_button(RichText::new(format!("{}  {}", v.label(), icons::CHEVRON_DOWN)).size(13.5).color(muted), |ui| {
-                ui.set_min_width(170.0);
-                for (o, key) in [
-                    (View::Days(1), "D"),
-                    (View::Week, "W"),
-                    (View::Month, "M"),
-                    (View::Agenda, "A"),
-                    (View::TwoWeeks, "X"),
-                ] {
-                    ui.horizontal(|ui| {
-                        if ui.selectable_label(v == o, o.label()).clicked() {
-                            v = o;
-                            ui.close();
-                        }
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            ui.label(RichText::new(key).monospace().size(11.0).color(muted));
-                        });
-                    });
-                }
-                ui.separator();
-                ui.menu_button("Number of days", |ui| {
-                    for n in 2..=9u8 {
-                        if ui.selectable_label(v == View::Days(n), format!("{n} days")).clicked() {
-                            v = View::Days(n);
-                            ui.close();
-                        }
-                    }
-                });
-            })
-            .response
-            .on_hover_text("Calendar view");
-            self.view = v;
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 // undo appears while there is something to take back
                 let a = ctx.animate_bool_with_time(Id::unique("undo_btn"), !self.undo.is_empty(), ANIM_S);

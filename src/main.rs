@@ -470,8 +470,12 @@ pub struct App {
     pub ctx_target: Option<u64>,
     /// the frame (and its day) under the last right-click, if no event was
     pub ctx_frame: Option<(u64, NaiveDate)>,
-    /// start time and direction of the slide when the view changes
-    pub nav_anim: (f64, f32),
+    /// start time, direction (0 = fade) and reach (share of the width) of
+    /// the slide when the view changes
+    pub nav_anim: (f64, f32, f32),
+    /// the calendar page as last painted, and the one sliding away
+    pub page_shot: Vec<egui::epaint::ClippedShape>,
+    pub page_old: Vec<egui::epaint::ClippedShape>,
     pub last_shown: Option<(View, NaiveDate)>,
     /// test aid: show a right-click menu in a window ("event" or "task")
     pub demo_menu: Option<String>,
@@ -599,7 +603,9 @@ impl App {
             drag_task: None,
             ctx_target: None,
             ctx_frame: None,
-            nav_anim: (-10.0, 0.0),
+            nav_anim: (-10.0, 0.0, 1.0),
+            page_shot: vec![],
+            page_old: vec![],
             last_shown: None,
             demo_menu: std::env::var("KALENDAR_SHOW_MENU").ok(),
             ctx_time: None,
@@ -2270,6 +2276,13 @@ impl App {
         let Some(path) = self.shot.clone() else { return };
         self.frames += 1;
         ctx.request_repaint();
+        // for screenshots: step this many periods just before the picture,
+        // to catch the slide half way
+        if self.frames == 116 {
+            if let Some(n) = std::env::var("KALENDAR_NAV").ok().and_then(|n| n.parse::<i64>().ok()) {
+                self.step(n);
+            }
+        }
         // the picture arrives later, from the renderer, so it is passed back here
         static PICTURE: std::sync::Mutex<Option<std::sync::Arc<egui::ColorImage>>> = std::sync::Mutex::new(None);
         if self.frames == 120 {
@@ -2391,32 +2404,80 @@ impl eframe::App for App {
         self.mouse_nav(ctx);
         self.ui_sidebar(ui);
         self.ui_toolbar(ui);
-        // slide and fade when the period or the view changes
+        // moving in time slides the old page out and the new one in, the way
+        // the days run; another view fades in
         let time = ctx.input(|i| i.time);
         let shown = (self.view, self.anchor);
         if let Some(last) = self.last_shown {
             if last != shown {
-                let dir = (shown.1 - last.1).num_days().signum() as f32;
-                self.nav_anim = (time, dir);
+                let moved = (shown.1 - last.1).num_days();
+                self.nav_anim = if last.0 != shown.0 || moved == 0 {
+                    self.page_old.clear();
+                    (time, 0.0, 1.0)
+                } else {
+                    // a step shorter than the days on screen moves just that far
+                    let part = match shown.0 {
+                        View::Days(n) => (moved.abs() as f32 / n.max(1) as f32).min(1.0),
+                        _ => 1.0,
+                    };
+                    self.page_old = std::mem::take(&mut self.page_shot);
+                    (time, moved.signum() as f32, part)
+                };
             }
         }
         self.last_shown = Some(shown);
-        let t = (((time - self.nav_anim.0) as f32) / ANIM_LONG_S).clamp(0.0, 1.0);
+        let (began, dir, part) = self.nav_anim;
+        let t = (((time - began) as f32) / if dir == 0.0 { ANIM_LONG_S } else { ANIM_SLIDE_S }).clamp(0.0, 1.0);
         let ease = 1.0 - (1.0 - t).powi(3);
         if t < 1.0 {
             ctx.request_repaint();
+        } else {
+            self.page_old.clear();
         }
-        let dx = self.nav_anim.1 * (1.0 - ease) * 48.0;
         egui::CentralPanel::default().frame(egui::Frame::new().fill(self.pal.bg)).show(ui, |ui| {
             let full = ui.max_rect();
             ui.set_clip_rect(full);
+            let reach = full.width() * part;
+            let dx = (dir * (1.0 - ease) * reach).round();
+            // the page that is leaving, as it was last painted
+            if t < 1.0 && dir != 0.0 {
+                let off = egui::vec2(dx - dir * reach, 0.0);
+                for cs in &self.page_old {
+                    let mut shape = cs.shape.clone();
+                    shape.translate(off);
+                    ui.painter().with_clip_rect(cs.clip_rect.translate(off).intersect(full)).add(shape);
+                }
+            }
+            let layer = ui.layer_id();
+            let first = ctx.graphics(|g| g.get(layer).map_or(0, |l| l.next_idx().0));
+            if t < 1.0 && dir != 0.0 {
+                // the new page covers what it has reached of the old one
+                let cover = if dir > 0.0 { full.with_min_x(full.left() + dx) } else { full.with_max_x(full.right() + dx) };
+                ui.painter().rect_filled(cover, 0.0, self.pal.bg);
+            }
             ui.scope_builder(egui::UiBuilder::new().max_rect(full.translate(egui::vec2(dx, 0.0))), |ui| {
-                ui.set_opacity(0.25 + 0.75 * ease);
+                if dir == 0.0 {
+                    ui.set_opacity(0.25 + 0.75 * ease);
+                }
                 match self.view {
                     View::Month => self.ui_month(ui),
                     View::Agenda => self.ui_agenda(ui),
                     _ => self.ui_time_grid(ui),
                 }
+            });
+            // keep what was painted, in its resting place, for the next slide
+            self.page_shot = ctx.graphics(|g| {
+                g.get(layer).map_or(vec![], |l| {
+                    l.all_entries()
+                        .skip(first)
+                        .map(|cs| {
+                            let mut cs = cs.clone();
+                            cs.shape.translate(egui::vec2(-dx, 0.0));
+                            cs.clip_rect = cs.clip_rect.translate(egui::vec2(-dx, 0.0));
+                            cs
+                        })
+                        .collect()
+                })
             });
         });
         self.ui_dialogs(ctx);

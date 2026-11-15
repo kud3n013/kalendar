@@ -25,6 +25,8 @@ pub const PLAN_MAX_SPAN_DAYS: i64 = 8; // longest look-ahead
 pub const ANIM_FAST_S: f32 = 0.1;
 pub const ANIM_S: f32 = 0.175;
 pub const ANIM_LONG_S: f32 = 0.275;
+/// one page of the calendar sliding over to the next
+pub const ANIM_SLIDE_S: f32 = 0.36;
 /// Event colours, in menu order.
 pub const EVENT_COLORS: [([u8; 3], &str); 13] = [
     ([0xf1, 0x76, 0xa8], "Pink"),
