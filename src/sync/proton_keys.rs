@@ -2,8 +2,10 @@
 //! protect, and checking signatures.
 
 use base64::Engine;
-use pgp::composed::{CleartextSignedMessage, Deserializable, DetachedSignature, Message, SignedPublicKey, SignedSecretKey};
-use pgp::types::Password;
+use pgp::composed::{CleartextSignedMessage, Deserializable, DetachedSignature, Message, MessageBuilder, PlainSessionKey, RawSessionKey, SignedPublicKey, SignedSecretKey};
+use pgp::crypto::{hash::HashAlgorithm, sym::SymmetricKeyAlgorithm};
+use pgp::packet::{Packet, PacketParser};
+use pgp::types::{DecryptionKey, EskType, Password};
 
 /// The key Proton signs its sign-in modulus with; it is part of every
 /// Proton client (from go-srp, Copyright (c) 2019 Proton Technologies AG,
@@ -68,12 +70,86 @@ impl Key {
         self.read(msg)
     }
 
+    /// A detached signature over `data`, armored.
+    pub fn sign(&self, data: &[u8]) -> Result<String, String> {
+        let sig = DetachedSignature::sign_binary_data(rand::thread_rng(), &self.key.primary_key, &self.pass, HashAlgorithm::Sha512, data).map_err(|e| e.to_string())?;
+        sig.to_armored_string(Default::default()).map_err(|e| e.to_string())
+    }
+
+    /// The session key wrapped in `key_packet`, with its cipher.
+    fn session_key(&self, key_packet: &[u8]) -> Result<(SymmetricKeyAlgorithm, RawSessionKey), String> {
+        let wrapped = PacketParser::new(key_packet).filter_map(|p| match p {
+            Ok(Packet::PublicKeyEncryptedSessionKey(p)) => Some(p),
+            _ => None,
+        });
+        for p in wrapped {
+            let Ok(values) = p.values() else { continue };
+            let tries = std::iter::once(self.key.primary_key.decrypt(&self.pass, values, EskType::V3_4)).chain(self.key.secret_subkeys.iter().map(|k| k.key.decrypt(&self.pass, values, EskType::V3_4)));
+            for t in tries {
+                if let Ok(Ok(PlainSessionKey::V3_4 { sym_alg, key })) = &t {
+                    return Ok((*sym_alg, key.clone()));
+                }
+            }
+        }
+        Err("The event's key could not be opened.".into())
+    }
+
+    fn encrypt(&self, data: &[u8], session: Option<(SymmetricKeyAlgorithm, RawSessionKey)>) -> Result<(Vec<u8>, Vec<u8>), String> {
+        let public = self.key.to_public_key();
+        let to = public.public_subkeys.first().ok_or("This key cannot encrypt.")?;
+        let mut rng = rand::thread_rng();
+        let alg = session.as_ref().map(|s| s.0).unwrap_or(SymmetricKeyAlgorithm::AES256);
+        let mut b = MessageBuilder::from_bytes("", data.to_vec()).seipd_v1(&mut rng, alg);
+        if let Some((_, key)) = session {
+            b.set_session_key(key).map_err(|e| e.to_string())?;
+        }
+        b.encrypt_to_key(&mut rng, to).map_err(|e| e.to_string())?;
+        let whole = b.to_vec(&mut rng).map_err(|e| e.to_string())?;
+        let n = first_packet_len(&whole).ok_or("The encrypted event came out malformed.")?;
+        Ok((whole[..n].to_vec(), whole[n..].to_vec()))
+    }
+
+    /// Encrypts `data` to this key under a fresh session key: the wrapped
+    /// session key and the data, as two pieces.
+    pub fn seal(&self, data: &[u8]) -> Result<(Vec<u8>, Vec<u8>), String> {
+        self.encrypt(data, None)
+    }
+
+    /// Encrypts `data` under the session key already wrapped in
+    /// `key_packet`, so that everyone holding that key can still read it.
+    pub fn reseal(&self, key_packet: &[u8], data: &[u8]) -> Result<Vec<u8>, String> {
+        let session = self.session_key(key_packet)?;
+        Ok(self.encrypt(data, Some(session))?.1)
+    }
+
     /// Whether `signature` (armored, detached) is this key's over `content`.
     pub fn signed(&self, signature: &str, content: &[u8]) -> bool {
         let Ok((sig, _)) = DetachedSignature::from_string(signature) else { return false };
         let public = self.key.to_public_key();
         sig.verify(&public, content).is_ok() || public.public_subkeys.iter().any(|k| sig.verify(k, content).is_ok())
     }
+}
+
+/// How many bytes the first OpenPGP packet takes, header included.
+fn first_packet_len(b: &[u8]) -> Option<usize> {
+    let tag = *b.first()?;
+    let (head, body) = if tag & 0x40 != 0 {
+        match *b.get(1)? {
+            n @ 0..=191 => (2, n as usize),
+            n @ 192..=223 => (3, ((n as usize - 192) << 8) + *b.get(2)? as usize + 192),
+            255 => (6, u32::from_be_bytes(b.get(2..6)?.try_into().ok()?) as usize),
+            // a length given piece by piece: not a session key packet
+            _ => return None,
+        }
+    } else {
+        match tag & 3 {
+            0 => (2, *b.get(1)? as usize),
+            1 => (3, u16::from_be_bytes(b.get(1..3)?.try_into().ok()?) as usize),
+            2 => (5, u32::from_be_bytes(b.get(1..5)?.try_into().ok()?) as usize),
+            _ => return None,
+        }
+    };
+    (head + body <= b.len()).then_some(head + body)
 }
 
 /// The first answer any of the keys gives.
@@ -91,8 +167,8 @@ pub fn any<'a, T>(keys: impl IntoIterator<Item = &'a Key>, mut f: impl FnMut(&Ke
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use pgp::composed::{EncryptionCaps, KeyType, MessageBuilder, SecretKeyParamsBuilder, SubkeyParamsBuilder};
-    use pgp::crypto::{ecc_curve::ECCCurve, sym::SymmetricKeyAlgorithm};
+    use pgp::composed::{EncryptionCaps, KeyType, SecretKeyParamsBuilder, SubkeyParamsBuilder};
+    use pgp::crypto::ecc_curve::ECCCurve;
 
     /// A fresh key like Proton's, locked with `pass`, armored.
     pub fn make_key(pass: &str) -> String {
@@ -141,7 +217,7 @@ pub mod tests {
     /// A detached signature by the key over `data`, armored.
     pub fn sign(armored_key: &str, pass: &str, data: &[u8]) -> String {
         let (key, _) = SignedSecretKey::from_string(armored_key).unwrap();
-        let sig = DetachedSignature::sign_binary_data(rand::thread_rng(), &key.primary_key, &Password::from(pass), pgp::crypto::hash::HashAlgorithm::Sha256, data).unwrap();
+        let sig = DetachedSignature::sign_binary_data(rand::thread_rng(), &key.primary_key, &Password::from(pass), HashAlgorithm::Sha256, data).unwrap();
         sig.to_armored_string(Default::default()).unwrap()
     }
 
@@ -170,6 +246,17 @@ pub mod tests {
         let sig = sign(&armored, "secret", b"pass");
         assert!(key.signed(&sig, b"pass"));
         assert!(!key.signed(&sig, b"other"));
+
+        // what the key seals and signs itself
+        let (kp2, data2) = key.seal(b"first").unwrap();
+        assert_eq!(first_packet_len(&kp2), Some(kp2.len()));
+        assert_eq!(key.decrypt_split(&kp2, &data2).unwrap(), b"first");
+        // new text under the same session key reads with the old key packet
+        let data3 = key.reseal(&kp2, b"second").unwrap();
+        assert_ne!(data3, data2);
+        assert_eq!(key.decrypt_split(&kp2, &data3).unwrap(), b"second");
+        assert!(key.signed(&key.sign(b"text").unwrap(), b"text"));
+        assert!(!key.signed(&key.sign(b"text").unwrap(), b"texts"));
 
         let other = Key::open(&make_key("x"), b"x").unwrap();
         assert!(other.decrypt_split(&kp, &data).is_err());

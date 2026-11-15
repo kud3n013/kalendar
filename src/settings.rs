@@ -821,7 +821,7 @@ impl App {
                         }
                     }
                     6 => {
-                        help(ui, "Proton has no official way in for other calendar programs. kalendar signs in the way Proton's own apps do and decrypts your events on this computer. Your password is used once to sign in and is not kept; the keyring holds the session. For now Proton calendars can only be read here, and Proton may stop this from working at any time.");
+                        help(ui, "Proton has no official way in for other calendar programs. kalendar signs in the way Proton's own apps do and decrypts your events on this computer. Your password is used once to sign in and is not kept; the keyring holds the session. Calendars of your own stay in step both ways; calendars shared with you, events with guests and repeating events can only be read. Proton may stop this from working at any time.");
                         field(ui, &mut self.pr_user, "Your Proton address or user name", false);
                         field(ui, &mut self.pr_pass, "Password", true);
                         field(ui, &mut self.pr_code, "Two-factor code, if you use one", false);
