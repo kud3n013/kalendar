@@ -391,9 +391,10 @@ impl App {
             if (zoom - 1.0).abs() > 0.001 {
                 // the zoom heads for a goal and glides there; the hour under
                 // the mouse stays under the mouse
-                let from = self.zoom_goal.map_or(self.data.prefs.hour_height(), |g| g.0);
+                let now_h = self.data.prefs.hour_height();
+                let (from, at) = self.zoom_goal.map_or((now_h, now_h), |g| (g.0, g.2));
                 let my = ctx.pointer_latest_pos().map_or(0.0, |p| (p.y - self.grid_scroll.1).max(0.0));
-                self.zoom_goal = Some(((from * zoom).clamp(HOUR_H_MIN, HOUR_H_MAX), my));
+                self.zoom_goal = Some(((from * zoom).clamp(HOUR_H_MIN, HOUR_H_MAX).round(), my, at));
             }
             self.side_scroll += side;
             if self.side_scroll.abs() > 60.0 {
@@ -401,18 +402,24 @@ impl App {
                 self.side_scroll = 0.0;
             }
         }
-        if let Some((goal, my)) = self.zoom_goal {
+        if let Some((goal, my, at)) = self.zoom_goal {
+            // the height on screen is in whole points, so the glide keeps
+            // its own exact place between them
             let was = self.data.prefs.hour_height();
             let dt = ctx.input(|i| i.stable_dt).min(0.05);
-            let mut h = was + (goal - was) * (1.0 - (-dt * ZOOM_RATE).exp());
-            if (goal - h).abs() < 0.25 {
+            let mut h = at + (goal - at) * (1.0 - (-dt * ZOOM_RATE).exp());
+            if (goal - h).abs() < 0.5 {
                 h = goal;
                 self.zoom_goal = None;
             } else {
+                self.zoom_goal = Some((goal, my, h));
                 ctx.request_repaint();
             }
             self.data.prefs.hour_height_px = Some(h);
-            sa = sa.vertical_scroll_offset(((self.grid_scroll.0 + my) * h / was - my).max(0.0));
+            let shown = self.data.prefs.hour_height();
+            if shown != was {
+                sa = sa.vertical_scroll_offset(((self.grid_scroll.0 + my) * shown / was - my).max(0.0));
+            }
         }
         let out = sa.show(ui, |ui| self.grid_body(ui, &days, col_w, now));
         self.grid_scroll = (out.state.clamped_offset().y, out.inner_rect.top());

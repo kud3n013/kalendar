@@ -546,9 +546,9 @@ pub struct App {
     pub side_scroll: f32,
     /// how far the hours are scrolled, and where their top edge is on screen
     pub grid_scroll: (f32, f32),
-    /// while a zoom is under way: the hour height it heads for, and how far
-    /// below the grid's top the mouse was
-    pub zoom_goal: Option<(f32, f32)>,
+    /// while a zoom is under way: the hour height it heads for, how far
+    /// below the grid's top the mouse was, and the exact height reached so far
+    pub zoom_goal: Option<(f32, f32, f32)>,
     /// set while the window is too narrow for the panel and several days:
     /// whether the panel was open, and the view, to put back afterwards
     pub compact: Option<(bool, View)>,
