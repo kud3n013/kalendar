@@ -403,12 +403,12 @@ impl App {
             }
         }
         if let Some((goal, my, at)) = self.zoom_goal {
-            // the height on screen is in whole points, so the glide keeps
-            // its own exact place between them
+            // it ends on a whole number of points, close enough that the last
+            // step cannot be seen
             let was = self.data.prefs.hour_height();
             let dt = ctx.input(|i| i.stable_dt).min(0.05);
             let mut h = at + (goal - at) * (1.0 - (-dt * ZOOM_RATE).exp());
-            if (goal - h).abs() < 0.5 {
+            if (goal - h).abs() < 0.02 {
                 h = goal;
                 self.zoom_goal = None;
             } else {

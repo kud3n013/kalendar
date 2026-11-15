@@ -200,7 +200,8 @@ impl Default for Prefs {
 impl Prefs {
     pub fn hour_height(&self) -> f32 {
         if let Some(h) = self.hour_height_px {
-            return h.round().clamp(HOUR_H_MIN, HOUR_H_MAX);
+            // not rounded: a zoom passes through the heights in between
+            return h.clamp(HOUR_H_MIN, HOUR_H_MAX);
         }
         if self.slot_min == 15 {
             return HOUR_H_DEFAULT;
