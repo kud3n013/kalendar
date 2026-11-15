@@ -248,6 +248,15 @@ pub struct CreateEdit {
     /// where the block is, in screen points; the window sits beside it
     pub anchor_rect: egui::Rect,
     pub focus: bool,
+    /// what a new task gets besides its name: list, importance, notes
+    pub task: Task,
+    pub due_text: String,
+}
+
+impl CreateEdit {
+    pub fn new(ev: Event, kind: CreateKind, anchor_rect: egui::Rect) -> Self {
+        CreateEdit { ev, kind, anchor_rect, focus: true, task: Task::default(), due_text: String::new() }
+    }
 }
 
 /// A task list whose look is being changed from the task panel.
@@ -846,8 +855,8 @@ impl App {
     /// Opens the small create window beside a block drawn on the calendar.
     pub fn open_create(&mut self, start: NaiveDateTime, mins: i64, anchor_rect: egui::Rect) {
         let id = self.data.new_id();
-        self.create = Some(CreateEdit {
-            ev: Event {
+        self.create = Some(CreateEdit::new(
+            Event {
                 id,
                 title: String::new(),
                 start,
@@ -859,10 +868,9 @@ impl App {
                 color: None,
                 ..Default::default()
             },
-            kind: CreateKind::Task,
+            CreateKind::Task,
             anchor_rect,
-            focus: true,
-        });
+        ));
         self.editor = None;
         self.selected = None;
     }

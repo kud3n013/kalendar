@@ -725,7 +725,7 @@ impl App {
                         .map(|it| it.rect)
                         .reduce(|a, b| a.union(b))
                         .unwrap_or_else(|| Rect::from_center_size(rect.center(), vec2(120.0, 40.0)));
-                    self.create = Some(CreateEdit { ev: draft, kind: CreateKind::Task, anchor_rect: anchor, focus: true });
+                    self.create = Some(CreateEdit::new(draft, CreateKind::Task, anchor));
                 }
                 Some(Drag::Move { id, .. }) => {
                     let sched = self.data.event(id).and_then(|e| e.task_id.map(|t| (t, e.start.date())));
@@ -913,14 +913,14 @@ impl App {
             }
             return;
         }
-        ui.set_min_width(330.0);
+        // as wide as its longest line; the colours come in two rows of seven
         ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
         ui.spacing_mut().button_padding = vec2(10.0, 7.0);
         // colour dots: "no colour" first, then the palette
         ui.add_space(4.0);
         let mut pick: Option<Option<[u8; 3]>> = None;
         ui.horizontal_wrapped(|ui| {
-            ui.spacing_mut().item_spacing = vec2(12.0, 12.0);
+            ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
             ui.add_space(8.0);
             let (r, resp) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
             let c = if resp.hovered() { self.pal.text } else { muted };
@@ -930,15 +930,15 @@ impl App {
                 pick = Some(None);
             }
             for (i, (col, name)) in EVENT_COLORS.iter().enumerate() {
-                if i == 8 {
+                if i == 6 {
                     ui.end_row();
                     ui.add_space(8.0);
                 }
                 let (r, resp) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
                 let grow = ctx.animate_bool_with_time(Id::unique(("dot", i)), resp.hovered(), ANIM_FAST_S);
-                ui.painter().circle_filled(r.center(), 10.0 + 2.0 * grow, rgb(*col));
+                ui.painter().circle_filled(r.center(), 9.0 + 2.0 * grow, rgb(*col));
                 if ev.color == Some(*col) {
-                    ui.painter().circle_stroke(r.center(), 13.0, Stroke::new(1.5, self.pal.text));
+                    ui.painter().circle_stroke(r.center(), 12.0, Stroke::new(1.5, self.pal.text));
                 }
                 if resp.on_hover_text(*name).clicked() {
                     pick = Some(Some(*col));

@@ -29,6 +29,25 @@ pub fn place_beside(ctx: &egui::Context, id: Id, r: egui::Rect, size: egui::Vec2
     )
 }
 
+/// Hours and minutes to drag, in 5-minute steps, kept between two bounds.
+fn time_drag(ui: &mut egui::Ui, m: &mut i64, lo: i64, hi: i64, hour12: bool, muted: egui::Color32) {
+    let (mut h, mut mm) = (*m / 60, *m % 60);
+    ui.add(egui::DragValue::new(&mut h).range(0..=24).speed(0.1).custom_formatter(|v, _| {
+        let v = v as i64;
+        if hour12 {
+            format!("{}", if v % 12 == 0 { 12 } else { v % 12 })
+        } else {
+            format!("{v:02}")
+        }
+    }));
+    ui.label(":");
+    ui.add(egui::DragValue::new(&mut mm).range(0..=55).speed(0.2).custom_formatter(|v, _| format!("{:02}", v as i64 / 5 * 5)));
+    if hour12 {
+        ui.label(RichText::new(if h % 24 < 12 { "am" } else { "pm" }).color(muted));
+    }
+    *m = (h * 60 + mm / 5 * 5).clamp(lo, hi);
+}
+
 /// The time of day so many minutes after midnight.
 fn time_of(min: i64) -> chrono::NaiveTime {
     chrono::NaiveTime::from_num_seconds_from_midnight_opt((min.clamp(0, 24 * 60 - 1) * 60) as u32, 0).unwrap_or_default()
@@ -54,8 +73,10 @@ impl App {
         let (mut save, mut cancel, mut to_frame) = (false, false, false);
         let muted = self.pal.muted;
         let p = self.data.prefs.clone();
-        let w = 280.0;
-        let pos = place_beside(ctx, Id::unique("create_popup"), c.anchor_rect, egui::vec2(w, 240.0));
+        let w = 380.0;
+        let pos = place_beside(ctx, Id::unique("create_popup"), c.anchor_rect, egui::vec2(w + 20.0, 400.0));
+        let cal_color = self.data.calendar_color(c.ev.calendar);
+        let today = Local::now().date_naive();
         egui::Window::new("create")
             .id(Id::unique("create_popup"))
             .title_bar(false)
@@ -74,14 +95,15 @@ impl App {
                         }
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(RichText::new(format!("{} – {}", p.fmt_time(c.ev.start.time()), p.fmt_time(c.ev.end.time()))).size(12.0).color(muted));
+                        ui.label(RichText::new(c.ev.start.format("%a, %b %-d").to_string()).size(12.0).color(muted));
                     });
                 });
-                let hint = if c.kind == CreateKind::Event { "New Event" } else { "New Task" };
+                let is_task = c.kind != CreateKind::Event;
+                let hint = if is_task { "New Task" } else { "New Event" };
                 let resp = ui.add(
                     egui::TextEdit::singleline(&mut c.ev.title)
                         .hint_text(hint)
-                        .font(FontId::proportional(16.0))
+                        .font(FontId::proportional(18.0))
                         .desired_width(f32::INFINITY),
                 );
                 if c.focus {
@@ -91,17 +113,94 @@ impl App {
                 if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     save = true;
                 }
-                ui.add_space(2.0);
-                ui.label(RichText::new(c.ev.start.format("%a, %b %-d").to_string()).size(12.5).color(muted));
-                ui.add_space(2.0);
-                // one calendar, picked with a box per calendar
-                ui.label(RichText::new("Calendar").size(12.0).color(muted));
-                for cal in self.data.calendars.iter().filter(|cal| cal.writable()) {
-                    let mut on = c.ev.calendar == cal.id;
-                    if ui.checkbox(&mut on, RichText::new(format!("{} {}", icons::CIRCLE, cal.name)).color(rgb(cal.color))).changed() && on {
-                        c.ev.calendar = cal.id;
+                ui.add_space(4.0);
+                let label = |ui: &mut egui::Ui, t: &str| {
+                    ui.label(RichText::new(t).color(muted));
+                };
+                egui::Grid::new("creategrid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+                    // every calendar that takes changes, one's own and synced ones
+                    label(ui, "Calendar");
+                    let cname = |id: u64| self.data.calendar(id).map(|c| c.name.clone()).unwrap_or_default();
+                    egui::ComboBox::from_id_salt("ccal").selected_text(cname(c.ev.calendar)).height(320.0).show_ui(ui, |ui| {
+                        for cal in self.data.calendars.iter().filter(|cal| cal.writable()) {
+                            ui.selectable_value(&mut c.ev.calendar, cal.id, RichText::new(format!("{} {}", icons::CIRCLE, cal.name)).color(rgb(cal.color)));
+                        }
+                    });
+                    ui.end_row();
+
+                    label(ui, "Colour");
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        let swatch = |ui: &mut egui::Ui, col: [u8; 3], on: bool, tip: &str| {
+                            let (cr, resp) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
+                            ui.painter().circle_filled(cr.center(), 7.0, rgb(col));
+                            if on {
+                                ui.painter().circle_stroke(cr.center(), 8.5, Stroke::new(1.5_f32, ui.visuals().text_color()));
+                            }
+                            resp.on_hover_text(tip).clicked()
+                        };
+                        if swatch(ui, cal_color, c.ev.color.is_none(), "Calendar colour") {
+                            c.ev.color = None;
+                        }
+                        ui.add_space(6.0);
+                        for (col, cname) in EVENT_COLORS.iter() {
+                            if swatch(ui, *col, c.ev.color == Some(*col), cname) {
+                                c.ev.color = Some(*col);
+                            }
+                        }
+                    });
+                    ui.end_row();
+
+                    // hours, in 5-minute steps, within the block's day
+                    label(ui, "Time");
+                    ui.horizontal(|ui| {
+                        let day = midnight(c.ev.start.date());
+                        let mut s = (c.ev.start - day).num_minutes();
+                        let mut e = (c.ev.end - day).num_minutes().min(24 * 60);
+                        time_drag(ui, &mut s, 0, 24 * 60 - 5, p.hour12, muted);
+                        ui.label(RichText::new("to").color(muted));
+                        time_drag(ui, &mut e, s + 5, 24 * 60, p.hour12, muted);
+                        c.ev.start = day + Duration::minutes(s);
+                        c.ev.end = day + Duration::minutes(e.max(s + 5));
+                    });
+                    ui.end_row();
+
+                    if is_task {
+                        label(ui, "List");
+                        let lname = |id: u64| self.data.lists.iter().find(|l| l.id == id).map(|l| l.name.clone()).unwrap_or_else(|| self.data.prefs.inbox_name());
+                        egui::ComboBox::from_id_salt("clist").selected_text(lname(c.task.list)).height(320.0).show_ui(ui, |ui| {
+                            ui.selectable_value(&mut c.task.list, 0, self.data.prefs.inbox_name());
+                            for l in self.data.lists.iter().filter(|l| !l.read_only) {
+                                ui.selectable_value(&mut c.task.list, l.id, &l.name);
+                            }
+                        });
+                        ui.end_row();
+
+                        label(ui, "Due");
+                        ui.horizontal(|ui| {
+                            ui.add(egui::TextEdit::singleline(&mut c.due_text).hint_text("YYYY-MM-DD").desired_width(100.0));
+                            if ui.small_button("Today").clicked() {
+                                c.due_text = today.to_string();
+                            }
+                            if ui.small_button("That day").on_hover_text("The day of this block").clicked() {
+                                c.due_text = c.ev.start.date().to_string();
+                            }
+                        });
+                        ui.end_row();
+
+                        label(ui, "Priority");
+                        egui::ComboBox::from_id_salt("cprio").selected_text(priority_name(c.task.priority)).show_ui(ui, |ui| {
+                            for v in [0u8, 1, 5, 9] {
+                                ui.selectable_value(&mut c.task.priority, v, priority_name(v));
+                            }
+                        });
+                        ui.end_row();
                     }
-                }
+
+                    label(ui, "Notes");
+                    ui.add(egui::TextEdit::multiline(&mut c.ev.notes).hint_text("Add a note").desired_rows(3).desired_width(f32::INFINITY));
+                    ui.end_row();
+                });
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
                     if ui.button(RichText::new("Save").strong()).on_hover_text("Enter").clicked() {
@@ -115,6 +214,20 @@ impl App {
                     save = true;
                 }
             });
+        // a due date that cannot be read keeps the window open
+        let due = match c.due_text.trim() {
+            "" => None,
+            t => match NaiveDate::parse_from_str(t, "%Y-%m-%d") {
+                Ok(d) => Some(d),
+                Err(_) => {
+                    if save && c.kind == CreateKind::Task {
+                        self.say(ctx, "The due date should look like 2026-11-30", false);
+                        save = false;
+                    }
+                    None
+                }
+            },
+        };
         if to_frame {
             let day = c.ev.start.date();
             let s = (c.ev.start - midnight(day)).num_minutes();
@@ -144,8 +257,10 @@ impl App {
                     Task {
                         id: task_id,
                         title: ev.title.clone(),
+                        notes: std::mem::take(&mut ev.notes),
                         duration_min: Some(ev.minutes()),
-                        ..Default::default()
+                        due,
+                        ..c.task.clone()
                     },
                 );
                 ev.task_id = Some(task_id);
@@ -404,7 +519,7 @@ impl App {
             // back to a task or an event, keeping the name and the calendar
             ev.title = ed.frame.name.clone();
             ev.calendar = ed.frame.calendar;
-            self.create = Some(crate::CreateEdit { ev, kind, anchor_rect: rect, focus: true });
+            self.create = Some(crate::CreateEdit::new(ev, kind, rect));
             return;
         }
         if save {
