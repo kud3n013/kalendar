@@ -389,8 +389,15 @@ impl App {
         if ui.rect_contains_pointer(ui.available_rect_before_wrap()) {
             let (zoom, side) = ctx.input(|i| (i.zoom_delta(), i.smooth_scroll_delta.x));
             if (zoom - 1.0).abs() > 0.001 {
-                let h = (self.data.prefs.hour_height() * zoom).clamp(HOUR_H_MIN, HOUR_H_MAX);
+                let was = self.data.prefs.hour_height();
+                let h = (was * zoom).clamp(HOUR_H_MIN, HOUR_H_MAX);
                 self.data.prefs.hour_height_px = Some(h);
+                // the hour under the mouse stays under the mouse
+                if let Some(pos) = ctx.pointer_latest_pos() {
+                    let (off, top) = self.grid_scroll;
+                    let my = (pos.y - top).max(0.0);
+                    sa = sa.vertical_scroll_offset(((off + my) * h / was - my).max(0.0));
+                }
             }
             self.side_scroll += side;
             if self.side_scroll.abs() > 60.0 {
@@ -398,7 +405,8 @@ impl App {
                 self.side_scroll = 0.0;
             }
         }
-        sa.show(ui, |ui| self.grid_body(ui, &days, col_w, now));
+        let out = sa.show(ui, |ui| self.grid_body(ui, &days, col_w, now));
+        self.grid_scroll = (out.state.clamped_offset().y, out.inner_rect.top());
     }
 
     fn grid_body(&mut self, ui: &mut egui::Ui, days: &[NaiveDate], col_w: f32, now: NaiveDateTime) {

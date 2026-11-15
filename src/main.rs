@@ -540,6 +540,11 @@ pub struct App {
     pub pr_human: Option<String>,
     pub pr_busy: bool,
     pub side_scroll: f32,
+    /// how far the hours are scrolled, and where their top edge is on screen
+    pub grid_scroll: (f32, f32),
+    /// set while the window is too narrow for the panel and several days:
+    /// whether the panel was open, and the view, to put back afterwards
+    pub compact: Option<(bool, View)>,
     pub sort_by: usize,
     pub filter_tag: Option<String>,
     pub new_list_text: Option<String>,
@@ -655,6 +660,8 @@ impl App {
             pr_human: None,
             pr_busy: false,
             side_scroll: 0.0,
+            grid_scroll: (0.0, 0.0),
+            compact: None,
             sort_by: 0,
             filter_tag: None,
             new_list_text: None,
@@ -2402,6 +2409,25 @@ impl eframe::App for App {
         }
         self.keys(ctx);
         self.mouse_nav(ctx);
+        // a narrow window shows one day and no task panel; widening it
+        // brings back what was there
+        // (for screenshots, KALENDAR_NARROW stands in for a narrow window)
+        let narrow = ctx.content_rect().width() < COMPACT_W || (self.shot.is_some() && std::env::var("KALENDAR_NARROW").is_ok());
+        match (narrow, self.compact) {
+            (true, None) => {
+                self.compact = Some((self.data.prefs.sidebar_open, self.view));
+                self.data.prefs.sidebar_open = false;
+                if !matches!(self.view, View::Agenda) {
+                    self.view = View::Days(1);
+                }
+            }
+            (false, Some((open, view))) => {
+                self.compact = None;
+                self.data.prefs.sidebar_open = open;
+                self.view = view;
+            }
+            _ => {}
+        }
         self.ui_sidebar(ui);
         self.ui_toolbar(ui);
         // moving in time slides the old page out and the new one in, the way
@@ -2573,7 +2599,7 @@ fn main() {
         .with_title("Kalendar")
         .with_app_id("kalendar")
         .with_inner_size([1400.0, 860.0])
-        .with_min_inner_size([720.0, 480.0]);
+        .with_min_inner_size([360.0, 480.0]);
     if shot.is_some() {
         vb = vb.with_active(false);
         #[cfg(target_os = "windows")]

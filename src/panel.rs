@@ -141,7 +141,8 @@ impl App {
         let muted = self.pal.muted;
         let mut v = self.view;
         ui.menu_button(RichText::new(format!("{}  {}", v.label(), icons::CHEVRON_DOWN)).size(13.5).color(muted), |ui| {
-            ui.set_min_width(170.0);
+            // just wide enough for the names and their keys
+            ui.set_width(130.0);
             for (o, key) in [
                 (View::Days(1), "D"),
                 (View::Week, "W"),
