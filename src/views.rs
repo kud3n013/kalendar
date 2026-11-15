@@ -485,6 +485,11 @@ impl App {
             }
         }
 
+        // has the grid itself changed size since the last frame?
+        let grid_id = Id::unique("grid_shape");
+        let shape = (hh, col_w);
+        let regrid = ctx.data(|d| d.get_temp::<(f32, f32)>(grid_id)) != Some(shape);
+        ctx.data_mut(|d| d.insert_temp(grid_id, shape));
         let mut items: Vec<Item> = vec![];
         for (di, day) in days.iter().enumerate() {
             let d0 = midnight(*day);
@@ -535,7 +540,8 @@ impl App {
                 let mut target = Rect::from_min_max(pos2(x, top_y), pos2(x + width * cw, bottom_y));
                 if !*draft {
                     let dragging = matches!(&self.drag, Some(Drag::Move { id, .. }) | Some(Drag::Resize { id }) if *id == e.id);
-                    let secs = if dragging { ANIM_FAST_S * 0.6 } else { ANIM_S };
+                    // a zoom or a new column width moves every block at once, like the frames
+                    let secs = if regrid { 0.0 } else if dragging { ANIM_FAST_S * 0.6 } else { ANIM_S };
                     let key = Id::unique(("block", e.id, (*day - e.start.date()).num_days()));
                     let ax = ctx.animate_value_with_time(key.with("x"), target.left() - x0, secs);
                     let aw = ctx.animate_value_with_time(key.with("w"), target.width(), secs);
