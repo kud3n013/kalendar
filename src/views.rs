@@ -9,6 +9,7 @@ use eframe::egui::{
     Stroke, StrokeKind,
 };
 
+#[derive(Clone)]
 struct Item {
     id: u64,
     rect: Rect,
@@ -28,6 +29,8 @@ struct FrameBox {
     /// the name label, double-clicked to edit the frame
     label: Rect,
     color: Color32,
+    /// left out on this day: shown grey, and takes no tasks
+    skipped: bool,
 }
 
 /// Draws one calendar block. Plain events are filled with their colour and
@@ -37,6 +40,9 @@ fn draw_item(p: &egui::Painter, pal: &Palette, it: &Item, selected: bool, hover:
     let r = it.rect.shrink2(vec2(1.0, 0.0));
     let done = matches!(it.task, Some((_, true)));
     let is_task = it.task.is_some();
+    // a finished task goes grey
+    let grey = Item { color: mix(pal.muted, pal.bg, 0.35), ..it.clone() };
+    let it = if done { &grey } else { it };
     let soft = mix(it.color, Color32::from_gray(if pal.dark { 228 } else { 245 }), 0.5);
     let (fill, text, sub) = if is_task {
         let base = mix(pal.bg, it.color, if it.draft || it.past { 0.08 } else { 0.14 });
@@ -480,7 +486,8 @@ impl App {
                     shown.push(f);
                 }
             }
-            for f in shown {
+            let shown: Vec<(&Frame, bool)> = shown.into_iter().map(|f| (f, false)).chain(self.data.frames_skipped_on(*day).into_iter().filter(|f| edited.is_none_or(|e| e.id != f.id)).map(|f| (f, true))).collect();
+            for (f, skipped) in shown {
                 let s = (f.start_min.max(gs)).min(ge);
                 let e = (f.end_min.min(ge)).max(gs);
                 if e <= s {
@@ -488,7 +495,8 @@ impl App {
                 }
                 let col_l = x0 + di as f32 * col_w;
                 let r = Rect::from_min_max(pos2(col_l + 2.0, y_of(s)), pos2(col_l + col_w - 2.0, y_of(e)));
-                let color = rgb(self.data.frame_color(f));
+                // a skipped day stays in view, greyed out
+                let color = if skipped { mix(self.pal.muted, self.pal.bg, 0.45) } else { rgb(self.data.frame_color(f)) };
                 // see-through, so the grid lines stay visible: lightened on a
                 // dark theme, a plain tint on a light one
                 let wash = if self.pal.dark { mix(color, Color32::WHITE, 0.25).gamma_multiply(0.14) } else { color.gamma_multiply(0.09) };
@@ -502,11 +510,11 @@ impl App {
                 let label = painter.with_clip_rect(r.intersect(painter.clip_rect())).text(
                     r.left_top() + vec2(6.0, 5.0),
                     Align2::LEFT_TOP,
-                    &f.name,
+                    if skipped { format!("{} (skipped)", f.name) } else { f.name.clone() },
                     FontId::proportional(11.0),
-                    self.pal.muted,
+                    if skipped { mix(self.pal.muted, self.pal.bg, 0.3) } else { self.pal.muted },
                 );
-                frame_boxes.push(FrameBox { id: f.id, day: *day, rect: r, label, color });
+                frame_boxes.push(FrameBox { id: f.id, day: *day, rect: r, label, color, skipped });
             }
         }
 
@@ -799,7 +807,7 @@ impl App {
         }
         let target = self.ctx_target;
         let at = self.ctx_time;
-        let in_frame = self.ctx_frame.and_then(|(id, day)| self.data.frame(id).map(|f| (id, day, f.name.clone())));
+        let in_frame = self.ctx_frame.and_then(|(id, day)| self.data.frame(id).map(|f| (id, day, f.name.clone(), f.skip.contains(&day))));
         resp.context_menu(|ui| {
             if let Some(id) = target {
                 self.block_menu(ui, id);
@@ -814,14 +822,19 @@ impl App {
                     ui.close();
                 }
                 let ctx = ui.ctx().clone();
-                if let Some((fid, day, name)) = &in_frame {
+                if let Some((fid, day, name, skipped)) = &in_frame {
                     ui.separator();
                     ui.label(RichText::new(format!("Frame: {name}")).size(11.5).color(self.pal.muted));
                     if ui.button(format!("{}  Edit frame…", icons::PEN)).clicked() {
                         self.edit_frame(*fid);
                         ui.close();
                     }
-                    if ui.button(format!("{}  Skip this day", icons::BAN)).clicked() {
+                    if *skipped {
+                        if ui.button(format!("{}  Use it this day again", icons::UNDO)).clicked() {
+                            self.restore_frame_day(*fid, *day);
+                            ui.close();
+                        }
+                    } else if ui.button(format!("{}  Skip this day", icons::BAN)).clicked() {
                         self.skip_frame_day(&ctx, *fid, *day);
                         ui.close();
                     }
@@ -862,7 +875,7 @@ impl App {
                     let r = Rect::from_min_max(pos2(x0 + ax, rect.top() + at), pos2(x0 + ax + r.width(), rect.top() + ab));
                     // over a frame the ghost takes its colour, dimmed when the
                     // frame would not take this task; the drop works either way
-                    let over = frame_at(pos).filter(|b| b.day == start.date());
+                    let over = frame_at(pos).filter(|b| b.day == start.date() && !b.skipped);
                     let fits = over.is_none_or(|b| {
                         let f = self.data.frame(b.id);
                         let t = self.data.task(tid);

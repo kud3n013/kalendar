@@ -738,6 +738,16 @@ impl App {
             let list = app.data.lists.iter().find(|l| l.name.eq_ignore_ascii_case(&v)).map_or(0, |l| l.id);
             app.open_new_task(list);
         }
+        if std::env::var("KALENDAR_GREY").is_ok() {
+            // test aid: scheduled tasks are done and every frame skips the day after today
+            let ids: Vec<u64> = app.data.events.iter().filter_map(|e| e.task_id).collect();
+            for t in app.data.tasks.iter_mut().filter(|t| ids.contains(&t.id)) {
+                t.done = true;
+            }
+            for f in app.data.frames.iter_mut() {
+                f.skip.push(today + Duration::days(1));
+            }
+        }
         if let Ok(v) = std::env::var("KALENDAR_LIST_EDIT") {
             // test aid: the named list gets an icon and its little editor is open
             let id = app.data.lists.iter().find(|l| l.name.eq_ignore_ascii_case(&v)).map_or(0, |l| l.id);
@@ -926,6 +936,15 @@ impl App {
         }
         self.commit();
         self.say(ctx, format!("Frame skipped on {}", day.format("%a, %b %-d")), true);
+    }
+
+    /// Puts a skipped day back into a frame.
+    pub fn restore_frame_day(&mut self, id: u64, day: NaiveDate) {
+        self.snapshot();
+        if let Some(f) = self.data.frame_mut(id) {
+            f.skip.retain(|d| *d != day);
+        }
+        self.commit();
     }
 
     pub fn delete_frame(&mut self, ctx: &egui::Context, id: u64) {

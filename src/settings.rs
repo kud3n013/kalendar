@@ -593,17 +593,22 @@ impl App {
 
     fn filter_summary(&self, f: &FrameFilter, exclusive: bool) -> String {
         let mut parts: Vec<String> = vec![];
+        // lists and tags: one of them is enough unless both are asked for
+        let mut what: Vec<String> = vec![];
         if !f.lists.is_empty() {
             let names: Vec<String> = f
                 .lists
                 .iter()
                 .map(|id| if *id == 0 { self.data.prefs.inbox_name() } else { self.data.lists.iter().find(|l| l.id == *id).map(|l| l.name.clone()).unwrap_or_else(|| "?".into()) })
                 .collect();
-            parts.push(names.join(", "));
+            what.push(names.join(", "));
         }
         if !f.tags.is_empty() {
             let tags: Vec<String> = f.tags.iter().map(|t| format!("#{t}")).collect();
-            parts.push(tags.join(if f.tags_all { " + " } else { " or " }));
+            what.push(tags.join(if f.tags_all { " + " } else { " or " }));
+        }
+        if !what.is_empty() {
+            parts.push(what.join(if f.both { " and " } else { " or " }));
         }
         if let Some(m) = f.max_min {
             parts.push(format!("up to {}", fmt_duration(m)));

@@ -495,6 +495,9 @@ pub struct FrameFilter {
     pub tags_all: bool,
     /// longest task it takes, in minutes
     pub max_min: Option<i64>,
+    /// with lists and tags both set, a task needs one of the lists and
+    /// the tags; otherwise a list or the tags is enough
+    pub both: bool,
 }
 
 impl FrameFilter {
@@ -566,15 +569,18 @@ impl Frame {
     /// Whether the planner may put this task here. Tags compare without case.
     pub fn matches(&self, t: &Task, default_min: i64) -> bool {
         let f = &self.filter;
-        if !f.lists.is_empty() && !f.lists.contains(&t.list) {
+        let list_ok = f.lists.contains(&t.list);
+        let has = |g: &String| t.tags.iter().any(|x| x.to_lowercase() == g.to_lowercase());
+        let tags_ok = if f.tags_all { f.tags.iter().all(has) } else { f.tags.iter().any(has) };
+        let ok = match (f.lists.is_empty(), f.tags.is_empty()) {
+            (true, true) => true,
+            (false, true) => list_ok,
+            (true, false) => tags_ok,
+            (false, false) if f.both => list_ok && tags_ok,
+            (false, false) => list_ok || tags_ok,
+        };
+        if !ok {
             return false;
-        }
-        if !f.tags.is_empty() {
-            let has = |g: &String| t.tags.iter().any(|x| x.to_lowercase() == g.to_lowercase());
-            let ok = if f.tags_all { f.tags.iter().all(has) } else { f.tags.iter().any(has) };
-            if !ok {
-                return false;
-            }
         }
         if let Some(max) = f.max_min {
             if t.duration_min.unwrap_or(default_min) > max {
@@ -1146,10 +1152,14 @@ impl Data {
     }
     /// Whether a frame runs on a day, ignoring calendar visibility.
     pub fn frame_occurs_on(f: &Frame, day: NaiveDate) -> bool {
+        !f.skip.contains(&day) && Self::frame_falls_on(f, day)
+    }
+    /// Whether a day is one of the frame's days, skipped or not.
+    pub fn frame_falls_on(f: &Frame, day: NaiveDate) -> bool {
         if !f.enabled || day < f.from || f.until.is_some_and(|u| day > u) {
             return false;
         }
-        if f.days & day_bit(day) == 0 || f.skip.contains(&day) {
+        if f.days & day_bit(day) == 0 {
             return false;
         }
         let anchor = f.from - Duration::days(f.from.weekday().num_days_from_monday() as i64);
@@ -1157,6 +1167,13 @@ impl Data {
         weeks % f.every_weeks.max(1) as i64 == 0
     }
     /// Frames on a day, on visible calendars of one's own, by start time.
+    /// Frames that would run on a day had that day not been skipped.
+    pub fn frames_skipped_on(&self, day: NaiveDate) -> Vec<&Frame> {
+        self.frames
+            .iter()
+            .filter(|f| f.skip.contains(&day) && f.end_min > f.start_min && Self::frame_falls_on(f, day) && self.calendar(f.calendar).is_some_and(|c| c.visible && c.is_local()))
+            .collect()
+    }
     pub fn frames_on(&self, day: NaiveDate) -> Vec<FrameOcc> {
         let midnight = day.and_hms_opt(0, 0, 0).unwrap();
         let mut v: Vec<FrameOcc> = self
@@ -1688,6 +1705,14 @@ mod tests {
         assert!(!f.matches(&t, 60));
         f.filter.lists = vec![0, 1];
         assert!(f.matches(&t, 60));
+        f.filter.tags = vec!["nope".into()];
+        assert!(f.matches(&t, 60), "the list alone is enough");
+        f.filter.lists = vec![0];
+        f.filter.tags = vec!["x".into()];
+        assert!(f.matches(&t, 60), "the tag alone is enough");
+        f.filter.both = true;
+        assert!(!f.matches(&t, 60), "both asked for");
+        f.filter.lists = vec![0, 1];
         f.filter.tags = vec!["deep-work".into(), "y".into()];
         assert!(f.matches(&t, 60), "any tag, case does not matter");
         f.filter.tags_all = true;
