@@ -30,7 +30,7 @@ impl Data {
         let ws = d.prefs.week_start(today);
         let at = |day: i64, h: u32, m: u32| (ws + Duration::days(day)).and_hms_opt(h, m, 0).unwrap();
         // sample calendars have the ids 1 to 4, in list order
-        let mut ev = |d: &mut Data, title: &str, day: i64, h: u32, m: u32, mins: i64, cal: u64| {
+        let ev = |d: &mut Data, title: &str, day: i64, h: u32, m: u32, mins: i64, cal: u64| {
             let id = d.new_id();
             let start = at(day, h, m);
             d.events.push(Event {
@@ -72,7 +72,7 @@ impl Data {
         color: None,
         ..Default::default()
         });
-        let mut task = |d: &mut Data, title: &str, due: Option<i64>, pr: u8, dur: Option<i64>, list: u64, tag: &str| {
+        let task = |d: &mut Data, title: &str, due: Option<i64>, pr: u8, dur: Option<i64>, list: u64, tag: &str| {
             let id = d.new_id();
             d.tasks.push(Task {
                 id,

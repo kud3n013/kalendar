@@ -350,7 +350,7 @@ impl App {
     fn panel_bottom(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, right: bool, c: (Color32, Color32, Color32)) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            let mut tools = |ui: &mut egui::Ui, app: &mut App| {
+            let tools = |ui: &mut egui::Ui, app: &mut App| {
                 if icon_btn(ui, icons::SETTINGS, 16.0, &app.tip(tr("Settings"), Cmd::Prefs), c).clicked() {
                     app.open_settings(crate::settings::Page::General);
                 }
@@ -377,7 +377,7 @@ impl App {
                     });
                 }
             };
-            let mut new_list = |ui: &mut egui::Ui, app: &mut App| {
+            let new_list = |ui: &mut egui::Ui, app: &mut App| {
                 if icon_btn(ui, icons::PLUS, 17.0, tr("New task list"), c).clicked() {
                     app.new_list_text = Some((String::new(), true));
                 }
@@ -400,7 +400,7 @@ impl App {
         // refresh, then back, today and forward
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            let mut nav = |ui: &mut egui::Ui, app: &mut App, flipped: bool| {
+            let nav = |ui: &mut egui::Ui, app: &mut App, flipped: bool| {
                 // drawn right to left when flipped
                 let order: [(&str, f32, &str, Cmd); 4] = if flipped {
                     [

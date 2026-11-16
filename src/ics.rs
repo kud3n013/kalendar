@@ -327,7 +327,7 @@ fn expand(start: NaiveDateTime, rule: &str, until_wall: NaiveDateTime, until_is_
     let limit = until.map(|u| u.min(until_wall)).unwrap_or(until_wall);
     let time = start.time();
     let mut out: Vec<NaiveDateTime> = vec![];
-    let mut push = |d: NaiveDate, out: &mut Vec<NaiveDateTime>| -> bool {
+    let push = |d: NaiveDate, out: &mut Vec<NaiveDateTime>| -> bool {
         let t = d.and_time(time);
         if t < start {
             return true;
