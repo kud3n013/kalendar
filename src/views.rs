@@ -803,7 +803,7 @@ impl App {
                     if let Some(d) = self.undo.pop() {
                         self.data = d;
                     }
-                    self.say(&ctx, format!("\"{name}\" keeps other tasks out"), false);
+                    self.say(&ctx, trf("\"{}\" keeps other tasks out", &[&name]), false);
                 }
                 Some(Drag::Move { id, .. }) => {
                     let sched = self.data.event(id).and_then(|e| e.task_id.map(|t| (t, e.start.date())));
@@ -968,7 +968,7 @@ impl App {
                     }
                     if ctx.input(|i| i.pointer.any_released()) {
                         match kept_out {
-                            Some(name) => self.say(&ctx, format!("\"{name}\" keeps other tasks out"), false),
+                            Some(name) => self.say(&ctx, trf("\"{}\" keeps other tasks out", &[&name]), false),
                             None => self.schedule_task(&ctx, tid, start),
                         }
                         self.drag_task = None;

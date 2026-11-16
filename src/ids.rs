@@ -78,6 +78,8 @@ keyed! {
     section = "sec";
     section_chevron = "chev";
     section_open = "open";
+    /// a list heading lit while a task is dragged over it
+    section_drop = "drop";
     list_dots = "listdots";
     /// a task row of the panel
     task_row = "row";

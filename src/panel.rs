@@ -678,6 +678,11 @@ impl App {
     ) {
         let (muted, text, side) = (self.pal.muted, self.pal.text, self.pal.side);
         let collapsed = self.collapsed.contains(key);
+        // a task dragged from another list can be dropped anywhere on this
+        // one: its heading or its tasks. The mark goes under both.
+        let drop_task = self.drag_task.filter(|_| list.is_some_and(|l| l == 0 || self.data.lists.iter().any(|x| x.id == l && !x.read_only)));
+        let drop_task = drop_task.filter(|t| self.data.task(*t).is_some_and(|t| Some(t.list) != list && !t.done));
+        let drop_mark = ui.painter().add(egui::Shape::Noop);
         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
         // the menu button sits on the row, so the row itself is not "hovered" there
         let editing = list.is_some() && self.list_edit.as_ref().map(|e| e.id) == list;
@@ -760,6 +765,29 @@ impl App {
             });
             ui.add_space(6.0 * a);
         }
+        if let (Some(tid), Some(lid)) = (drop_task, list) {
+            let area = Rect::from_min_max(r.min, pos2(r.max.x, ui.cursor().min.y.max(r.max.y))).expand2(vec2(6.0, 0.0));
+            let over = ui.rect_contains_pointer(area);
+            let lit = ctx.animate_bool_with_time(ids::section_drop(key), over, motion::HOVER.secs());
+            if lit > 0.0 {
+                let pts = crate::squircle_points(area, theme::RADIUS);
+                ui.painter().set(drop_mark, egui::Shape::convex_polygon(pts, color.gamma_multiply(0.14 * lit), Stroke::new(1.5, color.gamma_multiply(lit))));
+            }
+            if over && ctx.input(|i| i.pointer.any_released()) {
+                self.move_to_list(tid, lid);
+                self.drag_task = None;
+                self.say(ctx, trf("Moved to {}", &[&name]), true);
+            }
+        }
+    }
+
+    /// Puts a task in another list, as one step that can be undone.
+    pub fn move_to_list(&mut self, id: u64, list: u64) {
+        self.snapshot();
+        if let Some(x) = self.data.task_mut(id) {
+            x.list = list;
+        }
+        self.commit();
     }
 
     fn task_row(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, id: u64, salt: &str) {
@@ -798,11 +826,7 @@ impl App {
                         ui.menu_button(tr("Move to list"), |ui| {
                             for (lid, name, col) in self.list_items(true) {
                                 if crate::dialogs::pick_row(ui, t.list == lid, &name, col).clicked() {
-                                    self.snapshot();
-                                    if let Some(x) = self.data.task_mut(id) {
-                                        x.list = lid;
-                                    }
-                                    self.commit();
+                                    self.move_to_list(id, lid);
                                     ui.close();
                                 }
                             }
