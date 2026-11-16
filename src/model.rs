@@ -199,7 +199,8 @@ impl Default for Prefs {
             animations: true,
             inbox_name: String::new(),
             inbox_color: None,
-            inbox_icon: String::new(),
+            // the inbox tray
+            inbox_icon: crate::icons::LIST_ICONS[0].to_string(),
             show_scheduled_tasks: false,
             undo_grace_s: 10,
             auto_due: true,
@@ -1224,9 +1225,9 @@ impl Data {
     /// Neutral sample content for a first start.
     pub fn sample(today: NaiveDate) -> Data {
         let lists = vec![
-            TaskList { id: 1, name: "Work".into(), color: [0x77, 0x7b, 0xf0], ..Default::default() },
-            TaskList { id: 2, name: "Personal".into(), color: [0xf1, 0x76, 0xa8], ..Default::default() },
-            TaskList { id: 3, name: "Study".into(), color: [0xa2, 0x41, 0xf1], ..Default::default() },
+            TaskList { id: 1, name: "Work".into(), icon: crate::icons::LIST_ICONS[1].to_string(), color: [0x77, 0x7b, 0xf0], ..Default::default() },
+            TaskList { id: 2, name: "Personal".into(), icon: crate::icons::LIST_ICONS[3].to_string(), color: [0xf1, 0x76, 0xa8], ..Default::default() },
+            TaskList { id: 3, name: "Study".into(), icon: crate::icons::LIST_ICONS[6].to_string(), color: [0xa2, 0x41, 0xf1], ..Default::default() },
         ];
         let mut d = Data {
             lists,

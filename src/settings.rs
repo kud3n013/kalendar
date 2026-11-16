@@ -141,21 +141,38 @@ fn row(ui: &mut egui::Ui, label: &str, tip: &str, add: impl FnOnce(&mut egui::Ui
     if !shown(ui, &[label, tip]) {
         return;
     }
-    let cw = (ui.available_width() * 0.42).clamp(170.0, CONTROL_W);
+    let avail = ui.available_width();
+    let label_w = ui.painter().layout_no_wrap(label.to_string(), FontId::proportional(17.0), Color32::WHITE).size().x + if tip.is_empty() { 0.0 } else { 26.0 };
+    let wide = (avail * 0.42).clamp(170.0, CONTROL_W);
+    // too narrow for the name beside its control: the control goes below
+    let stack = label_w + 24.0 + wide > avail;
+    let cw = if stack { avail.min(CONTROL_W) } else { wide };
     ui.data_mut(|d| d.insert_temp(egui::Id::unique("control_w"), cw));
-    ui.allocate_ui_with_layout(vec2(ui.available_width(), ROW_H), Layout::left_to_right(Align::Center), |ui| {
+    let name = |ui: &mut egui::Ui| {
         ui.add(egui::Label::new(RichText::new(label).size(17.0)).truncate());
         if !tip.is_empty() {
             ui.label(RichText::new("(i)").size(12.0).weak()).on_hover_text(tip);
         }
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            ui.allocate_ui_with_layout(vec2(cw, 44.0), Layout::left_to_right(Align::Center), |ui| {
-                ui.spacing_mut().interact_size.y = 44.0;
-                ui.spacing_mut().button_padding = vec2(14.0, 10.0);
-                ui.style_mut().override_font_id = Some(FontId::proportional(16.0));
-                add(ui);
-            });
+    };
+    let control = |ui: &mut egui::Ui| {
+        ui.allocate_ui_with_layout(vec2(cw, 44.0), Layout::left_to_right(Align::Center), |ui| {
+            ui.spacing_mut().interact_size.y = 44.0;
+            ui.spacing_mut().button_padding = vec2(14.0, 10.0);
+            ui.style_mut().override_font_id = Some(FontId::proportional(16.0));
+            add(ui);
         });
+    };
+    if stack {
+        ui.add_space(6.0);
+        ui.horizontal(name);
+        ui.add_space(2.0);
+        control(ui);
+        ui.add_space(8.0);
+        return;
+    }
+    ui.allocate_ui_with_layout(vec2(avail, ROW_H), Layout::left_to_right(Align::Center), |ui| {
+        name(ui);
+        ui.with_layout(Layout::right_to_left(Align::Center), control);
     });
 }
 
@@ -271,7 +288,7 @@ impl App {
         let before = serde_json::to_string(&(&self.data.prefs, &self.data.calendars, &self.data.frames, &self.data.lists)).unwrap_or_default();
         let (side, bg, muted, text, border) = (self.pal.side, self.pal.bg, self.pal.muted, self.pal.text, self.pal.border);
         let full = ui.max_rect();
-        let nav_w = 264.0f32.min(full.width() * 0.4);
+        let nav_w = (full.width() * 0.3).clamp(190.0, 264.0);
         let (nav_rect, page_rect) = full.split_left_right_at_x(full.left() + nav_w);
         ui.painter().rect_filled(nav_rect, 0.0, side);
         ui.painter().rect_filled(page_rect, 0.0, bg);
@@ -329,8 +346,10 @@ impl App {
         ui.scope_builder(egui::UiBuilder::new().max_rect(page_rect), |ui| {
             let words = search_words(&self.settings_query);
             let salt = if words.is_empty() { self.settings_page as u8 } else { u8::MAX };
+            // narrow windows get narrower margins
+            let (ml, mr) = if page_rect.width() < 640.0 { (24, 28) } else { (44, 56) };
             egui::ScrollArea::vertical().id_salt(("page", salt)).auto_shrink([false, false]).show(ui, |ui| {
-                egui::Frame::new().inner_margin(Margin { left: 44, right: 56, top: 30, bottom: 30 }).show(ui, |ui| {
+                egui::Frame::new().inner_margin(Margin { left: ml, right: mr, top: 30, bottom: 30 }).show(ui, |ui| {
                     let w = ui.available_width().min(980.0);
                     ui.set_max_width(w);
                     if !words.is_empty() {
@@ -568,21 +587,23 @@ impl App {
             let f = &self.data.frames[i];
             let (id, name, color) = (f.id, f.name.clone(), rgb(self.data.frame_color(f)));
             let f = &mut self.data.frames[i];
-            ui.allocate_ui_with_layout(vec2(ui.available_width(), 56.0), Layout::left_to_right(Align::Center), |ui| {
-                let (r, _) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::hover());
-                ui.painter().circle_filled(r.center(), 8.0, if f.enabled { color } else { mix(side, color, 0.35) });
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 2.0;
-                    let c = if f.enabled { text } else { muted };
-                    ui.add(egui::Label::new(RichText::new(&name).size(16.0).color(c)).truncate());
-                    ui.add(egui::Label::new(RichText::new(format!("{when}  ·  {what}")).size(13.0).color(muted)).truncate());
-                });
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    switch(ui, &mut f.enabled, accent).on_hover_text(if f.enabled { "On: the planner uses it" } else { "Off: the planner skips it" });
-                    let b = egui::Button::new(RichText::new(format!("{} Edit", icons::PEN)).size(14.0)).fill(mix(side, text, 0.07)).corner_radius(7);
-                    if ui.add(b).clicked() {
-                        edit = Some(id);
-                    }
+            // the buttons first, so the text is cut short rather than run under them
+            ui.allocate_ui_with_layout(vec2(ui.available_width(), 56.0), Layout::right_to_left(Align::Center), |ui| {
+                switch(ui, &mut f.enabled, accent).on_hover_text(if f.enabled { "On: the planner uses it" } else { "Off: the planner skips it" });
+                let b = egui::Button::new(RichText::new(format!("{} Edit", icons::PEN)).size(14.0)).fill(mix(side, text, 0.07)).corner_radius(7);
+                if ui.add(b).clicked() {
+                    edit = Some(id);
+                }
+                ui.add_space(6.0);
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    let (r, _) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::hover());
+                    ui.painter().circle_filled(r.center(), 8.0, if f.enabled { color } else { mix(side, color, 0.35) });
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        let c = if f.enabled { text } else { muted };
+                        ui.add(egui::Label::new(RichText::new(&name).size(16.0).color(c)).truncate());
+                        ui.add(egui::Label::new(RichText::new(format!("{when}  ·  {what}")).size(13.0).color(muted)).truncate());
+                    });
                 });
             });
             let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
@@ -678,28 +699,10 @@ impl App {
             let subscribed = !c.is_local();
             let synced = c.account.is_some();
             let cid = c.id;
-            ui.allocate_ui_with_layout(vec2(ui.available_width(), 52.0), Layout::left_to_right(Align::Center), |ui| {
-                ui.checkbox(&mut c.visible, "").on_hover_text("Show on the calendar");
-                // colour: a dot that opens the palette
-                let (r, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
-                ui.painter().circle_filled(r.center(), 9.0, rgb(c.color));
-                let resp = resp.on_hover_text("Colour");
-                egui::Popup::from_toggle_button_response(&resp).close_behavior(egui::PopupCloseBehavior::CloseOnClick).show(|ui| {
-                    ui.set_min_width(200.0);
-                    ui.horizontal_wrapped(|ui| {
-                        for (col, name) in EVENT_COLORS.iter() {
-                            let (cr, cresp) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
-                            ui.painter().circle_filled(cr.center(), 8.0, rgb(*col));
-                            if cresp.on_hover_text(*name).clicked() {
-                                c.color = *col;
-                            }
-                        }
-                    });
-                });
-                ui.add(egui::TextEdit::singleline(&mut c.name).font(FontId::proportional(16.0)).desired_width((ui.available_width() - 330.0).clamp(110.0, 280.0)).id_salt(("calname", cid)));
-                let what = if synced && c.read_only { "from an account, read-only".to_string() } else if synced { format!("from an account, {} events", counts[i]) } else if subscribed { "subscribed, read-only".to_string() } else { format!("{} events", counts[i]) };
-                ui.label(RichText::new(what).size(13.0).color(muted));
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            let what = if synced && c.read_only { "from an account, read-only".to_string() } else if synced { format!("from an account, {} events", counts[i]) } else if subscribed { "subscribed, read-only".to_string() } else { format!("{} events", counts[i]) };
+            // the buttons first; the name takes what is left
+            ui.allocate_ui_with_layout(vec2(ui.available_width(), 52.0), Layout::right_to_left(Align::Center), |ui| {
+                {
                     if self.confirm_remove == Some(cid) {
                         if ui.add(egui::Button::new(RichText::new("Cancel").size(14.0)).corner_radius(7)).clicked() {
                             ask = Some(None);
@@ -721,6 +724,31 @@ impl App {
                             ask = Some(Some(cid));
                         }
                     }
+                }
+                // the count only where there is room for it and a name
+                if ui.available_width() > 300.0 {
+                    ui.label(RichText::new(what).size(13.0).color(muted));
+                }
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    ui.checkbox(&mut c.visible, "").on_hover_text("Show on the calendar");
+                    // colour: a dot that opens the palette
+                    let (r, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
+                    ui.painter().circle_filled(r.center(), 9.0, rgb(c.color));
+                    let resp = resp.on_hover_text("Colour");
+                    egui::Popup::from_toggle_button_response(&resp).close_behavior(egui::PopupCloseBehavior::CloseOnClick).show(|ui| {
+                        ui.set_min_width(200.0);
+                        ui.horizontal_wrapped(|ui| {
+                            for (col, name) in EVENT_COLORS.iter() {
+                                let (cr, cresp) = ui.allocate_exact_size(vec2(22.0, 22.0), Sense::click());
+                                ui.painter().circle_filled(cr.center(), 8.0, rgb(*col));
+                                if cresp.on_hover_text(*name).clicked() {
+                                    c.color = *col;
+                                }
+                            }
+                        });
+                    });
+                    let w = (ui.available_width() - 8.0).clamp(60.0, 280.0);
+                    ui.add(egui::TextEdit::singleline(&mut c.name).font(FontId::proportional(16.0)).desired_width(w).id_salt(("calname", cid)));
                 });
             });
             let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
@@ -776,7 +804,22 @@ impl App {
             let (mut name, color, icon) = self.data.list_look(lid);
             let synced = self.data.lists.iter().any(|l| l.id == lid && l.account.is_some());
             let count = self.data.tasks.iter().filter(|t| t.list == lid && !t.done).count();
-            ui.allocate_ui_with_layout(vec2(ui.available_width(), 52.0), Layout::left_to_right(Align::Center), |ui| {
+            let what = if synced { format!("from an account, {count} open tasks") } else { format!("{count} open tasks") };
+            // the button first; the name takes what is left
+            ui.allocate_ui_with_layout(vec2(ui.available_width(), 52.0), Layout::right_to_left(Align::Center), |ui| {
+                if lid == 0 {
+                    ui.label(RichText::new("always there").size(13.0).color(muted));
+                } else {
+                    let b = egui::Button::new(RichText::new("Remove").size(14.0).color(RED)).fill(mix(side, text, 0.07)).corner_radius(7);
+                    let resp = ui.add_enabled(!synced, b).on_hover_text("Its tasks go to the Inbox");
+                    if resp.on_disabled_hover_text("Untick it under Integrations to stop syncing it, or sign out of its account there").clicked() {
+                        remove = Some(lid);
+                    }
+                }
+                if ui.available_width() > 300.0 {
+                    ui.label(RichText::new(what).size(13.0).color(muted));
+                }
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 // the ring or icon opens colours and icons
                 let (r, resp) = ui.allocate_exact_size(vec2(30.0, 30.0), Sense::click());
                 if resp.hovered() {
@@ -796,24 +839,12 @@ impl App {
                 let edit = egui::TextEdit::singleline(&mut name)
                     .hint_text(if lid == 0 { "Inbox" } else { "List name" })
                     .font(FontId::proportional(16.0))
-                    .desired_width((ui.available_width() - 330.0).clamp(110.0, 280.0))
+                    .desired_width((ui.available_width() - 8.0).clamp(60.0, 280.0))
                     .id_salt(("listname", lid));
                 if ui.add(edit).changed() {
                     let (_, color, icon) = self.data.list_look(lid);
                     self.data.set_list_look(lid, (name.clone(), color, icon));
                 }
-                let what = if synced { format!("from an account, {count} open tasks") } else { format!("{count} open tasks") };
-                ui.label(RichText::new(what).size(13.0).color(muted));
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if lid == 0 {
-                        ui.label(RichText::new("always there").size(13.0).color(muted));
-                        return;
-                    }
-                    let b = egui::Button::new(RichText::new("Remove").size(14.0).color(RED)).fill(mix(side, text, 0.07)).corner_radius(7);
-                    let resp = ui.add_enabled(!synced, b).on_hover_text("Its tasks go to the Inbox");
-                    if resp.on_disabled_hover_text("Untick it under Integrations to stop syncing it, or sign out of its account there").clicked() {
-                        remove = Some(lid);
-                    }
                 });
             });
             let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
@@ -993,21 +1024,7 @@ impl App {
         }
         for (i, c) in subs {
             let url = c.url.clone().unwrap_or_default();
-            ui.allocate_ui_with_layout(vec2(ui.available_width(), 70.0), Layout::left_to_right(Align::Center), |ui| {
-                let (r, _) = ui.allocate_exact_size(vec2(34.0, 34.0), Sense::hover());
-                ui.painter().circle_filled(r.center(), 7.0, rgb(c.color));
-                ui.painter().circle_stroke(r.center(), 13.0, Stroke::new(1.5, muted));
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 2.0;
-                    ui.add_space(12.0);
-                    ui.label(RichText::new(&c.name).size(17.0));
-                    let kind = if url == SECRET_URL {
-                        "Private link, kept in the keyring".to_string()
-                    } else if ics::is_proton(&url) { "Proton Calendar".to_string() } else { format!("Feed from {}", ics::default_name(&url)) };
-                    let when = c.last_sync.as_ref().map(|t| format!("  ·  refreshed {t}")).unwrap_or_default();
-                    ui.label(RichText::new(format!("{kind}{when}")).size(14.0).color(muted));
-                });
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            ui.allocate_ui_with_layout(vec2(ui.available_width(), 70.0), Layout::right_to_left(Align::Center), |ui| {
                     ui.menu_button(RichText::new(icons::ELLIPSIS).size(18.0).color(muted), |ui| {
                         if ui.button("Refresh").clicked() {
                             refresh = Some(i);
@@ -1018,7 +1035,7 @@ impl App {
                             ui.close();
                         }
                     });
-                    ui.add_space(60.0);
+                    ui.add_space(12.0);
                     if self.syncing.contains(&i) {
                         ui.label(RichText::new("Refreshing…").size(16.0).color(muted));
                         ui.spinner();
@@ -1029,10 +1046,24 @@ impl App {
                     } else {
                         ui.label(RichText::new("Waiting").size(16.0).color(muted));
                     }
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                let (r, _) = ui.allocate_exact_size(vec2(34.0, 34.0), Sense::hover());
+                ui.painter().circle_filled(r.center(), 7.0, rgb(c.color));
+                ui.painter().circle_stroke(r.center(), 13.0, Stroke::new(1.5, muted));
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 2.0;
+                    ui.add_space(12.0);
+                    ui.add(egui::Label::new(RichText::new(&c.name).size(17.0)).truncate());
+                    let kind = if url == SECRET_URL {
+                        "Private link, kept in the keyring".to_string()
+                    } else if ics::is_proton(&url) { "Proton Calendar".to_string() } else { format!("Feed from {}", ics::default_name(&url)) };
+                    let when = c.last_sync.as_ref().map(|t| format!("  ·  refreshed {t}")).unwrap_or_default();
+                    ui.add(egui::Label::new(RichText::new(format!("{kind}{when}")).size(14.0).color(muted)).truncate());
+                });
                 });
             });
             if let Some(e) = &c.error {
-                ui.label(RichText::new(e).size(13.0).color(RED));
+                ui.add(egui::Label::new(RichText::new(e).size(13.0).color(RED)).wrap());
             }
             let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
             ui.painter().rect_filled(r, 0.0, border);
@@ -1061,16 +1092,9 @@ impl App {
         let accounts: Vec<Account> = self.data.accounts.iter().filter(|a| a.home.is_some()).cloned().collect();
         for a in &accounts {
             ui.add_space(6.0);
-            ui.allocate_ui_with_layout(vec2(ui.available_width(), 64.0), Layout::left_to_right(Align::Center), |ui| {
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 2.0;
-                    ui.add_space(10.0);
-                    ui.label(RichText::new(a.label()).size(17.0));
-                    let when = a.last_sync.as_ref().map(|t| format!("  ·  synced {t}")).unwrap_or_default();
-                    let kind = if a.proton { "Proton account" } else if a.microsoft { "Microsoft account" } else if a.google { "Google account" } else if a.nextcloud { "Nextcloud account" } else { "CalDAV account" };
-                    ui.label(RichText::new(format!("{kind}{when}")).size(14.0).color(muted));
-                });
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            // the status and menu first; the name takes what is left
+            ui.allocate_ui_with_layout(vec2(ui.available_width(), 64.0), Layout::right_to_left(Align::Center), |ui| {
+                {
                     ui.menu_button(RichText::new(icons::ELLIPSIS).size(18.0).color(muted), |ui| {
                         if ui.button("Sync now").clicked() {
                             sync_now = Some(a.id);
@@ -1081,7 +1105,7 @@ impl App {
                             ui.close();
                         }
                     });
-                    ui.add_space(60.0);
+                    ui.add_space(12.0);
                     let busy = self.syncing.contains(&a.id) || self.data.calendars.iter().any(|c| c.account == Some(a.id) && self.syncing.contains(&c.id));
                     if busy {
                         ui.label(RichText::new("Syncing…").size(16.0).color(muted));
@@ -1091,6 +1115,16 @@ impl App {
                     } else {
                         ui.label(RichText::new(format!("{} Connected", icons::CHECK)).size(16.0).color(GREEN));
                     }
+                }
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    ui.vertical(|ui| {
+                        ui.spacing_mut().item_spacing.y = 2.0;
+                        ui.add_space(10.0);
+                        ui.add(egui::Label::new(RichText::new(a.label()).size(17.0)).truncate());
+                        let when = a.last_sync.as_ref().map(|t| format!("  ·  synced {t}")).unwrap_or_default();
+                        let kind = if a.proton { "Proton account" } else if a.microsoft { "Microsoft account" } else if a.google { "Google account" } else if a.nextcloud { "Nextcloud account" } else { "CalDAV account" };
+                        ui.add(egui::Label::new(RichText::new(format!("{kind}{when}")).size(14.0).color(muted)).truncate());
+                    });
                 });
             });
             if let Some(e) = &a.error {
@@ -1098,7 +1132,7 @@ impl App {
             }
             // its calendars: a tick brings one in and keeps it in step
             for c in self.data.calendars.iter_mut().filter(|c| c.account == Some(a.id)) {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.add_space(14.0);
                     if ui.checkbox(&mut c.visible, "").on_hover_text("Show and sync this calendar").changed() {
                         changed = true;
@@ -1125,7 +1159,7 @@ impl App {
             }
             // lists on the server that hold only tasks
             for l in self.data.lists.iter().filter(|l| l.account == Some(a.id) && !self.data.calendars.iter().any(|c| c.account == l.account && c.remote_id == l.remote_id)) {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.add_space(42.0);
                     let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
                     ui.painter().circle_filled(r.center(), 6.0, rgb(l.color));
@@ -1205,11 +1239,13 @@ impl App {
             }
         };
         let fixed_row = |ui: &mut egui::Ui, label: &str, keys: &str| {
-            ui.allocate_ui_with_layout(vec2(ui.available_width(), 44.0), Layout::left_to_right(Align::Center), |ui| {
-                ui.label(RichText::new(label).size(17.0).color(mix(muted, text, 0.6)));
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.spacing_mut().item_spacing.x = 6.0;
-                    chips(ui, keys);
+            // the keys first; the name is cut short if they leave too little room
+            ui.allocate_ui_with_layout(vec2(ui.available_width(), 44.0), Layout::right_to_left(Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 6.0;
+                chips(ui, keys);
+                ui.add_space(10.0);
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    ui.add(egui::Label::new(RichText::new(label).size(17.0).color(mix(muted, text, 0.6))).truncate());
                 });
             });
         };
@@ -1231,7 +1267,7 @@ impl App {
             ui.horizontal(|ui| {
                 search_field(ui, &mut self.shortcut_query, "Search shortcuts", (ui.available_width() * 0.5).clamp(220.0, 360.0));
                 ui.add_space(12.0);
-                ui.label(RichText::new("Click a shortcut to change it, then press the new keys. Esc cancels.").size(15.0).color(muted));
+                ui.add(egui::Label::new(RichText::new("Click a shortcut to change it, then press the new keys. Esc cancels.").size(15.0).color(muted)).wrap());
             });
             ui.add_space(10.0);
         }
@@ -1268,12 +1304,9 @@ impl App {
                 all.iter().filter(|(c, _, bs)| c != cmd && bs.iter().any(|b| mine.contains(b))).map(|(_, l, _)| *l).collect();
             let recording = self.recording == Some(*cmd);
             let (mut start, mut reset, mut clear) = (false, false, false);
-            ui.allocate_ui_with_layout(vec2(ui.available_width(), 44.0), Layout::left_to_right(Align::Center), |ui| {
-                ui.label(RichText::new(*label).size(17.0).color(mix(muted, text, 0.6)));
-                if !clash.is_empty() {
-                    ui.label(RichText::new(icons::INFO).size(14.0).color(RED)).on_hover_text(format!("Also used by: {}", clash.join(", ")));
-                }
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            // the keys first; the name is cut short if they leave too little room
+            ui.allocate_ui_with_layout(vec2(ui.available_width(), 44.0), Layout::right_to_left(Align::Center), |ui| {
+                {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     // reset and clear sit to the right of the keys
                     if custom {
@@ -1298,6 +1331,13 @@ impl App {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
                     start = r.on_hover_text("Click, then press the new keys").clicked();
+                }
+                ui.add_space(10.0);
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    ui.add(egui::Label::new(RichText::new(*label).size(17.0).color(mix(muted, text, 0.6))).truncate());
+                    if !clash.is_empty() {
+                        ui.label(RichText::new(icons::INFO).size(14.0).color(RED)).on_hover_text(format!("Also used by: {}", clash.join(", ")));
+                    }
                 });
             });
             if start {

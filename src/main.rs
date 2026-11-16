@@ -2750,6 +2750,10 @@ fn main() {
         .with_min_inner_size([360.0, 480.0]);
     if shot.is_some() {
         vb = vb.with_active(false);
+        // test aid: KALENDAR_WINDOW=760x480 takes the picture at that size
+        if let Some((w, h)) = std::env::var("KALENDAR_WINDOW").ok().and_then(|s| s.split_once('x').and_then(|(w, h)| Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?)))) {
+            vb = vb.with_inner_size([w, h]);
+        }
         #[cfg(target_os = "windows")]
         {
             vb = vb.with_window_level(egui::WindowLevel::AlwaysOnBottom);

@@ -165,10 +165,15 @@ fn time_of(min: i64) -> chrono::NaiveTime {
 
 impl App {
     pub fn ui_dialogs(&mut self, ctx: &egui::Context) {
+        let had_frame = self.frame_editor.is_some();
         self.dlg_create(ctx);
         self.dlg_event(ctx);
         self.dlg_task(ctx);
-        self.dlg_frame(ctx);
+        // a block window that has just turned to Frame was drawn in this pass
+        // already, under the same id; the frame fields come in the next pass
+        if had_frame || self.frame_editor.as_ref().is_none_or(|f| f.from_block.is_none()) {
+            self.dlg_frame(ctx);
+        }
         self.ui_settings_window(ctx);
         self.dlg_command(ctx);
         self.dlg_new_task(ctx);
@@ -431,6 +436,8 @@ impl App {
             if let Some(fe) = &mut self.frame_editor {
                 fe.from_block = Some((c.ev.clone(), c.anchor_rect));
             }
+            // run the pass again at once, so no frame shows without the window
+            ctx.request_discard("the block window turned to Frame");
         } else if save {
             self.snapshot();
             let mut ev = c.ev.clone();
@@ -771,6 +778,8 @@ impl App {
             ev.title = ed.frame.name.clone();
             ev.calendar = ed.frame.calendar;
             self.create = Some(crate::CreateEdit::new(ev, kind, rect));
+            // the block window ran earlier in this pass; run it again at once
+            ctx.request_discard("the frame window turned back to a block");
             return;
         }
         if save {
