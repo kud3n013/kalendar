@@ -412,6 +412,10 @@ impl App {
         row(ui, tr("Automatically assign due dates"), tr("A task put on the calendar gets that day as its due date."), |ui| {
             combo(ui, "ad", &mut p.auto_due, &[(true, tr("Yes").into()), (false, tr("No").into())]);
         });
+        row(ui, tr("Default block length"), tr("How long a task's block is when the task has no time given."), |ui| {
+            let opts: Vec<(i64, String)> = [15, 30, 45, 60, 90, 120].iter().map(|m| (*m, fmt_duration(*m))).collect();
+            combo(ui, "pd", &mut p.default_task_min, &opts);
+        });
         divider(ui, border);
         row(ui, tr("Time format"), "", |ui| {
             combo(ui, "tf", &mut p.hour12, &[(false, "24 hours".into()), (true, "12 hours (AM/PM)".into())]);
@@ -521,10 +525,6 @@ impl App {
             ui.add_space(10.0);
         }
         let p = &mut self.data.prefs;
-        row(ui, tr("Default duration"), tr("Used for tasks without a time estimate."), |ui| {
-            let opts: Vec<(i64, String)> = [15, 30, 45, 60, 90, 120].iter().map(|m| (*m, fmt_duration(*m))).collect();
-            combo(ui, "pd", &mut p.default_task_min, &opts);
-        });
         let yes_no = [(true, tr("Yes").to_string()), (false, tr("No").to_string())];
         row(ui, tr("Split long tasks"), tr("Tasks of two hours or more may be cut into several sessions."), |ui| combo(ui, "sp", &mut p.split_long_tasks, &yes_no));
         row(ui, tr("Schedule tasks with no due date"), "", |ui| combo(ui, "pn", &mut p.plan_without_due, &yes_no));

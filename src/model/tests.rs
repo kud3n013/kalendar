@@ -155,6 +155,8 @@ fn plan_without_frames_is_unchanged() {
     let now = ymd(11, 18).and_hms_opt(8, 0, 0).unwrap();
     let mut d = Data::sample(now.date());
     d.frames.clear();
+    // recorded when tasks without a time took an hour
+    d.prefs.default_task_min = 60;
     for (title, mins) in [("Big job", 240), ("Huge job", 400), ("Too big", 2000)] {
         let id = d.new_id();
         d.tasks.push(Task { id, title: title.into(), duration_min: Some(mins), due: Some(ymd(11, 30)), ..Default::default() });

@@ -136,7 +136,7 @@ impl Default for Prefs {
             undo_grace_s: 10,
             auto_due: true,
             due_move: DueMove::Ask,
-            default_task_min: 60,
+            default_task_min: 30,
             split_long_tasks: true,
             plan_without_due: true,
             use_frames: true,
