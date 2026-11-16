@@ -81,6 +81,7 @@ keyed! {
     /// a list heading lit while a task is dragged over it
     section_drop = "drop";
     list_dots = "listdots";
+    list_add = "listadd";
     /// a task row of the panel
     task_row = "row";
     /// the small name field under a "+" beside a dropdown

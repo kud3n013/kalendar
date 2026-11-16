@@ -54,6 +54,23 @@ pub fn icon_btn(ui: &mut egui::Ui, glyph: &str, size: f32, tip: &str, c: (Color3
     }
 }
 
+/// Paints one of the small buttons that show on a hovered row: a list's
+/// "+" and three dots, a task's three dots and bin. `glow` is how far the
+/// row is lit; the button gets its own squircle while it is hovered or
+/// `held` (its menu is open). The squircle lets the row's colour through.
+#[allow(clippy::too_many_arguments)]
+fn row_btn(ui: &egui::Ui, r: Rect, resp: &egui::Response, glyph: &str, size: f32, glow: f32, held: bool, hot: Color32, (muted, text): (Color32, Color32)) {
+    let on = resp.hovered() || held;
+    if glow <= 0.0 && !on {
+        return;
+    }
+    if on {
+        fill_squircle(ui.painter(), r, theme::RADIUS, text.gamma_multiply(0.09));
+    }
+    let c = if on { hot } else { muted.gamma_multiply(glow.max(0.0)) };
+    ui.painter().text(r.center(), Align2::CENTER_CENTER, glyph, FontId::proportional(size), c);
+}
+
 pub fn due_label(d: NaiveDate, today: NaiveDate) -> String {
     match (d - today).num_days() {
         -1 => tr("Yesterday").into(),
@@ -514,6 +531,10 @@ impl App {
                 }
                 let done_ids: Vec<u64> = self.data.tasks.iter().filter(|t| t.done).map(|t| t.id).collect();
 
+                // the bar gets its own lane beside the lists instead of
+                // floating over them, with room for their washes, which
+                // reach 6 points past the content
+                ui.spacing_mut().scroll = egui::style::ScrollStyle { bar_inner_margin: 9.0, ..egui::style::ScrollStyle::solid() };
                 egui::ScrollArea::vertical().id_salt("tasklist").auto_shrink([false, false]).show(ui, |ui| {
                     // room for the first list's border, which reaches above its heading
                     ui.add_space(6.0);
@@ -689,8 +710,11 @@ impl App {
         // the menu button sits on the row, so the row itself is not "hovered" there
         let editing = list.is_some() && self.list_edit.as_ref().map(|e| e.id) == list;
         let glow = ctx.animate_bool_with_time(ids::section(key), resp.hovered() || ui.rect_contains_pointer(r) || editing, motion::HOVER.secs());
+        // hover is a see-through wash of the list's own colour, so it sits
+        // on the list's background instead of covering it with grey
+        let tint = if list.is_some() { mix(color, text, 0.25) } else { text };
         if glow > 0.0 {
-            fill_squircle(ui.painter(), r.expand2(vec2(6.0, 0.0)), theme::RADIUS, mix(side, text, 0.05 * glow));
+            fill_squircle(ui.painter(), r.expand2(vec2(6.0, 2.0)), theme::RADIUS, tint.gamma_multiply(0.07 * glow));
         }
         let p = ui.painter();
         let ic = pos2(r.left() + 9.0, r.center().y);
@@ -717,15 +741,11 @@ impl App {
         p.line_segment([tip, tip - dir * 5.0 + perp * 5.0], Stroke::new(1.6, muted));
         p.line_segment([tip, tip - dir * 5.0 - perp * 5.0], Stroke::new(1.6, muted));
         let mut add_clicked = false;
-        if let Some(_l) = list {
-            if glow > 0.0 {
-                let pr = Rect::from_center_size(pos2(r.right() - 66.0, r.center().y), vec2(22.0, 22.0));
-                let over = ui.rect_contains_pointer(pr);
-                ui.painter().text(pr.center(), Align2::CENTER_CENTER, "+", FontId::proportional(theme::size::HEADING), if over { text } else { muted.gamma_multiply(glow) });
-                if over && resp.clicked() {
-                    add_clicked = true;
-                }
-            }
+        if let Some(lid) = list {
+            let pr = Rect::from_center_size(pos2(r.right() - 64.0, r.center().y), vec2(24.0, 24.0));
+            let add = ui.interact(pr, ids::list_add(lid), Sense::click()).on_hover_text(tr("New task"));
+            row_btn(ui, pr, &add, icons::PLUS, theme::size::LARGE, glow, false, text, (muted, text));
+            add_clicked = add.clicked();
         }
         if add_clicked {
             if let Some(l) = list {
@@ -747,13 +767,7 @@ impl App {
             let dots = ui.interact(dr, ids::list_dots(lid), Sense::click()).on_hover_text(tr("Edit or remove"));
             let menu = egui::Popup::menu(&dots);
             let open = menu.is_open();
-            if glow > 0.0 || open {
-                if dots.hovered() || open {
-                    fill_squircle(ui.painter(), dr, theme::RADIUS, mix(side, text, 0.10));
-                }
-                let dc = if dots.hovered() || open { text } else { muted.gamma_multiply(glow) };
-                ui.painter().text(dr.center(), Align2::CENTER_CENTER, icons::ELLIPSIS, FontId::proportional(theme::size::LARGE), dc);
-            }
+            row_btn(ui, dr, &dots, icons::ELLIPSIS, theme::size::LARGE, glow, open, text, (muted, text));
             menu.show(|ui| self.list_menu(ui, lid, at));
             resp.context_menu(|ui| self.list_menu(ui, lid, at));
         }
@@ -762,7 +776,7 @@ impl App {
             ui.scope(|ui| {
                 ui.set_opacity(a);
                 for id in items {
-                    self.task_row(ui, ctx, *id, key);
+                    self.task_row(ui, ctx, *id, key, tint);
                 }
             });
             ui.add_space(6.0 * a);
@@ -796,53 +810,71 @@ impl App {
         self.commit();
     }
 
-    fn task_row(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, id: u64, salt: &str) {
+    /// One task in a list. `tint` is the colour its hover is washed in.
+    fn task_row(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, id: u64, salt: &str, tint: Color32) {
         let Some(t) = self.data.task(id).cloned() else { return };
         let today = Local::now().date_naive();
-        let (muted, text, side, border) = (self.pal.muted, self.pal.text, self.pal.side, self.pal.border);
+        let (muted, text, border) = (self.pal.muted, self.pal.text, self.pal.border);
         let scheduled = self.data.task_is_scheduled(id);
         ui.push_id((salt, id), |ui| {
+            // the hover goes under the row, painted once its size is known
+            let under = ui.painter().add(egui::Shape::Noop);
             let inner = egui::Frame::new().inner_margin(Margin { left: 2, right: 2, top: 4, bottom: 4 }).show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
+                let btns = ui.horizontal(|ui| {
                     let mut d = t.done;
                     if round_check(ui, &mut d).changed() {
                         self.toggle_task(id);
                         self.say(ctx, if d { tr("Task completed") } else { tr("Task reopened") }, true);
                     }
-                    // tasks left without a name by an older version still show one
-                    let mut title = RichText::new(if t.title.trim().is_empty() { tr("New task") } else { &t.title }).size(theme::size::BODY);
-                    if t.done {
-                        title = title.color(muted).strikethrough();
-                    }
-                    let r = ui
-                        .add(egui::Label::new(title).truncate().selectable(false).sense(Sense::click_and_drag()))
-                        .on_hover_cursor(egui::CursorIcon::Grab);
-                    if r.drag_started() {
-                        self.drag_task = Some(id);
-                    }
-                    if r.clicked() {
-                        self.edit_task(id);
-                    }
-                    r.context_menu(|ui| {
-                        if ui.button(tr("Edit")).clicked() {
-                            self.edit_task(id);
-                            ui.close();
-                        }
-                        ui.menu_button(tr("Move to list"), |ui| {
-                            for (lid, name, col) in self.list_items(true) {
-                                if crate::dialogs::pick_row(ui, t.list == lid, &name, col).clicked() {
-                                    self.move_to_list(id, lid);
+                    // the bin and the three dots keep their place at the end,
+                    // so a long title stops short of them
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.spacing_mut().item_spacing.x = 0.0;
+                        let (br, bin) = ui.allocate_exact_size(vec2(24.0, 22.0), Sense::click());
+                        let (dr, dots) = ui.allocate_exact_size(vec2(24.0, 22.0), Sense::click());
+                        let bin = bin.on_hover_text(tr("Delete task"));
+                        let dots = dots.on_hover_text(tr("Edit"));
+                        ui.add_space(4.0);
+                        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                            // tasks left without a name by an older version still show one
+                            let mut title = RichText::new(if t.title.trim().is_empty() { tr("New task") } else { &t.title }).size(theme::size::BODY);
+                            if t.done {
+                                title = title.color(muted).strikethrough();
+                            }
+                            let r = ui
+                                .add(egui::Label::new(title).truncate().selectable(false).sense(Sense::click_and_drag()))
+                                .on_hover_cursor(egui::CursorIcon::Grab);
+                            if r.drag_started() {
+                                self.drag_task = Some(id);
+                            }
+                            if r.clicked() {
+                                self.edit_task(id);
+                            }
+                            r.context_menu(|ui| {
+                                if ui.button(tr("Edit")).clicked() {
+                                    self.edit_task(id);
                                     ui.close();
                                 }
-                            }
+                                ui.menu_button(tr("Move to list"), |ui| {
+                                    for (lid, name, col) in self.list_items(true) {
+                                        if crate::dialogs::pick_row(ui, t.list == lid, &name, col).clicked() {
+                                            self.move_to_list(id, lid);
+                                            ui.close();
+                                        }
+                                    }
+                                });
+                                if ui.button(RichText::new(tr("Delete task")).color(theme::DANGER)).clicked() {
+                                    self.delete_task(ctx, id);
+                                    ui.close();
+                                }
+                            });
                         });
-                        if ui.button(RichText::new(tr("Delete task")).color(theme::DANGER)).clicked() {
-                            self.delete_task(ctx, id);
-                            ui.close();
-                        }
-                    });
-                });
+                        [(dr, dots, icons::ELLIPSIS, theme::size::LARGE, text), (br, bin, icons::TRASH, theme::size::SMALL, theme::DANGER)]
+                    })
+                    .inner
+                })
+                .inner;
                 // small labels under the title
                 let mut chips: Vec<(String, Color32)> = vec![];
                 if scheduled {
@@ -863,21 +895,39 @@ impl App {
                     chips.push((format!("#{g}"), muted));
                 }
                 if !chips.is_empty() {
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = vec2(5.0, 3.0);
+                    // each pill is measured first, so one that does not fit
+                    // starts the next line, under the title
+                    ui.horizontal_top(|ui| {
                         ui.add_space(27.0);
-                        for (label, c) in chips {
-                            egui::Frame::new().stroke(Stroke::new(1.0, border)).corner_radius(theme::CHIP_RADIUS).inner_margin(Margin::symmetric(5, 1)).show(ui, |ui| {
-                                ui.label(RichText::new(label).size(theme::size::TINY).color(c));
-                            });
-                        }
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = vec2(5.0, 3.0);
+                            let font = FontId::proportional(theme::size::TINY);
+                            for (label, c) in chips {
+                                let g = ui.painter().layout_no_wrap(label, font.clone(), c);
+                                let size = g.size() + vec2(10.0, 2.0);
+                                let (r, _) = ui.allocate_exact_size(size, Sense::hover());
+                                ui.painter().rect_stroke(r, theme::CHIP_RADIUS, Stroke::new(1.0, border), egui::StrokeKind::Inside);
+                                ui.painter().galley(r.center() - g.size() / 2.0, g, c);
+                            }
+                        });
                     });
                 }
+                btns
             });
             let hovered = ui.rect_contains_pointer(inner.response.rect);
             let glow = ctx.animate_bool_with_time(ids::task_row((salt, id)), hovered, motion::HOVER.secs());
             if glow > 0.0 {
-                fill_squircle(ui.painter(), inner.response.rect.expand2(vec2(6.0, 0.0)), theme::RADIUS, mix(side, text, 0.06).gamma_multiply(glow * 0.6));
+                let r = inner.response.rect.expand2(vec2(4.0, 0.0));
+                ui.painter().set(under, egui::Shape::convex_polygon(crate::squircle_points(r, theme::RADIUS), tint.gamma_multiply(0.07 * glow), Stroke::NONE));
+            }
+            let [(dr, dots, dg, ds, dh), (br, bin, bg, bs, bh)] = inner.inner;
+            row_btn(ui, dr, &dots, dg, ds, glow, false, dh, (muted, text));
+            row_btn(ui, br, &bin, bg, bs, glow, false, bh, (muted, text));
+            if dots.clicked() {
+                self.edit_task(id);
+            }
+            if bin.clicked() {
+                self.delete_task(ctx, id);
             }
         });
     }
