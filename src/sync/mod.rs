@@ -290,6 +290,29 @@ pub fn push(p: &mut dyn Provider, cal: &RemoteCalendar, jobs: &[PushJob], stamp:
         .collect()
 }
 
+/// For the tests' stand-in servers: reads one HTTP request and returns its
+/// head and body, the body read as far as `Content-Length` says.
+#[cfg(test)]
+pub(crate) fn read_request(s: &mut impl std::io::Read) -> (String, String) {
+    let mut all = vec![];
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = s.read(&mut buf).unwrap_or(0);
+        all.extend_from_slice(&buf[..n]);
+        let text = String::from_utf8_lossy(&all).to_string();
+        let Some((head, body)) = text.split_once("\r\n\r\n") else {
+            if n == 0 {
+                return (text, String::new());
+            }
+            continue;
+        };
+        let len: usize = head.lines().find_map(|l| l.to_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap_or(0))).unwrap_or(0);
+        if body.len() >= len || n == 0 {
+            return (head.to_string(), body.to_string());
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

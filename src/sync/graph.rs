@@ -276,7 +276,7 @@ impl Provider for Graph {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Read, Write};
+    use std::io::Write;
     use std::sync::{Arc, Mutex};
 
     /// A stand-in for Graph: answers the requests it is given in order,
@@ -289,19 +289,10 @@ mod tests {
         std::thread::spawn(move || {
             for (status, reply) in replies {
                 let (mut s, _) = listener.accept().unwrap();
-                let mut all = vec![];
-                let mut buf = [0u8; 8192];
-                loop {
-                    let n = s.read(&mut buf).unwrap_or(0);
-                    all.extend_from_slice(&buf[..n]);
-                    let text = String::from_utf8_lossy(&all).to_string();
-                    let Some((head, body)) = text.split_once("\r\n\r\n") else { continue };
-                    let len: usize = head.lines().find_map(|l| l.to_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap_or(0))).unwrap_or(0);
-                    if body.len() >= len || n == 0 {
-                        seen.lock().unwrap().push(text);
-                        break;
-                    }
-                }
+                let (head, body) = super::super::read_request(&mut s);
+                seen.lock().unwrap().push(format!("{head}
+
+{body}"));
                 let reply = reply.replace("{BASE}", &b);
                 let _ = write!(s, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}", reply.len());
             }

@@ -243,7 +243,7 @@ impl App {
     /// window, which is woken to take it in.
     pub fn in_background(&self, ctx: &egui::Context, work: impl FnOnce(&dyn Fn(SyncDone)) + Send + 'static) {
         let (tx, ctx) = (self.sync_tx.clone(), ctx.clone());
-        std::thread::spawn(move || {
+        crate::worker::spawn("sync", move || {
             work(&|done| {
                 let _ = tx.send(done);
                 ctx.request_repaint();
@@ -271,7 +271,7 @@ impl App {
     /// Removes a calendar and forgets its private link.
     pub fn drop_calendar(&mut self, id: u64) {
         if self.data.calendar(id).is_some_and(|c| c.url_secret) && self.shot.is_none() {
-            std::thread::spawn(move || secrets::delete(&secrets::feed_key(id)));
+            crate::worker::spawn("forget-link", move || secrets::delete(&secrets::feed_key(id)));
         }
         self.data.remove_calendar(id);
     }
@@ -315,7 +315,7 @@ impl App {
         self.data.remove_account(id);
         let allow_file = self.data.prefs.plaintext_secrets;
         if self.shot.is_none() {
-            std::thread::spawn(move || {
+            crate::worker::spawn("sign-out", move || {
                 let key = secrets::account_key(id);
                 // a Nextcloud app password is taken back at the server too
                 // a Google sign-in likewise
@@ -624,7 +624,7 @@ impl App {
                             let server = format!("proton:{}", username.to_lowercase());
                             if self.data.accounts.iter().any(|a| a.server == server) {
                                 self.acct_error = Some("This account is already connected.".into());
-                                std::thread::spawn(move || sync::proton::sign_out(sync::proton::API, &g.uid, &g.access));
+                                crate::worker::spawn("sign-out", move || sync::proton::sign_out(sync::proton::API, &g.uid, &g.access));
                             } else {
                                 let id = self.data.new_id();
                                 self.data.accounts.push(Account { id, server, username, proton: true, ..Default::default() });

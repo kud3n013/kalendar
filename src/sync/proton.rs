@@ -757,7 +757,7 @@ mod tests {
     use super::super::proton_keys::tests::{make_key, seal, seal_armored, sign};
     use super::*;
     use num_bigint::BigUint;
-    use std::io::{Read, Write};
+    use std::io::Write;
     use std::sync::{Arc, Mutex};
 
     const SIGNED_MODULUS: &str = "-----BEGIN PGP SIGNED MESSAGE-----\nHash: SHA256\n\nW2z5HBi8RvsfYzZTS7qBaUxxPhsfHJFZpu3Kd6s1JafNrCCH9rfvPLrfuqocxWPgWDH2R8neK7PkNvjxto9TStuY5z7jAzWRvFWN9cQhAKkdWgy0JY6ywVn22+HFpF4cYesHrqFIKUPDMSSIlWjBVmEJZ/MusD44ZT29xcPrOqeZvwtCffKtGAIjLYPZIEbZKnDM1Dm3q2K/xS5h+xdhjnndhsrkwm9U9oyA2wxzSXFL+pdfj2fOdRwuR5nW0J2NFrq3kJjkRmpO/Genq1UW+TEknIWAb6VzJJJA244K/H8cnSx2+nSNZO3bbo6Ys228ruV9A8m6DhxmS+bihN3ttQ==\n-----BEGIN PGP SIGNATURE-----\nVersion: ProtonMail\nComment: https://protonmail.com\n\nwl4EARYIABAFAlwB1j0JEDUFhcTpUY8mAAD8CgEAnsFnF4cF0uSHKkXa1GIa\nGO86yMV4zDZEZcDSJo0fgr8A/AlupGN9EdHlsrZLmTA1vhIx+rOgxdEff28N\nkvNM7qIK\n=q6vu\n-----END PGP SIGNATURE-----";
@@ -774,18 +774,7 @@ mod tests {
         std::thread::spawn(move || {
             for s in listener.incoming() {
                 let Ok(mut s) = s else { break };
-                let mut all = vec![];
-                let mut buf = [0u8; 8192];
-                let (head, body) = loop {
-                    let n = s.read(&mut buf).unwrap_or(0);
-                    all.extend_from_slice(&buf[..n]);
-                    let text = String::from_utf8_lossy(&all).to_string();
-                    let Some((head, body)) = text.split_once("\r\n\r\n") else { continue };
-                    let len: usize = head.lines().find_map(|l| l.to_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap_or(0))).unwrap_or(0);
-                    if body.len() >= len || n == 0 {
-                        break (head.to_string(), body.to_string());
-                    }
-                };
+                let (head, body) = super::super::read_request(&mut s);
                 let mut first = head.lines().next().unwrap_or("").split(' ');
                 let (method, path) = (first.next().unwrap_or(""), first.next().unwrap_or(""));
                 seen.lock().unwrap().push(format!("{method} {path}"));

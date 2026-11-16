@@ -266,19 +266,7 @@ mod tests {
         let seen = got.clone();
         std::thread::spawn(move || {
             let (mut s, _) = listener.accept().unwrap();
-            let mut all = vec![];
-            let mut buf = [0u8; 4096];
-            loop {
-                let n = s.read(&mut buf).unwrap_or(0);
-                all.extend_from_slice(&buf[..n]);
-                let text = String::from_utf8_lossy(&all).to_string();
-                let Some((head, body)) = text.split_once("\r\n\r\n") else { continue };
-                let len: usize = head.lines().find_map(|l| l.to_lowercase().strip_prefix("content-length:").map(|v| v.trim().parse().unwrap_or(0))).unwrap_or(0);
-                if body.len() >= len || n == 0 {
-                    *seen.lock().unwrap() = body.to_string();
-                    break;
-                }
-            }
+            *seen.lock().unwrap() = super::super::read_request(&mut s).1;
             let _ = write!(s, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}", reply.len());
         });
         (url, got)

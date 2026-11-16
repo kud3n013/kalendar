@@ -16,6 +16,7 @@ mod tz;
 mod dialogs;
 mod fonts;
 mod views;
+mod worker;
 
 mod app;
 mod commands;
