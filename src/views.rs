@@ -1068,6 +1068,15 @@ impl App {
             m.heading(ui, tr("Planner"));
             m.sub(ui, icons::REFRESH, tr("Replan session"), |ui| {
                 let mut s = Menu::start(ui);
+                // the keys sit at the far end, so the menu would take all
+                // the width it is offered: hold it to its longest row
+                let font = FontId::proportional(theme::size::UI);
+                let longest = [tr("Reschedule this session"), tr("Complete & schedule more time"), tr("Split & reschedule remaining time")]
+                    .iter()
+                    .map(|l| ui.painter().layout_no_wrap(format!("{}   {l}", icons::CHECK), font.clone(), muted).size().x)
+                    .fold(0.0, f32::max);
+                let keys = ui.painter().layout_no_wrap("Shift+R".into(), FontId::monospace(theme::size::MICRO), muted).size().x;
+                ui.set_width(longest + 2.0 * 10.0 + 16.0 + keys + 10.0 + 2.0 * 8.0);
                 // each row keeps its keys at the far end
                 let row = |ui: &mut egui::Ui, s: &Menu, icon: &str, label: &str, keys: &str, enabled: bool| -> bool {
                     ui.horizontal(|ui| {
