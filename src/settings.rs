@@ -1,5 +1,6 @@
 //! The settings window: a window of its own with a list of pages on the left.
 
+use crate::ids;
 use crate::motion;
 use crate::theme;
 use crate::icons;
@@ -47,7 +48,7 @@ struct Find {
 }
 
 fn find_id() -> egui::Id {
-    egui::Id::unique("settings_find")
+    ids::settings_find()
 }
 
 fn finding(ui: &egui::Ui) -> bool {
@@ -143,7 +144,7 @@ fn row(ui: &mut egui::Ui, label: &str, tip: &str, add: impl FnOnce(&mut egui::Ui
     // too narrow for the name beside its control: the control goes below
     let stack = label_w + 24.0 + wide > avail;
     let cw = if stack { avail.min(CONTROL_W) } else { wide };
-    ui.data_mut(|d| d.insert_temp(egui::Id::unique("control_w"), cw));
+    ui.data_mut(|d| d.insert_temp(ids::control_w(), cw));
     let name = |ui: &mut egui::Ui| {
         ui.add(egui::Label::new(RichText::new(label).size(theme::size::TITLE)).truncate());
         if !tip.is_empty() {
@@ -174,7 +175,7 @@ fn row(ui: &mut egui::Ui, label: &str, tip: &str, add: impl FnOnce(&mut egui::Ui
 
 fn combo<T: PartialEq + Copy>(ui: &mut egui::Ui, id: &str, value: &mut T, options: &[(T, String)]) {
     let current = options.iter().find(|(v, _)| v == value).map(|(_, l)| l.clone()).unwrap_or_default();
-    let cw = ui.data(|d| d.get_temp::<f32>(egui::Id::unique("control_w"))).unwrap_or(CONTROL_W);
+    let cw = ui.data(|d| d.get_temp::<f32>(ids::control_w())).unwrap_or(CONTROL_W);
     egui::ComboBox::from_id_salt(id).width(cw).selected_text(current).show_ui(ui, |ui| {
         for (v, l) in options {
             ui.selectable_value(value, *v, l);
@@ -477,7 +478,7 @@ impl App {
         });
         let names = self.font_names.get_or_insert_with(crate::fonts::families);
         row(ui, "Font", "For all text. Emoji always use the system's emoji font.", |ui| {
-            let cw = ui.data(|d| d.get_temp::<f32>(egui::Id::unique("control_w"))).unwrap_or(CONTROL_W);
+            let cw = ui.data(|d| d.get_temp::<f32>(ids::control_w())).unwrap_or(CONTROL_W);
             let shown = if p.font.is_empty() { "System default".to_string() } else { p.font.clone() };
             egui::ComboBox::from_id_salt("font").width(cw).height(320.0).selected_text(shown).show_ui(ui, |ui| {
                 ui.selectable_value(&mut p.font, String::new(), "System default");

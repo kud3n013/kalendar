@@ -1,5 +1,6 @@
 //! The task panel (left or right) and the bar above the calendar.
 
+use crate::ids;
 use crate::motion;
 use crate::theme;
 use crate::icons;
@@ -7,7 +8,7 @@ use crate::model::*;
 use crate::{fill_squircle, mix, rgb, App, Cmd};
 use chrono::{Datelike, Duration, Local, NaiveDate};
 use eframe::egui::{
-    self, pos2, vec2, Align, Align2, Color32, FontId, Id, Layout, Margin, Rect, RichText, Sense, Stroke,
+    self, pos2, vec2, Align, Align2, Color32, FontId, Layout, Margin, Rect, RichText, Sense, Stroke,
 };
 
 
@@ -64,7 +65,7 @@ pub fn due_label(d: NaiveDate, today: NaiveDate) -> String {
 impl App {
     /// The small month for jumping to a date.
     fn ui_quick_nav(&mut self, ctx: &egui::Context, at: egui::Pos2) {
-        let a = ctx.animate_bool_with_time(Id::unique("quicknav"), self.quick_nav, motion::NORMAL.secs());
+        let a = ctx.animate_bool_with_time(ids::quick_nav(), self.quick_nav, motion::NORMAL.secs());
         if a <= 0.0 {
             return;
         }
@@ -74,7 +75,7 @@ impl App {
         let (muted, text, accent) = (self.pal.muted, self.pal.text, self.pal.accent);
         let mut go: Option<NaiveDate> = None;
         let mut step = 0;
-        egui::Area::new(Id::unique("quicknav_area"))
+        egui::Area::new(ids::quick_nav_area())
             .fixed_pos(at + vec2(0.0, (1.0 - a) * 12.0))
             .constrain(true)
             .order(egui::Order::Foreground)
@@ -102,7 +103,7 @@ impl App {
                         for i in 0..42 {
                             let d = start + Duration::days(i);
                             let (r, resp) = ui.allocate_exact_size(vec2(30.0, 26.0), Sense::click());
-                            let glow = ctx.animate_bool_with_time(Id::unique(("qnd", i)), resp.hovered(), motion::HOVER.secs());
+                            let glow = ctx.animate_bool_with_time(ids::quick_nav_day(i), resp.hovered(), motion::HOVER.secs());
                             if d == today {
                                 ui.painter().circle_filled(r.center(), 11.0, theme::DANGER);
                             } else if glow > 0.0 {
@@ -320,7 +321,7 @@ impl App {
             .drag_to_open(false)
             .frame(egui::Frame::new().fill(side))
             .show_collapsible(ui, &mut still_open, |ui| {
-                egui::Panel::bottom(Id::unique("panel_bottom"))
+                egui::Panel::bottom(ids::panel_bottom())
                     .show_separator_line(false)
                     .frame(egui::Frame::new().fill(side).inner_margin(Margin { left: 10, right: 10, top: 4, bottom: 8 }))
                     .show(ui, |ui| self.panel_bottom(ui, ctx, right, c));
@@ -335,7 +336,7 @@ impl App {
         // while the panel is closed, a lone handle brings it back
         if !open {
             let (anchor, dx) = if right { (Align2::RIGHT_TOP, -10.0) } else { (Align2::LEFT_TOP, 10.0) };
-            egui::Area::new(Id::unique("panel_handle")).anchor(anchor, [dx, 10.0]).order(egui::Order::Foreground).show(ctx, |ui| {
+            egui::Area::new(ids::panel_handle()).anchor(anchor, [dx, 10.0]).order(egui::Order::Foreground).show(ctx, |ui| {
                 if icon_btn(ui, icons::MENU, 17.0, &self.tip("Show the task panel", Cmd::ToggleTasks), c).clicked() {
                     self.run(ctx, Cmd::ToggleTasks);
                 }
@@ -365,7 +366,7 @@ impl App {
                     app.run(ctx, Cmd::Plan);
                 }
                 // undo appears while there is something to take back
-                let a = ctx.animate_bool_with_time(Id::unique("undo_btn"), !app.undo.is_empty(), motion::NORMAL.secs());
+                let a = ctx.animate_bool_with_time(ids::undo_button(), !app.undo.is_empty(), motion::NORMAL.secs());
                 if a > 0.0 {
                     ui.scope(|ui| {
                         ui.set_opacity(a);
@@ -587,7 +588,7 @@ impl App {
         if ed.id != 0 && !self.data.lists.iter().any(|l| l.id == ed.id) {
             return;
         }
-        let out = egui::Area::new(Id::unique("list_edit")).order(egui::Order::Foreground).pivot(Align2::RIGHT_TOP).fixed_pos(ed.at).show(ctx, |ui| {
+        let out = egui::Area::new(ids::list_edit()).order(egui::Order::Foreground).pivot(Align2::RIGHT_TOP).fixed_pos(ed.at).show(ctx, |ui| {
             egui::Frame::popup(ui.style()).show(ui, |ui| {
                 ui.set_width(236.0);
                 self.list_fields(ui, ed.id, true, ed.fresh, &mut ed.snapped)
@@ -679,7 +680,7 @@ impl App {
         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
         // the menu button sits on the row, so the row itself is not "hovered" there
         let editing = list.is_some() && self.list_edit.as_ref().map(|e| e.id) == list;
-        let glow = ctx.animate_bool_with_time(Id::unique(("sec", key)), resp.hovered() || ui.rect_contains_pointer(r) || editing, motion::HOVER.secs());
+        let glow = ctx.animate_bool_with_time(ids::section(key), resp.hovered() || ui.rect_contains_pointer(r) || editing, motion::HOVER.secs());
         if glow > 0.0 {
             fill_squircle(ui.painter(), r.expand2(vec2(6.0, 0.0)), theme::RADIUS, mix(side, text, 0.05 * glow));
         }
@@ -699,7 +700,7 @@ impl App {
         fill_squircle(p, pill, theme::RADIUS, mix(side, text, 0.10));
         p.text(pill.center(), Align2::CENTER_CENTER, count, FontId::proportional(theme::size::TINY), muted);
         // chevron turns as the group opens
-        let turn = ctx.animate_bool_with_time(Id::unique(("chev", key)), !collapsed, motion::NORMAL.secs());
+        let turn = ctx.animate_bool_with_time(ids::section_chevron(key), !collapsed, motion::NORMAL.secs());
         let c = pos2(r.right() - 10.0, r.center().y);
         let ang = std::f32::consts::PI * (1.0 - 0.5 * turn); // left when closed, down when open
         let dir = vec2(ang.cos(), ang.sin());
@@ -735,7 +736,7 @@ impl App {
         if let Some(lid) = list {
             let at = r.right_bottom() + vec2(0.0, 2.0);
             let dr = Rect::from_center_size(pos2(r.right() - 38.0, r.center().y), vec2(24.0, 24.0));
-            let dots = ui.interact(dr, Id::unique(("listdots", lid)), Sense::click()).on_hover_text("Edit or remove");
+            let dots = ui.interact(dr, ids::list_dots(lid), Sense::click()).on_hover_text("Edit or remove");
             let menu = egui::Popup::menu(&dots);
             let open = menu.is_open();
             if glow > 0.0 || open {
@@ -748,7 +749,7 @@ impl App {
             menu.show(|ui| self.list_menu(ui, lid, at));
             resp.context_menu(|ui| self.list_menu(ui, lid, at));
         }
-        let a = ctx.animate_bool_with_time(Id::unique(("open", key)), !collapsed, motion::NORMAL.secs());
+        let a = ctx.animate_bool_with_time(ids::section_open(key), !collapsed, motion::NORMAL.secs());
         if a > 0.0 {
             ui.scope(|ui| {
                 ui.set_opacity(a);
@@ -845,7 +846,7 @@ impl App {
                 }
             });
             let hovered = ui.rect_contains_pointer(inner.response.rect);
-            let glow = ctx.animate_bool_with_time(Id::unique(("row", salt, id)), hovered, motion::HOVER.secs());
+            let glow = ctx.animate_bool_with_time(ids::task_row((salt, id)), hovered, motion::HOVER.secs());
             if glow > 0.0 {
                 fill_squircle(ui.painter(), inner.response.rect.expand2(vec2(6.0, 0.0)), theme::RADIUS, mix(side, text, 0.06).gamma_multiply(glow * 0.6));
             }

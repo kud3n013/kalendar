@@ -1,5 +1,6 @@
 //! What is drawn in the main window: toolbar, task list and calendar views.
 
+use crate::ids;
 use crate::motion;
 use crate::theme;
 use crate::icons;
@@ -7,7 +8,7 @@ use crate::model::*;
 use crate::{fill_squircle, mix, rgb, stroke_squircle, App, Cmd, CreateEdit, CreateKind, Drag, Palette};
 use chrono::{Datelike, Duration, Local, NaiveDate, NaiveDateTime, Timelike};
 use eframe::egui::{
-    self, pos2, vec2, Align, Align2, Color32, FontId, Id, Layout, Margin, PointerButton, Pos2, Rect, RichText, Sense,
+    self, pos2, vec2, Align, Align2, Color32, FontId, Layout, Margin, PointerButton, Pos2, Rect, RichText, Sense,
     Stroke, StrokeKind,
 };
 
@@ -228,9 +229,9 @@ impl App {
         let Some(pos) = ctx.input(|i| i.pointer.latest_pos()) else { return };
         let Some(t) = self.data.task(id) else { return };
         // Some(true): the frame under it keeps this task out altogether
-        let refused = ctx.data_mut(|d| d.remove_temp::<bool>(Id::unique("drag_misfit")));
+        let refused = ctx.data_mut(|d| d.remove_temp::<bool>(ids::drag_misfit()));
         let misfit = refused.is_some();
-        let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, Id::unique("ghost")));
+        let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, ids::ghost()));
         let h = if misfit { 50.0 } else { 34.0 };
         let r = Rect::from_min_size(pos + vec2(10.0, 8.0), vec2(230.0, h));
         fill_squircle(&p, r, theme::RADIUS, mix(self.pal.side, self.pal.text, 0.12));
@@ -369,7 +370,7 @@ impl App {
                 let y = hrect.top() + 47.0 + (ev_rows + k) as f32 * 22.0;
                 let r = Rect::from_min_max(pos2(x0 + i as f32 * col_w + 2.0, y), pos2(x0 + (i + 1) as f32 * col_w - 4.0, y + 20.0));
                 let over = hresp.hover_pos().map(|p| r.contains(p)).unwrap_or(false);
-                let glow = ui.ctx().animate_bool_with_time(Id::unique(("due", *tid)), over, motion::HOVER.secs());
+                let glow = ui.ctx().animate_bool_with_time(ids::due_glow(*tid), over, motion::HOVER.secs());
                 hp.rect_filled(r, 4.0, mix(self.pal.bg, self.pal.text, 0.03 + 0.07 * glow));
                 hp.rect_stroke(r, 4.0, Stroke::new(1.0, mix(self.pal.border, self.pal.text, 0.25)), StrokeKind::Inside);
                 let c = hp.with_clip_rect(r.shrink(2.0));
@@ -531,7 +532,7 @@ impl App {
         }
 
         // has the grid itself changed size since the last frame?
-        let grid_id = Id::unique("grid_shape");
+        let grid_id = ids::grid_shape();
         // other days count too: the page slide carries the blocks then, so
         // they must not also glide on their own to where they now belong
         let shape = (hh, col_w, days[0], n);
@@ -594,7 +595,7 @@ impl App {
                     let dragging = matches!(&self.drag, Some(Drag::Move { id, .. }) | Some(Drag::Resize { id }) if *id == e.id);
                     // a zoom or a new column width moves every block at once, like the frames
                     let secs = if regrid { 0.0 } else if dragging { motion::FOLLOW.secs() } else { motion::NORMAL.secs() };
-                    let key = Id::unique(("block", e.id, (*day - e.start.date()).num_days()));
+                    let key = ids::block((e.id, (*day - e.start.date()).num_days()));
                     let ax = ctx.animate_value_with_time(key.with("x"), target.left() - x0, secs);
                     let aw = ctx.animate_value_with_time(key.with("w"), target.width(), secs);
                     let at = ctx.animate_value_with_time(key.with("t"), target.top() - top, secs);
@@ -628,7 +629,7 @@ impl App {
         let hover_id = resp.hover_pos().and_then(|hp| items.iter().rev().find(|it| !it.draft && it.rect.contains(hp))).map(|it| it.id);
         for it in &items {
             let hovered = !it.draft && self.drag.is_none() && self.drag_task.is_none() && hover_id == Some(it.id);
-            let glow = ctx.animate_bool_with_time(Id::unique(("glow", it.id)), hovered, motion::HOVER.secs());
+            let glow = ctx.animate_bool_with_time(ids::block_glow(it.id), hovered, motion::HOVER.secs());
             draw_item(&painter, &self.pal, it, self.selected == Some(it.id) && !it.draft, glow);
         }
 
@@ -738,7 +739,7 @@ impl App {
         }
         // held at an edge, a drag carries on past it: up and down the day
         // scrolls, and a block being moved turns the page after a moment
-        let edge_id = Id::unique("drag_edge");
+        let edge_id = ids::drag_edge();
         let mut at_edge: Option<(i64, f64)> = None;
         if resp.dragged_by(PointerButton::Primary) && self.drag.is_some() {
             if let Some(pos) = ctx.pointer_latest_pos() {
@@ -932,7 +933,7 @@ impl App {
                     );
                     // it glides from slot to slot like a block being moved;
                     // where it first shows, or the grid changes, it is just there
-                    let key = Id::unique(("task_ghost", tid));
+                    let key = ids::task_ghost(tid);
                     let frame = ctx.cumulative_frame_nr();
                     let seen = ctx.data(|d| d.get_temp::<u64>(key)).is_some_and(|f| f + 1 >= frame);
                     ctx.data_mut(|d| d.insert_temp(key, frame));
@@ -962,7 +963,7 @@ impl App {
                     painter.text(r.left_top() + vec2(8.0, 4.0), Align2::LEFT_TOP, p.fmt_time(start.time()), FontId::proportional(theme::size::MICRO), text);
                     if !fits || kept_out.is_some() {
                         // shown under the title by ui_drag_ghost, which runs after the grid
-                        ctx.data_mut(|d| d.insert_temp(Id::unique("drag_misfit"), kept_out.is_some()));
+                        ctx.data_mut(|d| d.insert_temp(ids::drag_misfit(), kept_out.is_some()));
                     }
                     if ctx.input(|i| i.pointer.any_released()) {
                         match kept_out {
@@ -1026,7 +1027,7 @@ impl App {
                 let (from, to) = if row == 0 { (0, 6) } else { (6, EVENT_COLORS.len()) };
                 for (i, (col, name)) in EVENT_COLORS.iter().enumerate().take(to).skip(from) {
                     let (r, resp) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
-                    let grow = ctx.animate_bool_with_time(Id::unique(("dot", i)), resp.hovered(), motion::HOVER.secs());
+                    let grow = ctx.animate_bool_with_time(ids::colour_dot(i), resp.hovered(), motion::HOVER.secs());
                     ui.painter().circle_filled(r.center(), 9.0 + 2.0 * grow, rgb(*col));
                     if ev.color == Some(*col) {
                         ui.painter().circle_stroke(r.center(), 12.0, Stroke::new(1.5, self.pal.text));

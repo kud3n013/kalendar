@@ -2,6 +2,7 @@
 
 mod ics;
 mod icons;
+mod ids;
 mod model;
 mod theme;
 pub use theme::{mix, rgb, Palette};
@@ -2589,7 +2590,7 @@ impl eframe::App for App {
         if let Some(kind) = self.demo_menu.clone() {
             let want_task = kind == "task";
             if let Some(id) = self.data.events.iter().find(|e| e.task_id.is_some() == want_task && !e.all_day).map(|e| e.id) {
-                egui::Window::new("menu").title_bar(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+                egui::Window::new("menu").id(ids::demo_menu()).title_bar(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
                     self.block_menu(ui, id);
                 });
             }

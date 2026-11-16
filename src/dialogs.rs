@@ -1,5 +1,6 @@
 //! Pop-up windows: editors, preferences, shortcuts, command bar, messages.
 
+use crate::ids;
 use crate::motion;
 use crate::theme;
 use crate::icons;
@@ -54,7 +55,7 @@ fn time_drag(ui: &mut egui::Ui, m: &mut i64, lo: i64, hi: i64, hour12: bool, mut
 /// gives back the name typed there.
 fn add_button(ui: &mut egui::Ui, salt: &str, hint: &str) -> Option<String> {
     let b = ui.add(egui::Button::new("+").min_size(egui::vec2(24.0, 0.0))).on_hover_text(hint);
-    let id = Id::unique(("add_text", salt));
+    let id = ids::add_text(salt);
     let mut out = None;
     egui::Popup::from_toggle_button_response(&b).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
         let mut text = ui.data(|d| d.get_temp::<String>(id)).unwrap_or_default();
@@ -195,11 +196,11 @@ impl App {
         let muted = self.pal.muted;
         let p = self.data.prefs.clone();
         let w = 380.0;
-        let pos = place_beside(ctx, Id::unique("create_popup"), c.anchor_rect, egui::vec2(w + 20.0, 400.0));
+        let pos = place_beside(ctx, ids::create_popup(), c.anchor_rect, egui::vec2(w + 20.0, 400.0));
         let cal_color = self.data.calendar_color(c.ev.calendar);
         let today = Local::now().date_naive();
         egui::Window::new("create")
-            .id(Id::unique("create_popup"))
+            .id(ids::create_popup())
             .title_bar(false)
             .resizable(false)
             .fixed_pos(pos)
@@ -527,7 +528,7 @@ impl App {
         let hour12 = self.data.prefs.hour12;
         // begun from a drawn block, it is the very window the task and the
         // event are set up in: same place, same width, only the fields change
-        let win_id = if ed.from_block.is_some() { Id::unique("create_popup") } else { Id::unique("frame_editor") };
+        let win_id = if ed.from_block.is_some() { ids::create_popup() } else { ids::frame_editor() };
         let win = egui::Window::new(if ed.is_new { "New frame" } else { "Frame" }).id(win_id).collapsible(false).resizable(false);
         let win = match &ed.from_block {
             Some((_, r)) => win.title_bar(false).fixed_pos(place_beside(ctx, win_id, *r, egui::vec2(400.0, 400.0))),
@@ -838,6 +839,7 @@ impl App {
         };
         let mut close = false;
         egui::Window::new("newtask")
+            .id(ids::new_task())
             .title_bar(false)
             .resizable(false)
             .anchor(Align2::CENTER_TOP, [0.0, 90.0])
@@ -886,7 +888,7 @@ impl App {
         } else {
             "Event"
         };
-        let id = Id::unique("event_editor");
+        let id = ids::event_editor();
         let mut win = egui::Window::new(title).id(id).collapsible(false).resizable(false);
         win = match ed.anchor_rect {
             // the width includes the window's frame around the 330 of content
@@ -1049,7 +1051,7 @@ impl App {
         let today = Local::now().date_naive();
         let muted = self.pal.muted;
         egui::Window::new("Task")
-            .id(Id::unique("task_editor"))
+            .id(ids::task_editor())
             .collapsible(false)
             .resizable(false)
             .anchor(Align2::CENTER_CENTER, [0.0, -40.0])
@@ -1196,6 +1198,7 @@ impl App {
         let muted = self.pal.muted;
         let focus = std::mem::take(&mut self.command_focus);
         egui::Window::new("command")
+            .id(ids::command())
             .title_bar(false)
             .resizable(false)
             .anchor(Align2::CENTER_TOP, [0.0, 90.0])
@@ -1290,7 +1293,7 @@ impl App {
         let (mut do_undo, mut do_move, mut dismiss) = (false, false, false);
         let fill = mix(self.pal.side, self.pal.text, 0.12);
         let border = self.pal.border;
-        egui::Area::new(Id::unique("toast"))
+        egui::Area::new(ids::toast())
             .anchor(Align2::CENTER_BOTTOM, [0.0, -24.0 + (1.0 - a_in) * 16.0])
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
