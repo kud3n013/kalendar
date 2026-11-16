@@ -3,6 +3,7 @@
 //! Microsoft: the person brings the client ID of their own app
 //! registration (a public client, without a secret).
 
+use crate::strings::{tr, trf};
 use super::oauth::{url_encode, OAuthApp};
 use super::{Delta, Provider, PushResult, RemoteCalendar, SyncError};
 use crate::ics::{self, FeedEvent};
@@ -29,7 +30,7 @@ pub fn app(client_id: &str, hint: &str) -> OAuthApp {
         client_id: client_id.trim().to_string(),
         client_secret: None,
         // offline_access is what makes Microsoft hand out a refresh token
-        scope: "Calendars.ReadWrite offline_access".into(),
+        scope: tr("Calendars.ReadWrite offline_access").into(),
         extra,
         // Microsoft takes "http://localhost" with any port for desktop programs
         localhost_redirect: true,
@@ -125,7 +126,7 @@ impl Graph {
         // the token only goes to Graph itself
         let local = self.base.starts_with("http://127.0.0.1:");
         if !url.starts_with(&self.base) || !(self.base.starts_with("https://") || local) {
-            return Err(SyncError::Other("The server sent an address that is not its own.".into()));
+            return Err(SyncError::Other(tr("The server sent an address that is not its own.").into()));
         }
         let agent: ureq::Agent = ureq::Agent::config_builder().timeout_global(Some(std::time::Duration::from_secs(30))).http_status_as_error(false).max_redirects(0).build().into();
         let mut req = ureq::http::Request::builder()
@@ -159,7 +160,7 @@ impl Graph {
             429 | 503 | 504 => Err(SyncError::RateLimited),
             code => {
                 let why = body["error"]["message"].as_str().unwrap_or("no reason given");
-                Err(SyncError::Other(format!("Microsoft answered with error {code}: {why}")))
+                Err(SyncError::Other(trf("Microsoft answered with error {}: {}", &[&code, &why])))
             }
         }
     }
@@ -177,7 +178,7 @@ impl Graph {
                 None => return Ok((items, r.body["@odata.deltaLink"].as_str().map(str::to_string))),
             }
         }
-        Err(SyncError::Other("The server's list did not end.".into()))
+        Err(SyncError::Other(tr("The server's list did not end.").into()))
     }
 
     fn pull_from(&self, url: &str, day: NaiveDate, full: bool) -> Result<Delta, SyncError> {
@@ -247,7 +248,7 @@ impl Provider for Graph {
         let done = |r: Result<Reply, SyncError>| match r {
             Ok(r) => match r.body["id"].as_str() {
                 Some(id) => PushResult::Saved { sent: e.clone(), uid: id.to_string(), href: id.to_string(), etag: r.body["@odata.etag"].as_str().map(str::to_string) },
-                None => PushResult::Failed { error: SyncError::Other(format!("Microsoft's answer could not be read ({}).", r.status)) },
+                None => PushResult::Failed { error: SyncError::Other(trf("Microsoft's answer could not be read ({}).", &[&r.status])) },
             },
             Err(SyncError::Conflict | SyncError::Gone) => PushResult::Conflict { event: e.id },
             Err(error) => PushResult::Failed { error },

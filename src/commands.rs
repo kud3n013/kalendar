@@ -44,38 +44,38 @@ pub enum Cmd {
 
 /// (command, label, keys, section), as shown in the shortcut list.
 pub const COMMANDS: &[(Cmd, &str, &str, &str)] = &[
-    (Cmd::Today, "Move to the current day", "T", "Calendar view"),
-    (Cmd::Next, "Move to the next period", "Right", "Calendar view"),
-    (Cmd::Prev, "Move to the previous period", "Left", "Calendar view"),
-    (Cmd::DayFwd, "Move one day forward", "Shift+Right", "Calendar view"),
-    (Cmd::DayBack, "Move one day back", "Shift+Left", "Calendar view"),
-    (Cmd::ViewDay, "Day", "D", "Calendar view"),
-    (Cmd::ViewWeek, "Week", "W", "Calendar view"),
-    (Cmd::ViewMonth, "Month", "M", "Calendar view"),
-    (Cmd::ViewAgenda, "Agenda", "A", "Calendar view"),
-    (Cmd::ViewTwoWeeks, "2 weeks", "X", "Calendar view"),
-    (Cmd::Refresh, "Refresh your calendars", "R", "Calendar view"),
-    (Cmd::NewEvent, "Create a new event", "C", "Events and tasks"),
-    (Cmd::NewTask, "Create a new task", "Ctrl+T", "Events and tasks"),
-    (Cmd::NewFrame, "Create a new frame", "B", "Events and tasks"),
-    (Cmd::Edit, "Edit an event", "E", "Events and tasks"),
-    (Cmd::Delete, "Delete selected event or task", "Del / Backspace", "Events and tasks"),
-    (Cmd::Copy, "Copy", "Ctrl+C", "Events and tasks"),
-    (Cmd::Paste, "Paste here", "Right-click", "Events and tasks"),
-    (Cmd::Plan, "Plan my tasks", "", "Events and tasks"),
-    (Cmd::Reschedule, "Reschedule session", "Shift+R", "Events and tasks"),
-    (Cmd::FollowUp, "Schedule follow-up", "Shift+F", "Events and tasks"),
-    (Cmd::Split, "Split and reschedule", "Shift+S", "Events and tasks"),
-    (Cmd::Undo, "Undo", "Ctrl+Z", "General"),
-    (Cmd::CommandBar, "Toggle command bar", "Ctrl+K", "General"),
-    (Cmd::Search, "Open search", "Ctrl+F", "General"),
-    (Cmd::ToggleTasks, "Collapse or expand the task panel", "Ctrl+S", "General"),
-    (Cmd::ToggleTheme, "Toggle dark/light themes", "\\", "General"),
-    (Cmd::FinerGrid, "Increase calendar time resolution", "]", "General"),
-    (Cmd::CoarserGrid, "Reduce calendar time resolution", "[", "General"),
-    (Cmd::Prefs, "Open settings", "Ctrl+,", "General"),
-    (Cmd::Shortcuts, "List available shortcuts", ".", "General"),
-    (Cmd::Quit, "Quit", "Ctrl+Q", "General"),
+    (Cmd::Today, later("Move to the current day"), "T", later("Calendar view")),
+    (Cmd::Next, later("Move to the next period"), "Right", later("Calendar view")),
+    (Cmd::Prev, later("Move to the previous period"), "Left", later("Calendar view")),
+    (Cmd::DayFwd, later("Move one day forward"), "Shift+Right", later("Calendar view")),
+    (Cmd::DayBack, later("Move one day back"), "Shift+Left", later("Calendar view")),
+    (Cmd::ViewDay, later("Day"), "D", later("Calendar view")),
+    (Cmd::ViewWeek, later("Week"), "W", later("Calendar view")),
+    (Cmd::ViewMonth, later("Month"), "M", later("Calendar view")),
+    (Cmd::ViewAgenda, later("Agenda"), "A", later("Calendar view")),
+    (Cmd::ViewTwoWeeks, later("2 weeks"), "X", later("Calendar view")),
+    (Cmd::Refresh, later("Refresh your calendars"), "R", later("Calendar view")),
+    (Cmd::NewEvent, later("Create a new event"), "C", later("Events and tasks")),
+    (Cmd::NewTask, later("Create a new task"), "Ctrl+T", later("Events and tasks")),
+    (Cmd::NewFrame, later("Create a new frame"), "B", later("Events and tasks")),
+    (Cmd::Edit, later("Edit an event"), "E", later("Events and tasks")),
+    (Cmd::Delete, later("Delete selected event or task"), "Del / Backspace", later("Events and tasks")),
+    (Cmd::Copy, later("Copy"), "Ctrl+C", later("Events and tasks")),
+    (Cmd::Paste, later("Paste here"), "Right-click", later("Events and tasks")),
+    (Cmd::Plan, later("Plan my tasks"), "", later("Events and tasks")),
+    (Cmd::Reschedule, later("Reschedule session"), "Shift+R", later("Events and tasks")),
+    (Cmd::FollowUp, later("Schedule follow-up"), "Shift+F", later("Events and tasks")),
+    (Cmd::Split, later("Split and reschedule"), "Shift+S", later("Events and tasks")),
+    (Cmd::Undo, later("Undo"), "Ctrl+Z", later("General")),
+    (Cmd::CommandBar, later("Toggle command bar"), "Ctrl+K", later("General")),
+    (Cmd::Search, later("Open search"), "Ctrl+F", later("General")),
+    (Cmd::ToggleTasks, later("Collapse or expand the task panel"), "Ctrl+S", later("General")),
+    (Cmd::ToggleTheme, later("Toggle dark/light themes"), "\\", later("General")),
+    (Cmd::FinerGrid, later("Increase calendar time resolution"), "]", later("General")),
+    (Cmd::CoarserGrid, later("Reduce calendar time resolution"), "[", later("General")),
+    (Cmd::Prefs, later("Open settings"), "Ctrl+,", later("General")),
+    (Cmd::Shortcuts, later("List available shortcuts"), ".", later("General")),
+    (Cmd::Quit, later("Quit"), "Ctrl+Q", later("General")),
 ];
 
 impl Cmd {
@@ -198,7 +198,7 @@ impl App {
     pub fn tip(&self, name: &str, cmd: Cmd) -> String {
         match self.bind_text(cmd) {
             k if k.is_empty() => name.to_string(),
-            k => format!("{name} ({k})"),
+            k => trf("{} ({})", &[&name, &k]),
         }
     }
 
@@ -261,7 +261,7 @@ impl App {
                 if let Some(e) = self.selected.and_then(|id| self.data.event(id)) {
                     self.clipboard = Some(e.clone());
                     self.selected = None;
-                    self.say(ctx, "Copied. Right-click the calendar and choose Paste here.", false);
+                    self.say(ctx, tr("Copied. Right-click the calendar and choose Paste here."), false);
                 }
             }
             Cmd::Paste => {
@@ -290,11 +290,11 @@ impl App {
                 let (made, left) = self.data.plan_tasks(Self::now());
                 self.commit();
                 let msg = if made == 0 && left == 0 {
-                    "Nothing to plan".to_string()
+                    tr("Nothing to plan").to_string()
                 } else if left > 0 {
-                    format!("Planned {made} session(s); {left} task(s) did not fit in the next {PLAN_SPAN_DAYS} days")
+                    trf("Planned {} session(s); {} task(s) did not fit in the next {} days", &[&made, &left, &PLAN_SPAN_DAYS])
                 } else {
-                    format!("Planned {made} session(s)")
+                    trf("Planned {} session(s)", &[&made])
                 };
                 self.say(ctx, msg, made > 0);
             }
@@ -333,9 +333,9 @@ impl App {
             Cmd::Shortcuts => self.open_settings(settings::Page::Shortcuts),
             Cmd::Refresh => {
                 if self.sync_all(ctx) == 0 {
-                    self.say(ctx, "No subscribed calendars or accounts to refresh", false);
+                    self.say(ctx, tr("No subscribed calendars or accounts to refresh"), false);
                 } else {
-                    self.say(ctx, "Refreshing calendars…", false);
+                    self.say(ctx, tr("Refreshing calendars…"), false);
                 }
             }
             Cmd::Quit => ctx.send_viewport_cmd(egui::ViewportCommand::Close),

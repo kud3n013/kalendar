@@ -1,6 +1,7 @@
 //! Everything the app keeps, how it is saved and loaded, and the changes
 //! that come in from servers.
 
+use crate::strings::tr;
 use super::*;
 use chrono::{Duration, NaiveDate};
 use serde::{Deserialize, Serialize};
@@ -162,11 +163,11 @@ impl Data {
     pub fn locked(&self, e: &Event) -> Option<&'static str> {
         let c = self.calendar(e.calendar)?;
         if c.url.is_some() {
-            Some("This event comes from a subscribed calendar and can't be changed here")
+            Some(tr("This event comes from a subscribed calendar and can't be changed here"))
         } else if c.account.is_some() && c.read_only {
-            Some("This calendar is read-only on its server, so the event can't be changed here")
+            Some(tr("This calendar is read-only on its server, so the event can't be changed here"))
         } else if e.remote && e.recurrence_id.is_some() {
-            Some("Repeating events from an account can't be changed here yet")
+            Some(tr("Repeating events from an account can't be changed here yet"))
         } else {
             None
         }

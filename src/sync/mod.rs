@@ -9,6 +9,7 @@ pub mod proton;
 pub mod proton_keys;
 pub mod proton_srp;
 
+use crate::strings::{tr, trf};
 use crate::ics::{FeedEvent, FeedTask};
 use crate::model::{Event, RemoteKey, Task};
 use chrono::NaiveDateTime;
@@ -33,12 +34,12 @@ impl SyncError {
     /// Words for the person.
     pub fn text(&self) -> String {
         match self {
-            SyncError::Auth => "The server refused the user name or password.".into(),
-            SyncError::Conflict => "The event was changed on the server in the meantime.".into(),
-            SyncError::TokenExpired => "The server asked to read everything again.".into(),
-            SyncError::Gone => "Nothing was found at this address.".into(),
-            SyncError::RateLimited => "The server is busy; it will be tried again later.".into(),
-            SyncError::Network(e) => format!("Could not reach the server ({e})."),
+            SyncError::Auth => tr("The server refused the user name or password.").into(),
+            SyncError::Conflict => tr("The event was changed on the server in the meantime.").into(),
+            SyncError::TokenExpired => tr("The server asked to read everything again.").into(),
+            SyncError::Gone => tr("Nothing was found at this address.").into(),
+            SyncError::RateLimited => tr("The server is busy; it will be tried again later.").into(),
+            SyncError::Network(e) => trf("Could not reach the server ({}).", &[&e]),
             SyncError::Other(e) => e.clone(),
         }
     }
@@ -88,7 +89,7 @@ pub trait Provider: Send {
     fn pull(&mut self, cal: &RemoteCalendar, state: Option<&str>, now: NaiveDateTime) -> Result<Delta, SyncError>;
     /// The same for the tasks of a list. Not every service has them.
     fn pull_tasks(&mut self, _cal: &RemoteCalendar, _state: Option<&str>, _now: NaiveDateTime) -> Result<Delta, SyncError> {
-        Err(SyncError::Other("Tasks are not synced with this kind of account.".into()))
+        Err(SyncError::Other(tr("Tasks are not synced with this kind of account.").into()))
     }
     /// Where the account's calendars were found, to skip the search next time.
     fn home(&self) -> Option<String> {
@@ -103,16 +104,16 @@ pub trait Provider: Send {
     }
     /// An event as the server holds it, with its version.
     fn get(&mut self, _href: &str) -> Result<(String, Option<String>), SyncError> {
-        Err(SyncError::Other("This calendar is read-only.".into()))
+        Err(SyncError::Other(tr("This calendar is read-only.").into()))
     }
     /// Writes an event, unless `guard` says the server moved on. Returns
     /// the new version when the server tells it.
     fn put(&mut self, _cal: &RemoteCalendar, _href: &str, _ics: &str, _guard: &Guard) -> Result<Option<String>, SyncError> {
-        Err(SyncError::Other("This calendar is read-only.".into()))
+        Err(SyncError::Other(tr("This calendar is read-only.").into()))
     }
     /// Removes an event, unless it changed since `etag`.
     fn delete(&mut self, _cal: &RemoteCalendar, _href: &str, _etag: Option<&str>) -> Result<(), SyncError> {
-        Err(SyncError::Other("This calendar is read-only.".into()))
+        Err(SyncError::Other(tr("This calendar is read-only.").into()))
     }
 }
 
@@ -216,10 +217,10 @@ fn save(p: &mut dyn Provider, cal: &RemoteCalendar, e: &Event, stamp: NaiveDateT
                 Err(error) => return PushResult::Failed { error },
             };
             let Some((uid, mut f)) = read_event(&raw) else {
-                return PushResult::Failed { error: SyncError::Other("The event on the server could not be read.".into()) };
+                return PushResult::Failed { error: SyncError::Other(tr("The event on the server could not be read.").into()) };
             };
             if f.rrule.is_some() {
-                return PushResult::Failed { error: SyncError::Other("Repeating events can't be changed here yet.".into()) };
+                return PushResult::Failed { error: SyncError::Other(tr("Repeating events can't be changed here yet.").into()) };
             }
             fill(&mut f);
             let guard = match e.etag.clone().or(server_etag) {

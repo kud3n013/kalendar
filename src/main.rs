@@ -11,6 +11,8 @@ mod motion;
 mod panel;
 mod secrets;
 mod settings;
+mod strings;
+pub use strings::{later, tr, trf};
 mod sync;
 mod tz;
 mod dialogs;

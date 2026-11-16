@@ -1,5 +1,6 @@
 //! Tasks and the lists they are kept in.
 
+use crate::strings::tr;
 use super::*;
 use chrono::{Datelike, Duration, NaiveDate, Weekday};
 use serde::{Deserialize, Serialize};
@@ -55,11 +56,11 @@ impl Repeat {
     pub const ALL: [Repeat; 5] = [Repeat::None, Repeat::Daily, Repeat::Weekdays, Repeat::Weekly, Repeat::Monthly];
     pub fn label(&self) -> &'static str {
         match self {
-            Repeat::None => "No repeat",
-            Repeat::Daily => "Every day",
-            Repeat::Weekdays => "Every weekday",
-            Repeat::Weekly => "Every week",
-            Repeat::Monthly => "Every month",
+            Repeat::None => tr("No repeat"),
+            Repeat::Daily => tr("Every day"),
+            Repeat::Weekdays => tr("Every weekday"),
+            Repeat::Weekly => tr("Every week"),
+            Repeat::Monthly => tr("Every month"),
         }
     }
     /// The next date after `d` in this pattern.

@@ -1,5 +1,6 @@
 //! The settings and the views they choose between.
 
+use crate::strings::{tr, trf};
 use super::*;
 use chrono::{Datelike, Duration, NaiveDate, NaiveTime, Timelike};
 use serde::{Deserialize, Serialize};
@@ -16,12 +17,12 @@ pub enum View {
 impl View {
     pub fn label(&self) -> String {
         match self {
-            View::Agenda => "Agenda".into(),
+            View::Agenda => tr("Agenda").into(),
             View::Days(1) => "1 day".into(),
-            View::Days(n) => format!("{n} days"),
-            View::Week => "Week".into(),
+            View::Days(n) => trf("{} days", &[&n]),
+            View::Week => tr("Week").into(),
             View::TwoWeeks => "2 weeks".into(),
-            View::Month => "Month".into(),
+            View::Month => tr("Month").into(),
         }
     }
     pub fn all() -> Vec<View> {
@@ -154,7 +155,7 @@ impl Default for Prefs {
 impl Prefs {
     pub fn inbox_name(&self) -> String {
         let n = self.inbox_name.trim();
-        if n.is_empty() { "Inbox".to_string() } else { n.to_string() }
+        if n.is_empty() { tr("Inbox").to_string() } else { n.to_string() }
     }
     pub fn hour_height(&self) -> f32 {
         if let Some(h) = self.hour_height_px {

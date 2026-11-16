@@ -4,6 +4,7 @@
 //! the password opens the account's keys, those open each calendar's key,
 //! and that opens the events. The password itself is never kept.
 
+use crate::strings::{tr, trf};
 use super::proton_keys::{any, b64, signed_modulus, to_b64, Key};
 use super::proton_srp;
 use super::{Delta, Guard, Provider, PushResult, RemoteCalendar, SyncError};
@@ -44,9 +45,9 @@ impl Refused {
             (429 | 503, _) => SyncError::RateLimited,
             // 8002: wrong password
             (_, 8002) => SyncError::Auth,
-            (_, 5002 | 5003) => SyncError::Other(format!("Proton does not take requests from this program as it names itself ({}).", self.why)),
-            (_, 9001) => SyncError::Other("Proton asks for a check that you are human. Sign out of this account here and sign in again.".into()),
-            (s, c) => SyncError::Other(format!("Proton answered with error {s}/{c}: {}", self.why)),
+            (_, 5002 | 5003) => SyncError::Other(trf("Proton does not take requests from this program as it names itself ({}).", &[&self.why])),
+            (_, 9001) => SyncError::Other(tr("Proton asks for a check that you are human. Sign out of this account here and sign in again.").into()),
+            (s, c) => SyncError::Other(trf("Proton answered with error {}/{}: {}", &[&s, &c, &self.why])),
         }
     }
 }
@@ -148,7 +149,7 @@ pub fn refresh(base: &str, uid: &str, refresh: &str) -> Result<(String, String),
 pub fn sign_in(base: &str, username: &str, password: &str, code: &str, second: &str, human: Option<&str>) -> Result<SignIn, SyncError> {
     let other = |e: String| SyncError::Other(e);
     let info = call(base, "POST", "/auth/v4/info", None, Some(&json!({ "Username": username })), None).map_err(Refused::error)?;
-    let text = |v: &Value, k: &str| v[k].as_str().map(str::to_string).ok_or_else(|| SyncError::Other("Proton's answer to the sign-in was not understood.".into()));
+    let text = |v: &Value, k: &str| v[k].as_str().map(str::to_string).ok_or_else(|| SyncError::Other(tr("Proton's answer to the sign-in was not understood.").into()));
     let modulus = signed_modulus(&text(&info, "Modulus")?).map_err(other)?;
     let salt = b64(&text(&info, "Salt")?).map_err(other)?;
     let server_ephemeral = b64(&text(&info, "ServerEphemeral")?).map_err(other)?;
@@ -174,7 +175,7 @@ pub fn sign_in(base: &str, username: &str, password: &str, code: &str, second: &
     };
     // the server must know the password too
     if b64(&text(&auth, "ServerProof")?).map_err(other)? != proofs.expected_server_proof {
-        return Err(SyncError::Other("The server could not show that it is Proton. Nothing was signed in.".into()));
+        return Err(SyncError::Other(tr("The server could not show that it is Proton. Nothing was signed in.").into()));
     }
     let (uid, access, refresh) = (text(&auth, "UID")?, text(&auth, "AccessToken")?, text(&auth, "RefreshToken")?);
     let who = As { uid: &uid, access: &access };
@@ -186,20 +187,20 @@ pub fn sign_in(base: &str, username: &str, password: &str, code: &str, second: &
     let two_factor = auth["2FA"]["Enabled"].as_i64().unwrap_or(0);
     if two_factor & 1 != 0 {
         if code.trim().is_empty() {
-            return Err(fail(SyncError::Other("This account asks for a two-factor code. Fill it in and sign in again.".into())));
+            return Err(fail(SyncError::Other(tr("This account asks for a two-factor code. Fill it in and sign in again.").into())));
         }
         call(base, "POST", "/auth/v4/2fa", Some(who), Some(&json!({ "TwoFactorCode": code.trim() })), None).map_err(|r| {
             fail(match r.status {
-                401 | 422 => SyncError::Other("Proton did not take the two-factor code.".into()),
+                401 | 422 => SyncError::Other(tr("Proton did not take the two-factor code.").into()),
                 _ => r.error(),
             })
         })?;
     } else if two_factor != 0 {
-        return Err(fail(SyncError::Other("This account signs in with a security key only, which kalendar cannot do yet.".into())));
+        return Err(fail(SyncError::Other(tr("This account signs in with a security key only, which kalendar cannot do yet.").into())));
     }
     let mailbox = if auth["PasswordMode"].as_i64() == Some(2) {
         if second.is_empty() {
-            return Err(fail(SyncError::Other("This account has a second password for its mailbox. Fill it in and sign in again.".into())));
+            return Err(fail(SyncError::Other(tr("This account has a second password for its mailbox. Fill it in and sign in again.").into())));
         }
         second
     } else {
@@ -208,7 +209,7 @@ pub fn sign_in(base: &str, username: &str, password: &str, code: &str, second: &
     let key_pass = (|| {
         let user = call(base, "GET", "/core/v4/users", Some(who), None, None).map_err(Refused::error)?;
         let keys = user["User"]["Keys"].as_array().cloned().unwrap_or_default();
-        let primary = keys.iter().find(|k| k["Primary"].as_i64() == Some(1)).or(keys.first()).ok_or_else(|| SyncError::Other("This Proton account has no keys yet. Open Proton Calendar on the web once.".into()))?;
+        let primary = keys.iter().find(|k| k["Primary"].as_i64() == Some(1)).or(keys.first()).ok_or_else(|| SyncError::Other(tr("This Proton account has no keys yet. Open Proton Calendar on the web once.").into()))?;
         let salts = call(base, "GET", "/core/v4/keys/salts", Some(who), None, None).map_err(Refused::error)?;
         let salt = salts["KeySalts"].as_array().and_then(|s| s.iter().find(|s| s["ID"] == primary["ID"])).and_then(|s| s["KeySalt"].as_str());
         let key_pass = match salt {
@@ -216,7 +217,7 @@ pub fn sign_in(base: &str, username: &str, password: &str, code: &str, second: &
             // very old keys are locked with the password as it is
             None => mailbox.to_string(),
         };
-        Key::open(primary["PrivateKey"].as_str().unwrap_or(""), key_pass.as_bytes()).map_err(|_| SyncError::Other("The password signed in, but it does not open the account's keys.".into()))?;
+        Key::open(primary["PrivateKey"].as_str().unwrap_or(""), key_pass.as_bytes()).map_err(|_| SyncError::Other(tr("The password signed in, but it does not open the account's keys.").into()))?;
         Ok(key_pass)
     })()
     .map_err(fail)?;
@@ -456,7 +457,7 @@ impl Proton {
             }
         }
         if keys.is_empty() {
-            return Err(SyncError::Other("This calendar's key could not be opened with the account's keys.".into()));
+            return Err(SyncError::Other(tr("This calendar's key could not be opened with the account's keys.").into()));
         }
         let opened = Arc::new(CalKeys { keys, member, address, signed });
         self.calendars.insert(id.to_string(), opened.clone());
@@ -468,7 +469,7 @@ impl Proton {
         let cal = self.calendar_keys(id)?;
         let addresses = self.addresses()?;
         if !cal.signed || cal.member.is_empty() || addresses.get(cal.address).is_none_or(|a| a.keys.is_empty()) {
-            return Err(SyncError::Other("This Proton calendar is shared with you; kalendar can only change calendars of your own for now.".into()));
+            return Err(SyncError::Other(tr("This Proton calendar is shared with you; kalendar can only change calendars of your own for now.").into()));
         }
         Ok((cal, addresses))
     }
@@ -492,7 +493,7 @@ impl Proton {
         match r["Code"].as_i64() {
             Some(1000) => Ok(r["Event"].clone()),
             Some(2501) => Err(SyncError::Gone),
-            code => Err(SyncError::Other(format!("Proton did not take the change ({}: {}).", code.unwrap_or(0), r["Error"].as_str().unwrap_or("no reason given")))),
+            code => Err(SyncError::Other(trf("Proton did not take the change ({}: {}).", &[&code.unwrap_or(0), &r["Error"].as_str().unwrap_or("no reason given")]))),
         }
     }
 
@@ -647,7 +648,7 @@ impl Provider for Proton {
         }
         text.push_str("END:VCALENDAR\r\n");
         if unread > 0 && unread == events.len() {
-            return Err(SyncError::Other("None of this calendar's events could be decrypted.".into()));
+            return Err(SyncError::Other(tr("None of this calendar's events could be decrypted.").into()));
         }
         let mut upserts = ics::parse(&text, now).map_err(SyncError::Other)?.events;
         for e in &mut upserts {
@@ -679,7 +680,7 @@ impl Provider for Proton {
             event["Notifications"] = Value::Null;
             event["Color"] = Value::Null;
             let saved = self.sync_one(&cal.id, &keys.member, json!({ "Overwrite": 0, "Event": event }))?;
-            let id = saved["ID"].as_str().ok_or_else(|| SyncError::Other("Proton took the event but did not say where it is.".into()))?;
+            let id = saved["ID"].as_str().ok_or_else(|| SyncError::Other(tr("Proton took the event but did not say where it is.").into()))?;
             Ok((uid, format!("{}/{id}", cal.id), saved["ModifyTime"].as_i64().map(|t| t.to_string())))
         })();
         Some(match made {
@@ -695,7 +696,7 @@ impl Provider for Proton {
         let addresses = self.addresses()?;
         let lines = merge(&Self::parts_of(&event, &keys.keys, &addresses));
         if !lines.iter().any(|l| name_of(l) == "DTSTART") {
-            return Err(SyncError::Other("The event on Proton could not be decrypted.".into()));
+            return Err(SyncError::Other(tr("The event on Proton could not be decrypted.").into()));
         }
         let version = event["ModifyTime"].as_i64().map(|t| t.to_string());
         self.last = Some((href.to_string(), event));
@@ -716,13 +717,13 @@ impl Provider for Proton {
         let lines = event_lines(text);
         let has = |list: &str| old[list].as_array().is_some_and(|a| !a.is_empty());
         if has("AttendeesEvents") || lines.iter().any(|l| ["ORGANIZER", "ATTENDEE"].contains(&name_of(l).as_str())) {
-            return Err(SyncError::Other("Events with guests can't be changed here yet.".into()));
+            return Err(SyncError::Other(tr("Events with guests can't be changed here yet.").into()));
         }
         // a part kalendar would not write back must not get lost
         let packet = old["SharedKeyPacket"].as_str().and_then(|p| b64(p).ok());
         let odd = old["CalendarEvents"].as_array().into_iter().flatten().any(|p| p["Type"].as_i64().unwrap_or(0) & 1 != 0);
         let Some(packet) = packet.filter(|_| !odd) else {
-            return Err(SyncError::Other("This event is kept on Proton in a way kalendar can't change yet.".into()));
+            return Err(SyncError::Other(tr("This event is kept on Proton in a way kalendar can't change yet.").into()));
         };
         let (mut event, _) = Self::content(&keys, &addresses[keys.address].keys[0], &lines, Some(&packet))?;
         event["IsOrganizer"] = json!(1);
@@ -747,7 +748,7 @@ impl Provider for Proton {
         match v["Responses"][0]["Response"]["Code"].as_i64() {
             Some(1000) | None => Ok(()),
             Some(2501) => Err(SyncError::Gone),
-            Some(code) => Err(SyncError::Other(format!("Proton did not delete the event ({code}: {}).", v["Responses"][0]["Response"]["Error"].as_str().unwrap_or("no reason given")))),
+            Some(code) => Err(SyncError::Other(trf("Proton did not delete the event ({}: {}).", &[&code, &v["Responses"][0]["Response"]["Error"].as_str().unwrap_or("no reason given")]))),
         }
     }
 }

@@ -1,5 +1,6 @@
 //! What is drawn in the main window: toolbar, task list and calendar views.
 
+use crate::strings::{tr, trf};
 use crate::ids;
 use crate::motion;
 use crate::theme;
@@ -69,7 +70,7 @@ fn draw_item(p: &egui::Painter, pal: &Palette, it: &Item, selected: bool, hover:
         x = r.left() + 12.0;
     }
     let clip = p.with_clip_rect(r.shrink(2.0).intersect(p.clip_rect()));
-    let title = if it.title.is_empty() { "New Event" } else { &it.title };
+    let title = if it.title.is_empty() { tr("New Event") } else { &it.title };
     let title_font = theme::bold(theme::size::CAPTION);
     let mut ty = r.top() + 2.5;
     if tall {
@@ -243,7 +244,7 @@ impl App {
             clip.text(
                 pos2(r.left() + 10.0, r.bottom() - 14.0),
                 Align2::LEFT_CENTER,
-                if refused == Some(true) { "This frame keeps other tasks out" } else { "Not in this frame's filter" },
+                if refused == Some(true) { tr("This frame keeps other tasks out") } else { tr("Not in this frame's filter") },
                 FontId::proportional(theme::size::MICRO),
                 self.pal.muted,
             );
@@ -352,7 +353,7 @@ impl App {
             if self.selected == Some(e.id) {
                 hp.rect_stroke(r, 4.0, Stroke::new(1.5, self.pal.text), StrokeKind::Inside);
             }
-            let title = if e.title.is_empty() { "New Event" } else { &e.title };
+            let title = if e.title.is_empty() { tr("New Event") } else { &e.title };
             hp.with_clip_rect(r.shrink(2.0)).text(
                 r.left_center() + vec2(6.0, 0.0),
                 Align2::LEFT_CENTER,
@@ -611,9 +612,9 @@ impl App {
                         title: if !e.title.is_empty() {
                             e.title.clone()
                         } else if task.is_some() || self.create.as_ref().is_some_and(|c| c.ev.id == e.id && c.kind == CreateKind::Task) {
-                            "New task".into()
+                            tr("New task").into()
                         } else {
-                            "New Event".into()
+                            tr("New Event").into()
                         },
                         sub: format!("{} – {}", p.fmt_time(e.start.time()), p.fmt_time(e.end.time())),
                         color: rgb(self.data.event_color(e)),
@@ -893,7 +894,7 @@ impl App {
                 let ctx = ui.ctx().clone();
                 if let Some((fid, day, name, skipped)) = &in_frame {
                     ui.separator();
-                    ui.label(RichText::new(format!("Frame: {name}")).size(theme::size::TINY).color(self.pal.muted));
+                    ui.label(RichText::new(trf("Frame: {}", &[&name])).size(theme::size::TINY).color(self.pal.muted));
                     if ui.button(format!("{}  Edit frame…", icons::PEN)).clicked() {
                         self.edit_frame(*fid);
                         ui.close();
@@ -991,9 +992,9 @@ impl App {
             // a subscribed event can only be copied
             ui.set_min_width(260.0);
             let cal = self.data.calendar(ev.calendar).map(|c| c.name.clone()).unwrap_or_default();
-            ui.label(RichText::new(format!("From {cal} (read-only)")).color(muted));
+            ui.label(RichText::new(trf("From {} (read-only)", &[&cal])).color(muted));
             ui.separator();
-            if ui.button("Copy event").clicked() {
+            if ui.button(tr("Copy event")).clicked() {
                 self.selected = Some(id);
                 self.run(&ctx, Cmd::Copy);
                 ui.close();
@@ -1020,7 +1021,7 @@ impl App {
                     let c = if resp.hovered() { self.pal.text } else { muted };
                     ui.painter().circle_stroke(r.center(), 8.5, Stroke::new(2.0, c));
                     ui.painter().line_segment([r.center() + vec2(-6.0, -6.0), r.center() + vec2(6.0, 6.0)], Stroke::new(2.0, c));
-                    if resp.on_hover_text("Calendar colour").clicked() {
+                    if resp.on_hover_text(tr("Calendar colour")).clicked() {
                         pick = Some(None);
                     }
                 }
@@ -1057,7 +1058,7 @@ impl App {
             seps.push(menu_gap(ui));
             ui.horizontal(|ui| {
                 ui.add_space(10.0);
-                ui.label(RichText::new("Planner").size(theme::size::BODY).color(muted));
+                ui.label(RichText::new(tr("Planner")).size(theme::size::BODY).color(muted));
             });
             ui.menu_button(big(&format!("{}   Replan session", icons::REFRESH)), |ui| {
                 ui.set_min_width(300.0);
@@ -1071,20 +1072,20 @@ impl App {
                     });
                     hit
                 };
-                if row(ui, "Reschedule this session", "Shift+R", true) {
+                if row(ui, tr("Reschedule this session"), tr("Shift+R"), true) {
                     self.reschedule_session(&ctx, id);
                     ui.close();
                 }
-                if row(ui, "Complete & schedule more time", "Shift+F", true) {
+                if row(ui, tr("Complete & schedule more time"), tr("Shift+F"), true) {
                     self.follow_up(&ctx, id);
                     ui.close();
                 }
-                if row(ui, "Split & reschedule remaining time", "Shift+S", self.split_time(id).is_some()) {
+                if row(ui, tr("Split & reschedule remaining time"), tr("Shift+S"), self.split_time(id).is_some()) {
                     self.split_session(&ctx, id);
                     ui.close();
                 }
                 ui.separator();
-                if row(ui, "Unschedule session", "Del", true) {
+                if row(ui, tr("Unschedule session"), tr("Del"), true) {
                     self.delete_event(&ctx, id);
                     ui.close();
                 }
@@ -1096,7 +1097,7 @@ impl App {
                 ui.add_space(10.0);
                 ui.label(big(&format!("{}   Flexible task", icons::SHUFFLE)));
                 ui.label(RichText::new("(i)").size(theme::size::MICRO).color(muted)).on_hover_text(
-                    "The planner may move flexible tasks to make room for more important ones.",
+                    tr("The planner may move flexible tasks to make room for more important ones."),
                 );
                 ui.add_space(6.0);
                 if ui.checkbox(&mut flexible, "").changed() {
@@ -1202,7 +1203,7 @@ impl App {
             for (k, e) in evs.iter().take(show).enumerate() {
                 let er = Rect::from_min_size(cell.left_top() + vec2(3.0, 26.0 + k as f32 * 19.0), vec2(cw - 6.0, 17.0));
                 let color = rgb(self.data.event_color(e));
-                let title = if e.title.is_empty() { "New Event" } else { &e.title };
+                let title = if e.title.is_empty() { tr("New Event") } else { &e.title };
                 let tclip = painter.with_clip_rect(er.intersect(cell));
                 if e.all_day {
                     clip.rect_filled(er, 4.0, mix(self.pal.bg, color, 0.55));
@@ -1270,7 +1271,7 @@ impl App {
                         t.due = Some(d);
                     }
                     self.commit();
-                    self.say(&ctx, format!("Due date set to {}", d.format("%b %-d")), true);
+                    self.say(&ctx, trf("Due date set to {}", &[&d.format("%b %-d")]), true);
                     self.drag_task = None;
                 }
             }
@@ -1286,31 +1287,31 @@ impl App {
         let (muted, accent, border) = (self.pal.muted, self.pal.accent, self.pal.border_minor);
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             egui::Frame::new().inner_margin(Margin::symmetric(24, 12)).show(ui, |ui| {
-                ui.label(RichText::new(format!("Week of {}", days[0].format("%B %-d"))).color(muted));
+                ui.label(RichText::new(trf("Week of {}", &[&days[0].format("%B %-d")])).color(muted));
                 for d in &days {
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(d.format("%A, %B %-d").to_string()).size(theme::size::UI).strong());
                         if *d == today {
                             egui::Frame::new().fill(accent).corner_radius(theme::RADIUS).inner_margin(Margin::symmetric(8, 1)).show(ui, |ui| {
-                                ui.label(RichText::new("Today").size(theme::size::MICRO).color(Color32::WHITE));
+                                ui.label(RichText::new(tr("Today")).size(theme::size::MICRO).color(Color32::WHITE));
                             });
                         }
-                        if ui.small_button("+").on_hover_text("New event").clicked() {
+                        if ui.small_button("+").on_hover_text(tr("New event")).clicked() {
                             self.open_new_event(midnight(*d) + Duration::hours(NEW_EVENT_NOON_H), NEW_EVENT_MIN, false);
                         }
                     });
                     let mut evs: Vec<Event> = self.data.all_day_on(*d).into_iter().cloned().collect();
                     evs.extend(self.data.timed_on(*d).into_iter().cloned());
                     if evs.is_empty() {
-                        ui.label(RichText::new("Nothing planned").color(muted));
+                        ui.label(RichText::new(tr("Nothing planned")).color(muted));
                     }
                     for e in evs {
                         ui.horizontal(|ui| {
                             let (r, _) = ui.allocate_exact_size(vec2(12.0, 16.0), Sense::hover());
                             ui.painter().circle_filled(r.center(), 4.5, rgb(self.data.event_color(&e)));
                             let when = if e.all_day {
-                                "All day".to_string()
+                                tr("All day").to_string()
                             } else {
                                 format!("{} – {}", p.fmt_time(e.start.time()), p.fmt_time(e.end.time()))
                             };

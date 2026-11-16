@@ -1,5 +1,6 @@
 //! The settings window: a window of its own with a list of pages on the left.
 
+use crate::strings::{later, tr, trf};
 use crate::ids;
 use crate::motion;
 use crate::theme;
@@ -26,14 +27,14 @@ const ROW_H: f32 = 56.0;
 
 /// The order pages are listed in search results.
 const SEARCH_ORDER: [(Page, &str); 8] = [
-    (Page::General, "General"),
-    (Page::Appearance, "Appearance"),
-    (Page::ActiveCalendars, "Active calendars"),
-    (Page::Lists, "Task lists"),
-    (Page::Planner, "Planner"),
-    (Page::Calendars, "Calendars"),
-    (Page::Info, "Info"),
-    (Page::Shortcuts, "Shortcuts"),
+    (Page::General, later("General")),
+    (Page::Appearance, later("Appearance")),
+    (Page::ActiveCalendars, later("Active calendars")),
+    (Page::Lists, later("Task lists")),
+    (Page::Planner, later("Planner")),
+    (Page::Calendars, later("Calendars")),
+    (Page::Info, later("Info")),
+    (Page::Shortcuts, later("Shortcuts")),
 ];
 
 /// A settings search in progress: the words looked for, the page heading
@@ -84,7 +85,7 @@ fn shown(ui: &mut egui::Ui, texts: &[&str]) -> bool {
         if r.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
-        if r.on_hover_text("Open this page").clicked() {
+        if r.on_hover_text(tr("Open this page")).clicked() {
             ui.data_mut(|d| d.get_temp_mut_or_default::<Find>(find_id()).jump = Some(page));
         }
         ui.add_space(4.0);
@@ -221,10 +222,10 @@ fn switch(ui: &mut egui::Ui, on: &mut bool, accent: Color32) -> egui::Response {
 /// "Weekdays", "Every day", or the short day names, from a Monday-first bit set.
 fn days_label(days: u8) -> String {
     match days & 0x7f {
-        0x7f => "Every day".into(),
-        FRAME_WEEKDAYS => "Weekdays".into(),
-        0b110_0000 => "Weekends".into(),
-        d => ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].iter().enumerate().filter(|(i, _)| d & (1 << i) != 0).map(|(_, n)| *n).collect::<Vec<_>>().join(" "),
+        0x7f => tr("Every day").into(),
+        FRAME_WEEKDAYS => tr("Weekdays").into(),
+        0b110_0000 => tr("Weekends").into(),
+        d => [tr("Mo"), tr("Tu"), tr("We"), tr("Th"), tr("Fr"), tr("Sa"), tr("Su")].iter().enumerate().filter(|(i, _)| d & (1 << i) != 0).map(|(_, n)| *n).collect::<Vec<_>>().join(" "),
     }
 }
 
@@ -232,12 +233,12 @@ fn hour_label(p: &Prefs, h: i64) -> String {
     let t = chrono::NaiveTime::from_hms_opt((h % 24) as u32, 0, 0).unwrap();
     let base = if p.hour12 {
         let (pm, h12) = chrono::Timelike::hour12(&t);
-        format!("{h12}:00 {}", if pm { "PM" } else { "AM" })
+        trf("{}:00 {}", &[&h12, &if pm { "PM" } else { "AM" }])
     } else {
         format!("{:02}:00", h % 24)
     };
     if h >= 24 {
-        format!("{base} (+1 day)")
+        trf("{} (+1 day)", &[&base])
     } else {
         base
     }
@@ -259,7 +260,7 @@ impl App {
             return;
         }
         let builder = egui::ViewportBuilder::default()
-            .with_title("Settings")
+            .with_title(tr("Settings"))
             .with_app_id("kalendar")
             .with_inner_size([1060.0, 820.0])
             .with_min_inner_size([760.0, 480.0]);
@@ -296,23 +297,23 @@ impl App {
             egui::ScrollArea::vertical().id_salt("nav").show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 2.0;
                 ui.add_space(22.0);
-                search_field(ui, &mut self.settings_query, "Search settings", ui.available_width());
+                search_field(ui, &mut self.settings_query, tr("Search settings"), ui.available_width());
                 ui.add_space(20.0);
                 let searching = !self.settings_query.trim().is_empty();
                 for (group, pages) in [
-                    ("Explore", vec![(Page::Shortcuts, icons::KEYBOARD, "Shortcuts")]),
-                    ("Integrations", vec![(Page::Calendars, icons::CALENDAR, "Calendars")]),
+                    (tr("Explore"), vec![(Page::Shortcuts, icons::KEYBOARD, tr("Shortcuts"))]),
+                    (tr("Integrations"), vec![(Page::Calendars, icons::CALENDAR, tr("Calendars"))]),
                     (
-                        "Preferences",
+                        tr("Preferences"),
                         vec![
-                            (Page::General, icons::SETTINGS, "General"),
-                            (Page::Appearance, icons::PALETTE, "Appearance"),
-                            (Page::ActiveCalendars, icons::SQUARE_CHECK, "Active calendars"),
-                            (Page::Lists, icons::LIST_TODO, "Task lists"),
-                            (Page::Planner, icons::SHUFFLE, "Planner"),
+                            (Page::General, icons::SETTINGS, tr("General")),
+                            (Page::Appearance, icons::PALETTE, tr("Appearance")),
+                            (Page::ActiveCalendars, icons::SQUARE_CHECK, tr("Active calendars")),
+                            (Page::Lists, icons::LIST_TODO, tr("Task lists")),
+                            (Page::Planner, icons::SHUFFLE, tr("Planner")),
                         ],
                     ),
-                    ("About", vec![(Page::Info, icons::INFO, "Info")]),
+                    (tr("About"), vec![(Page::Info, icons::INFO, tr("Info"))]),
                 ] {
                     ui.horizontal(|ui| {
                         ui.add_space(8.0);
@@ -376,6 +377,7 @@ impl App {
     fn search_results(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, words: Vec<String>) {
         ui.data_mut(|d| d.insert_temp(find_id(), Find { words, ..Default::default() }));
         for (page, name) in SEARCH_ORDER {
+            let name = tr(name);
             ui.data_mut(|d| d.get_temp_mut_or_default::<Find>(find_id()).head = Some((page, name)));
             ui.push_id(("found", page as u8), |ui| match page {
                 Page::General => self.page_general(ui),
@@ -392,7 +394,7 @@ impl App {
         if found.hits == 0 {
             ui.add_space(40.0);
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new(format!("No settings match \"{}\"", self.settings_query.trim())).size(theme::size::TITLE).color(self.pal.muted));
+                ui.label(RichText::new(trf("No settings match \"{}\"", &[&self.settings_query.trim()])).size(theme::size::TITLE).color(self.pal.muted));
             });
         }
         if let Some(page) = found.jump {
@@ -404,40 +406,40 @@ impl App {
     fn page_general(&mut self, ui: &mut egui::Ui) {
         let border = self.pal.border;
         let p = &mut self.data.prefs;
-        row(ui, "Move task due date", "When a task is scheduled after its due date: move the due date, ask, or leave it.", |ui| {
-            combo(ui, "dm", &mut p.due_move, &[(DueMove::Always, "Always".into()), (DueMove::Ask, "Ask every time".into()), (DueMove::Never, "Never".into())]);
+        row(ui, tr("Move task due date"), tr("When a task is scheduled after its due date: move the due date, ask, or leave it."), |ui| {
+            combo(ui, "dm", &mut p.due_move, &[(DueMove::Always, tr("Always").into()), (DueMove::Ask, tr("Ask every time").into()), (DueMove::Never, tr("Never").into())]);
         });
-        row(ui, "Automatically assign due dates", "A task put on the calendar gets that day as its due date.", |ui| {
-            combo(ui, "ad", &mut p.auto_due, &[(true, "Yes".into()), (false, "No".into())]);
+        row(ui, tr("Automatically assign due dates"), tr("A task put on the calendar gets that day as its due date."), |ui| {
+            combo(ui, "ad", &mut p.auto_due, &[(true, tr("Yes").into()), (false, tr("No").into())]);
         });
         divider(ui, border);
-        row(ui, "Time format", "", |ui| {
+        row(ui, tr("Time format"), "", |ui| {
             combo(ui, "tf", &mut p.hour12, &[(false, "24 hours".into()), (true, "12 hours (AM/PM)".into())]);
         });
-        row(ui, "First day of the week", "", |ui| {
-            let names = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+        row(ui, tr("First day of the week"), "", |ui| {
+            let names = [tr("Sunday"), tr("Monday"), tr("Tuesday"), tr("Wednesday"), tr("Thursday"), tr("Friday"), tr("Saturday")];
             let opts: Vec<(u8, String)> = names.iter().enumerate().map(|(i, n)| (i as u8, n.to_string())).collect();
             combo(ui, "fd", &mut p.first_day, &opts);
         });
-        row(ui, "Initial calendar view", "", |ui| {
+        row(ui, tr("Initial calendar view"), "", |ui| {
             let opts: Vec<(View, String)> = View::all().into_iter().map(|v| (v, v.label())).collect();
             combo(ui, "iv", &mut p.initial_view, &opts);
         });
         divider(ui, border);
         let snapshot = p.clone();
-        row(ui, "Time grid start", "", |ui| {
+        row(ui, tr("Time grid start"), "", |ui| {
             let opts: Vec<(i64, String)> = (0..24).map(|h| (h, hour_label(&snapshot, h))).collect();
             combo(ui, "gs", &mut p.grid_start_h, &opts);
         });
-        row(ui, "Time grid end", "", |ui| {
+        row(ui, tr("Time grid end"), "", |ui| {
             let opts: Vec<(i64, String)> = (1..=24).map(|h| (h, hour_label(&snapshot, h))).collect();
             combo(ui, "ge", &mut p.grid_end_h, &opts);
         });
         if p.grid_end_h <= p.grid_start_h {
             p.grid_end_h = p.grid_start_h + 1;
         }
-        let mins = |m: i64| if m == 60 { "1 hour".to_string() } else { format!("{m} minutes") };
-        row(ui, "Time display resolution", "", |ui| {
+        let mins = |m: i64| if m == 60 { "1 hour".to_string() } else { trf("{} minutes", &[&m]) };
+        row(ui, tr("Time display resolution"), "", |ui| {
             let before = p.slot_min;
             let opts: Vec<(i64, String)> = SLOT_CHOICES.iter().map(|m| (*m, mins(*m))).collect();
             combo(ui, "sl", &mut p.slot_min, &opts);
@@ -445,64 +447,64 @@ impl App {
                 p.hour_height_px = None;
             }
         });
-        row(ui, "Time dragging resolution", "", |ui| {
+        row(ui, tr("Time dragging resolution"), "", |ui| {
             let opts: Vec<(i64, String)> = SNAP_CHOICES.iter().map(|m| (*m, mins(*m))).collect();
             combo(ui, "sn", &mut p.snap_min, &opts);
         });
-        row(ui, "Limit events per day", "How many events a day shows in the month view before \"+ more\".", |ui| {
+        row(ui, tr("Limit events per day"), tr("How many events a day shows in the month view before \"+ more\"."), |ui| {
             let opts: Vec<(usize, String)> = (2..=20).map(|n| (n, n.to_string())).collect();
             combo(ui, "dx", &mut p.day_max_events, &opts);
         });
         divider(ui, border);
-        row(ui, "Undo grace period", "", |ui| {
-            let opts: Vec<(u32, String)> = UNDO_CHOICES.iter().map(|s| (*s, if *s == 0 { "Disabled".into() } else { format!("{s} seconds") })).collect();
+        row(ui, tr("Undo grace period"), "", |ui| {
+            let opts: Vec<(u32, String)> = UNDO_CHOICES.iter().map(|s| (*s, if *s == 0 { tr("Disabled").into() } else { trf("{} seconds", &[&s]) })).collect();
             combo(ui, "ug", &mut p.undo_grace_s, &opts);
         });
         divider(ui, border);
-        let yes_no = [(true, "Yes".to_string()), (false, "No".to_string())];
-        row(ui, "Show weekends", "", |ui| combo(ui, "we", &mut p.weekends_visible, &yes_no));
-        row(ui, "Dim past events", "", |ui| combo(ui, "dp", &mut p.dim_past, &yes_no));
-        row(ui, "Show completed tasks", "On the calendar.", |ui| combo(ui, "ct", &mut p.show_completed_tasks, &yes_no));
-        row(ui, "Show scheduled tasks in the list", "", |ui| combo(ui, "st", &mut p.show_scheduled_tasks, &yes_no));
-        row(ui, "Due dates on the calendar", "", |ui| combo(ui, "dc", &mut p.due_on_calendar, &yes_no));
+        let yes_no = [(true, tr("Yes").to_string()), (false, tr("No").to_string())];
+        row(ui, tr("Show weekends"), "", |ui| combo(ui, "we", &mut p.weekends_visible, &yes_no));
+        row(ui, tr("Dim past events"), "", |ui| combo(ui, "dp", &mut p.dim_past, &yes_no));
+        row(ui, tr("Show completed tasks"), tr("On the calendar."), |ui| combo(ui, "ct", &mut p.show_completed_tasks, &yes_no));
+        row(ui, tr("Show scheduled tasks in the list"), "", |ui| combo(ui, "st", &mut p.show_scheduled_tasks, &yes_no));
+        row(ui, tr("Due dates on the calendar"), "", |ui| combo(ui, "dc", &mut p.due_on_calendar, &yes_no));
     }
 
     fn page_appearance(&mut self, ui: &mut egui::Ui) {
-        heading(ui, "Appearance");
+        heading(ui, tr("Appearance"));
         let p = &mut self.data.prefs;
-        row(ui, "Theme", "", |ui| {
-            combo(ui, "th", &mut p.theme, &[(Theme::System, "System".into()), (Theme::Light, "Light".into()), (Theme::Dark, "Dark".into())]);
+        row(ui, tr("Theme"), "", |ui| {
+            combo(ui, "th", &mut p.theme, &[(Theme::System, tr("System").into()), (Theme::Light, tr("Light").into()), (Theme::Dark, tr("Dark").into())]);
         });
-        row(ui, "Task panel position", "Which side of the window the task panel sits on.", |ui| {
-            combo(ui, "ps", &mut p.sidebar_side, &[(PanelSide::Left, "Left".into()), (PanelSide::Right, "Right".into())]);
+        row(ui, tr("Task panel position"), tr("Which side of the window the task panel sits on."), |ui| {
+            combo(ui, "ps", &mut p.sidebar_side, &[(PanelSide::Left, tr("Left").into()), (PanelSide::Right, tr("Right").into())]);
         });
         let names = self.font_names.get_or_insert_with(crate::fonts::families);
-        row(ui, "Font", "For all text. Emoji always use the system's emoji font.", |ui| {
+        row(ui, tr("Font"), tr("For all text. Emoji always use the system's emoji font."), |ui| {
             let cw = ui.data(|d| d.get_temp::<f32>(ids::control_w())).unwrap_or(CONTROL_W);
-            let shown = if p.font.is_empty() { "System default".to_string() } else { p.font.clone() };
+            let shown = if p.font.is_empty() { tr("System default").to_string() } else { p.font.clone() };
             egui::ComboBox::from_id_salt("font").width(cw).height(320.0).selected_text(shown).show_ui(ui, |ui| {
-                ui.selectable_value(&mut p.font, String::new(), "System default");
+                ui.selectable_value(&mut p.font, String::new(), tr("System default"));
                 ui.separator();
                 for n in names.iter() {
                     ui.selectable_value(&mut p.font, n.clone(), n);
                 }
             });
         });
-        row(ui, "Size", "How large text and everything else is drawn.", |ui| {
-            let sizes: Vec<(u32, String)> = [80u32, 90, 100, 110, 125, 150, 175, 200].iter().map(|s| (*s, format!("{s}%"))).collect();
+        row(ui, tr("Size"), tr("How large text and everything else is drawn."), |ui| {
+            let sizes: Vec<(u32, String)> = [80u32, 90, 100, 110, 125, 150, 175, 200].iter().map(|s| (*s, trf("{}%", &[&s]))).collect();
             let mut pct = (p.ui_scale * 100.0).round() as u32;
             combo(ui, "sz", &mut pct, &sizes);
             p.ui_scale = pct as f32 / 100.0;
         });
         let accent = self.pal.accent;
-        row(ui, "Animations", "Sliding pages, gliding blocks, the zoom and fades. Off, everything changes at once.", |ui| {
+        row(ui, tr("Animations"), tr("Sliding pages, gliding blocks, the zoom and fades. Off, everything changes at once."), |ui| {
             switch(ui, &mut p.animations, accent);
         });
     }
 
     fn page_planner(&mut self, ui: &mut egui::Ui) {
         let (muted, border) = (self.pal.muted, self.pal.border);
-        heading(ui, "Planner");
+        heading(ui, tr("Planner"));
         let searching = finding(ui);
         if !searching {
             ui.add(
@@ -519,22 +521,22 @@ impl App {
             ui.add_space(10.0);
         }
         let p = &mut self.data.prefs;
-        row(ui, "Default duration", "Used for tasks without a time estimate.", |ui| {
+        row(ui, tr("Default duration"), tr("Used for tasks without a time estimate."), |ui| {
             let opts: Vec<(i64, String)> = [15, 30, 45, 60, 90, 120].iter().map(|m| (*m, fmt_duration(*m))).collect();
             combo(ui, "pd", &mut p.default_task_min, &opts);
         });
-        let yes_no = [(true, "Yes".to_string()), (false, "No".to_string())];
-        row(ui, "Split long tasks", "Tasks of two hours or more may be cut into several sessions.", |ui| combo(ui, "sp", &mut p.split_long_tasks, &yes_no));
-        row(ui, "Schedule tasks with no due date", "", |ui| combo(ui, "pn", &mut p.plan_without_due, &yes_no));
+        let yes_no = [(true, tr("Yes").to_string()), (false, tr("No").to_string())];
+        row(ui, tr("Split long tasks"), tr("Tasks of two hours or more may be cut into several sessions."), |ui| combo(ui, "sp", &mut p.split_long_tasks, &yes_no));
+        row(ui, tr("Schedule tasks with no due date"), "", |ui| combo(ui, "pn", &mut p.plan_without_due, &yes_no));
         divider(ui, border);
-        row(ui, "Plan into frames", "Put tasks into the frames whose filter they match.", |ui| combo(ui, "pf", &mut p.use_frames, &yes_no));
-        row(ui, "When no frame fits", "What happens to a task that no frame takes.", |ui| {
-            combo(ui, "po", &mut p.plan_outside_frames, &[(true, "Plan in working hours".into()), (false, "Leave unplanned".into())]);
+        row(ui, tr("Plan into frames"), tr("Put tasks into the frames whose filter they match."), |ui| combo(ui, "pf", &mut p.use_frames, &yes_no));
+        row(ui, tr("When no frame fits"), tr("What happens to a task that no frame takes."), |ui| {
+            combo(ui, "po", &mut p.plan_outside_frames, &[(true, tr("Plan in working hours").into()), (false, tr("Leave unplanned").into())]);
         });
         divider(ui, border);
         if searching {
             let names: Vec<&str> = self.data.frames.iter().map(|f| f.name.as_str()).collect();
-            page_result(ui, Page::Planner, "Frames", "Blocks of time set aside for certain kinds of work", &[&["time block", "deep work"][..], &names].concat());
+            page_result(ui, Page::Planner, tr("Frames"), tr("Blocks of time set aside for certain kinds of work"), &[&["time block", "deep work"][..], &names].concat());
             return;
         }
         self.frame_list(ui);
@@ -544,7 +546,7 @@ impl App {
     fn frame_list(&mut self, ui: &mut egui::Ui) {
         let (muted, border, side, text, accent) = (self.pal.muted, self.pal.border, self.pal.side, self.pal.text, self.pal.accent);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Frames").font(theme::bold(20.0)));
+            ui.label(RichText::new(tr("Frames")).font(theme::bold(20.0)));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let b = egui::Button::new(RichText::new("+ New frame").size(theme::size::UI).color(Color32::WHITE)).fill(self.pal.accent).corner_radius(theme::RADIUS);
                 if ui.add(b).clicked() {
@@ -558,7 +560,7 @@ impl App {
         if self.data.frames.is_empty() {
             ui.add(
                 egui::Label::new(
-                    RichText::new("No frames yet. Make one here, from the + menu, or by right-clicking the calendar.").size(theme::size::UI).color(muted),
+                    RichText::new(tr("No frames yet. Make one here, from the + menu, or by right-clicking the calendar.")).size(theme::size::UI).color(muted),
                 )
                 .wrap(),
             );
@@ -586,7 +588,7 @@ impl App {
             let f = &mut self.data.frames[i];
             // the buttons first, so the text is cut short rather than run under them
             ui.allocate_ui_with_layout(vec2(ui.available_width(), 56.0), Layout::right_to_left(Align::Center), |ui| {
-                switch(ui, &mut f.enabled, accent).on_hover_text(if f.enabled { "On: the planner uses it" } else { "Off: the planner skips it" });
+                switch(ui, &mut f.enabled, accent).on_hover_text(if f.enabled { tr("On: the planner uses it") } else { tr("Off: the planner skips it") });
                 let b = egui::Button::new(RichText::new(format!("{} Edit", icons::PEN)).size(theme::size::BODY)).fill(mix(side, text, 0.07)).corner_radius(theme::BUTTON_RADIUS);
                 if ui.add(b).clicked() {
                     edit = Some(id);
@@ -599,7 +601,7 @@ impl App {
                         ui.spacing_mut().item_spacing.y = 2.0;
                         let c = if f.enabled { text } else { muted };
                         ui.add(egui::Label::new(RichText::new(&name).size(theme::size::LARGE).color(c)).truncate());
-                        ui.add(egui::Label::new(RichText::new(format!("{when}  ·  {what}")).size(theme::size::CAPTION).color(muted)).truncate());
+                        ui.add(egui::Label::new(RichText::new(trf("{}  ·  {}", &[&when, &what])).size(theme::size::CAPTION).color(muted)).truncate());
                     });
                 });
             });
@@ -650,19 +652,19 @@ impl App {
         if finding(ui) {
             let names: Vec<&str> = self.data.calendars.iter().map(|c| c.name.as_str()).collect();
             let words = [&["show", "hide", "colour", "color", "rename", "add", "remove", "delete", "new calendar"][..], &names].concat();
-            page_result(ui, Page::ActiveCalendars, "Manage calendars", "Show or hide calendars, rename, recolour, add or remove them", &words);
+            page_result(ui, Page::ActiveCalendars, tr("Manage calendars"), tr("Show or hide calendars, rename, recolour, add or remove them"), &words);
             return;
         }
         let ctx = ui.ctx().clone();
         let (muted, border, side, text) = (self.pal.muted, self.pal.border, self.pal.side, self.pal.text);
-        heading(ui, "Active calendars");
-        ui.add(egui::Label::new(RichText::new("Show or hide calendars, rename them, change their colour, add new ones or remove them.").size(theme::size::UI).color(muted)).wrap());
+        heading(ui, tr("Active calendars"));
+        ui.add(egui::Label::new(RichText::new(tr("Show or hide calendars, rename them, change their colour, add new ones or remove them.")).size(theme::size::UI).color(muted)).wrap());
         ui.add_space(12.0);
         // add a calendar of one's own
         ui.horizontal(|ui| {
             let r = ui.add(
                 egui::TextEdit::singleline(&mut self.new_cal_name)
-                    .hint_text("New calendar name")
+                    .hint_text(tr("New calendar name"))
                     .font(FontId::proportional(theme::size::UI))
                     .margin(Margin::symmetric(10, 8))
                     .desired_width((ui.available_width() - 330.0).clamp(120.0, 300.0)),
@@ -683,7 +685,7 @@ impl App {
                 });
                 self.commit();
             }
-            if ui.add(egui::Button::new(RichText::new("Subscribe by link…").size(theme::size::UI)).corner_radius(theme::RADIUS)).clicked() {
+            if ui.add(egui::Button::new(RichText::new(tr("Subscribe by link…")).size(theme::size::UI)).corner_radius(theme::RADIUS)).clicked() {
                 self.settings_page = Page::Calendars;
             }
         });
@@ -696,27 +698,27 @@ impl App {
             let subscribed = !c.is_local();
             let synced = c.account.is_some();
             let cid = c.id;
-            let what = if synced && c.read_only { "from an account, read-only".to_string() } else if synced { format!("from an account, {} events", counts[i]) } else if subscribed { "subscribed, read-only".to_string() } else { format!("{} events", counts[i]) };
+            let what = if synced && c.read_only { "from an account, read-only".to_string() } else if synced { format!("from an account, {} events", counts[i]) } else if subscribed { "subscribed, read-only".to_string() } else { trf("{} events", &[&counts[i]]) };
             // the buttons first; the name takes what is left
             ui.allocate_ui_with_layout(vec2(ui.available_width(), 52.0), Layout::right_to_left(Align::Center), |ui| {
                 {
                     if self.confirm_remove == Some(cid) {
-                        if ui.add(egui::Button::new(RichText::new("Cancel").size(theme::size::BODY)).corner_radius(theme::BUTTON_RADIUS)).clicked() {
+                        if ui.add(egui::Button::new(RichText::new(tr("Cancel")).size(theme::size::BODY)).corner_radius(theme::BUTTON_RADIUS)).clicked() {
                             ask = Some(None);
                         }
-                        let label = if subscribed { "Unsubscribe".to_string() } else { format!("Remove with its {} events", counts[i]) };
+                        let label = if subscribed { tr("Unsubscribe").to_string() } else { trf("Remove with its {} events", &[&counts[i]]) };
                         if ui.add(egui::Button::new(RichText::new(label).size(theme::size::BODY).color(Color32::WHITE)).fill(theme::DANGER).corner_radius(theme::BUTTON_RADIUS)).clicked() {
                             remove = Some(cid);
                         }
                     } else {
                         // an account's calendar goes when the account is signed out
                         let last_own = (!subscribed && own_count <= 1) || synced;
-                        let b = egui::Button::new(RichText::new(if subscribed { "Unsubscribe" } else { "Remove" }).size(theme::size::BODY).color(theme::DANGER)).fill(mix(side, text, 0.07)).corner_radius(theme::BUTTON_RADIUS);
+                        let b = egui::Button::new(RichText::new(if subscribed { tr("Unsubscribe") } else { tr("Remove") }).size(theme::size::BODY).color(theme::DANGER)).fill(mix(side, text, 0.07)).corner_radius(theme::BUTTON_RADIUS);
                         let resp = ui.add_enabled(!last_own, b);
                         if synced {
-                            resp.on_disabled_hover_text("Untick it under Integrations to stop syncing it, or sign out of its account there");
+                            resp.on_disabled_hover_text(tr("Untick it under Integrations to stop syncing it, or sign out of its account there"));
                         } else if last_own {
-                            resp.on_disabled_hover_text("At least one calendar of your own is needed");
+                            resp.on_disabled_hover_text(tr("At least one calendar of your own is needed"));
                         } else if resp.clicked() {
                             ask = Some(Some(cid));
                         }
@@ -727,11 +729,11 @@ impl App {
                     ui.label(RichText::new(what).size(theme::size::CAPTION).color(muted));
                 }
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    ui.checkbox(&mut c.visible, "").on_hover_text("Show on the calendar");
+                    ui.checkbox(&mut c.visible, "").on_hover_text(tr("Show on the calendar"));
                     // colour: a dot that opens the palette
                     let (r, resp) = ui.allocate_exact_size(vec2(26.0, 26.0), Sense::click());
                     ui.painter().circle_filled(r.center(), 9.0, rgb(c.color));
-                    let resp = resp.on_hover_text("Colour");
+                    let resp = resp.on_hover_text(tr("Colour"));
                     egui::Popup::from_toggle_button_response(&resp).close_behavior(egui::PopupCloseBehavior::CloseOnClick).show(|ui| {
                         ui.set_min_width(200.0);
                         ui.horizontal_wrapped(|ui| {
@@ -762,7 +764,7 @@ impl App {
             self.selected = None;
             self.editor = None;
             self.commit();
-            self.say(&ctx, format!("Calendar \"{name}\" removed"), true);
+            self.say(&ctx, trf("Calendar \"{}\" removed", &[&name]), true);
         }
     }
 
@@ -771,17 +773,17 @@ impl App {
         if finding(ui) {
             let names: Vec<&str> = self.data.lists.iter().map(|l| l.name.as_str()).collect();
             let words = [&["task list", "inbox", "icon", "colour", "color", "rename", "add", "remove", "delete", "new list"][..], &names].concat();
-            page_result(ui, Page::Lists, "Manage task lists", "Rename task lists, change their colour and icon, add or remove them", &words);
+            page_result(ui, Page::Lists, tr("Manage task lists"), tr("Rename task lists, change their colour and icon, add or remove them"), &words);
             return;
         }
         let (muted, border, side, text) = (self.pal.muted, self.pal.border, self.pal.side, self.pal.text);
-        heading(ui, "Task lists");
-        ui.add(egui::Label::new(RichText::new("Rename your task lists, change their colour and icon, add new ones or remove them.").size(theme::size::UI).color(muted)).wrap());
+        heading(ui, tr("Task lists"));
+        ui.add(egui::Label::new(RichText::new(tr("Rename your task lists, change their colour and icon, add new ones or remove them.")).size(theme::size::UI).color(muted)).wrap());
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             let r = ui.add(
                 egui::TextEdit::singleline(&mut self.new_list_name)
-                    .hint_text("New list name")
+                    .hint_text(tr("New list name"))
                     .font(FontId::proportional(theme::size::UI))
                     .margin(Margin::symmetric(10, 8))
                     .desired_width((ui.available_width() - 330.0).clamp(120.0, 300.0)),
@@ -801,15 +803,15 @@ impl App {
             let (mut name, color, icon) = self.data.list_look(lid);
             let synced = self.data.lists.iter().any(|l| l.id == lid && l.account.is_some());
             let count = self.data.tasks.iter().filter(|t| t.list == lid && !t.done).count();
-            let what = if synced { format!("from an account, {count} open tasks") } else { format!("{count} open tasks") };
+            let what = if synced { format!("from an account, {count} open tasks") } else { trf("{} open tasks", &[&count]) };
             // the button first; the name takes what is left
             ui.allocate_ui_with_layout(vec2(ui.available_width(), 52.0), Layout::right_to_left(Align::Center), |ui| {
                 if lid == 0 {
                     ui.label(RichText::new("always there").size(theme::size::CAPTION).color(muted));
                 } else {
-                    let b = egui::Button::new(RichText::new("Remove").size(theme::size::BODY).color(theme::DANGER)).fill(mix(side, text, 0.07)).corner_radius(theme::BUTTON_RADIUS);
-                    let resp = ui.add_enabled(!synced, b).on_hover_text("Its tasks go to the Inbox");
-                    if resp.on_disabled_hover_text("Untick it under Integrations to stop syncing it, or sign out of its account there").clicked() {
+                    let b = egui::Button::new(RichText::new(tr("Remove")).size(theme::size::BODY).color(theme::DANGER)).fill(mix(side, text, 0.07)).corner_radius(theme::BUTTON_RADIUS);
+                    let resp = ui.add_enabled(!synced, b).on_hover_text(tr("Its tasks go to the Inbox"));
+                    if resp.on_disabled_hover_text(tr("Untick it under Integrations to stop syncing it, or sign out of its account there")).clicked() {
                         remove = Some(lid);
                     }
                 }
@@ -827,14 +829,14 @@ impl App {
                 } else {
                     ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, &icon, FontId::proportional(theme::size::HEADING), rgb(color));
                 }
-                let resp = resp.on_hover_text("Colour and icon");
+                let resp = resp.on_hover_text(tr("Colour and icon"));
                 egui::Popup::from_toggle_button_response(&resp).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
                     ui.set_width(236.0);
                     let mut snapped = true;
                     self.list_fields(ui, lid, false, false, &mut snapped);
                 });
                 let edit = egui::TextEdit::singleline(&mut name)
-                    .hint_text(if lid == 0 { "Inbox" } else { "List name" })
+                    .hint_text(if lid == 0 { tr("Inbox") } else { tr("List name") })
                     .font(FontId::proportional(theme::size::LARGE))
                     .desired_width((ui.available_width() - 8.0).clamp(60.0, 280.0))
                     .id_salt(("listname", lid));
@@ -857,21 +859,21 @@ impl App {
         if finding(ui) {
             let names: Vec<&str> = self.data.calendars.iter().filter(|c| c.url.is_some()).map(|c| c.name.as_str()).collect();
             let words = [&["integration", "subscription", "link", "url", "ics", "webcal", "feed", "proton", "import", "refresh", "unsubscribe", "account", "caldav", "nextcloud", "fastmail", "radicale", "sync", "password", "keyring", "sign in", "server", "google", "gmail", "oauth", "client id", "microsoft", "outlook", "office 365", "entra"][..], &names].concat();
-            page_result(ui, Page::Calendars, "Subscribe to a calendar", "Bring other calendars in by their link, such as Proton Calendar", &words);
+            page_result(ui, Page::Calendars, tr("Subscribe to a calendar"), tr("Bring other calendars in by their link, such as Proton Calendar"), &words);
             return;
         }
         let (muted, border, side, text) = (self.pal.muted, self.pal.border, self.pal.side, self.pal.text);
-        heading(ui, "Integrate your calendars");
-        ui.add(egui::Label::new(RichText::new("Bring calendars in from a link or from an account. Pick a kind to set it up.").size(theme::size::LARGE).color(muted)).wrap());
+        heading(ui, tr("Integrate your calendars"));
+        ui.add(egui::Label::new(RichText::new(tr("Bring calendars in from a link or from an account. Pick a kind to set it up.")).size(theme::size::LARGE).color(muted)).wrap());
         ui.add_space(12.0);
         // one button per kind; the chosen one shows its form below
-        const KINDS: [(u8, &str); 6] = [(1, "Calendar feed"), (2, "CalDAV"), (3, "Nextcloud"), (4, "Google"), (5, "Microsoft"), (6, "Proton")];
+        const KINDS: [(u8, &str); 6] = [(1, later("Calendar feed")), (2, "CalDAV"), (3, "Nextcloud"), (4, "Google"), (5, "Microsoft"), (6, "Proton")];
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing = vec2(10.0, 10.0);
             let w = ((ui.available_width() - 50.0) / 6.0).floor().clamp(96.0, 230.0);
             for (kind, label) in KINDS {
                 let on = self.sub_kind == kind;
-                let b = egui::Button::new(RichText::new(label).size(theme::size::UI))
+                let b = egui::Button::new(RichText::new(tr(label)).size(theme::size::UI))
                     .min_size(vec2(w, 48.0))
                     .corner_radius(theme::RADIUS)
                     .fill(mix(side, text, if on { 0.2 } else { 0.09 }))
@@ -907,20 +909,20 @@ impl App {
                     ui.add_enabled(enabled, egui::Button::new(RichText::new(label).size(theme::size::UI).color(Color32::WHITE)).fill(accent).corner_radius(theme::RADIUS)).clicked()
                 };
                 let waiting = self.nextcloud_wait.is_some();
-                let both_ways = "Its calendars come in and stay in step both ways: what you change here is sent to the server. Repeating events can't be changed here yet.";
+                let both_ways = tr("Its calendars come in and stay in step both ways: what you change here is sent to the server. Repeating events can't be changed here yet.");
                 match self.sub_kind {
                     1 => {
                         // one field takes every kind of link: plain .ics feeds, webcal,
                         // and shared links from Proton, Google, Outlook or iCloud
-                        help(ui, "Paste the calendar's link: an https://, http:// or webcal:// address, such as a .ics feed or a shared link from Proton, Google, Outlook or iCloud. A calendar brought in by its link is read-only. For Proton Calendar, open Settings > Calendars, pick the calendar, choose \"Share with anyone\" and copy the link.");
+                        help(ui, tr("Paste the calendar's link: an https://, http:// or webcal:// address, such as a .ics feed or a shared link from Proton, Google, Outlook or iCloud. A calendar brought in by its link is read-only. For Proton Calendar, open Settings > Calendars, pick the calendar, choose \"Share with anyone\" and copy the link."));
                         let r = field(ui, &mut self.sub_url, "https://…/calendar.ics  or  webcal://…", false);
                         let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                         if ics::normalize_url(&self.sub_url).ok().as_deref().map(ics::is_proton).unwrap_or(false) {
-                            ui.label(RichText::new("Proton Calendar link recognised").size(theme::size::CAPTION).color(theme::SUCCESS));
+                            ui.label(RichText::new(tr("Proton Calendar link recognised")).size(theme::size::CAPTION).color(theme::SUCCESS));
                         }
                         ui.horizontal(|ui| {
-                            ui.add(egui::TextEdit::singleline(&mut self.sub_name).hint_text("Name (optional)").font(FontId::proportional(theme::size::UI)).margin(Margin::symmetric(10, 8)).desired_width(260.0));
-                            let b = egui::Button::new(RichText::new("Subscribe").size(theme::size::UI).color(Color32::WHITE)).fill(accent).corner_radius(theme::RADIUS);
+                            ui.add(egui::TextEdit::singleline(&mut self.sub_name).hint_text(tr("Name (optional)")).font(FontId::proportional(theme::size::UI)).margin(Margin::symmetric(10, 8)).desired_width(260.0));
+                            let b = egui::Button::new(RichText::new(tr("Subscribe")).size(theme::size::UI).color(Color32::WHITE)).fill(accent).corner_radius(theme::RADIUS);
                             if ui.add(b).clicked() || enter {
                                 let count = self.data.calendars.len();
                                 self.subscribe(ctx);
@@ -931,59 +933,59 @@ impl App {
                         });
                     }
                     2 => {
-                        help(ui, &format!("Sign in to a calendar server that speaks CalDAV, such as Fastmail, Radicale or Baïkal. {both_ways}"));
-                        field(ui, &mut self.acct_server, "Server address, such as https://cloud.example.org", false);
-                        field(ui, &mut self.acct_user, "User name", false);
-                        let r = field(ui, &mut self.acct_pass, "App password", true);
+                        help(ui, &trf("Sign in to a calendar server that speaks CalDAV, such as Fastmail, Radicale or Baïkal. {}", &[&both_ways]));
+                        field(ui, &mut self.acct_server, tr("Server address, such as https://cloud.example.org"), false);
+                        field(ui, &mut self.acct_user, tr("User name"), false);
+                        let r = field(ui, &mut self.acct_pass, tr("App password"), true);
                         let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        help(ui, "Make an app password in the server's security settings and use it here, not your main password. It is kept in your desktop's keyring, never in kalendar's files.");
+                        help(ui, tr("Make an app password in the server's security settings and use it here, not your main password. It is kept in your desktop's keyring, never in kalendar's files."));
                         let connecting = self.data.accounts.iter().any(|a| a.home.is_none() && self.syncing.contains(&a.id));
                         ui.horizontal(|ui| {
-                            if (go(ui, "Connect", !connecting) || enter) && !connecting {
+                            if (go(ui, tr("Connect"), !connecting) || enter) && !connecting {
                                 self.connect_account(ctx);
                             }
                             if connecting {
                                 ui.spinner();
-                                ui.label(RichText::new("Connecting…").size(theme::size::UI).color(muted));
+                                ui.label(RichText::new(tr("Connecting…")).size(theme::size::UI).color(muted));
                             }
                         });
                     }
                     3 => {
-                        help(ui, &format!("Only the server's address is needed. Nextcloud's own sign-in page opens in your browser and hands kalendar an app password of its own, which goes into your desktop's keyring. {both_ways}"));
-                        field(ui, &mut self.acct_server, "Server address, such as https://cloud.example.org", false);
-                        if go(ui, "Sign in with Nextcloud…", !waiting) {
+                        help(ui, &trf("Only the server's address is needed. Nextcloud's own sign-in page opens in your browser and hands kalendar an app password of its own, which goes into your desktop's keyring. {}", &[&both_ways]));
+                        field(ui, &mut self.acct_server, tr("Server address, such as https://cloud.example.org"), false);
+                        if go(ui, tr("Sign in with Nextcloud…"), !waiting) {
                             self.connect_nextcloud(ctx);
                         }
                     }
                     4 => {
                         help(ui, "kalendar has no registration of its own with Google, so you bring one: in the Google Cloud console, make a project, switch on the CalDAV API, add yourself as a test user on the consent screen, and make an OAuth client ID of the type \"Desktop app\". Paste its client ID and client secret here. While the project is in Testing, Google asks you to sign in again every 7 days.");
-                        field(ui, &mut self.g_email, "Your Google address", false);
-                        field(ui, &mut self.g_client_id, "Client ID, ending in .apps.googleusercontent.com", false);
-                        field(ui, &mut self.g_secret, "Client secret", true);
-                        if go(ui, "Sign in with Google…", !waiting) {
+                        field(ui, &mut self.g_email, tr("Your Google address"), false);
+                        field(ui, &mut self.g_client_id, tr("Client ID, ending in .apps.googleusercontent.com"), false);
+                        field(ui, &mut self.g_secret, tr("Client secret"), true);
+                        if go(ui, tr("Sign in with Google…"), !waiting) {
                             self.connect_google(ctx);
                         }
                     }
                     6 => {
-                        help(ui, "Proton has no official way in for other calendar programs. kalendar signs in the way Proton's own apps do and decrypts your events on this computer. Your password is used once to sign in and is not kept; the keyring holds the session. Calendars of your own stay in step both ways; calendars shared with you, events with guests and repeating events can only be read. Proton may stop this from working at any time.");
-                        field(ui, &mut self.pr_user, "Your Proton address or user name", false);
-                        field(ui, &mut self.pr_pass, "Password", true);
-                        field(ui, &mut self.pr_code, "Two-factor code, if you use one", false);
-                        field(ui, &mut self.pr_second, "Second (mailbox) password, if your account has one", true);
+                        help(ui, tr("Proton has no official way in for other calendar programs. kalendar signs in the way Proton's own apps do and decrypts your events on this computer. Your password is used once to sign in and is not kept; the keyring holds the session. Calendars of your own stay in step both ways; calendars shared with you, events with guests and repeating events can only be read. Proton may stop this from working at any time."));
+                        field(ui, &mut self.pr_user, tr("Your Proton address or user name"), false);
+                        field(ui, &mut self.pr_pass, tr("Password"), true);
+                        field(ui, &mut self.pr_code, tr("Two-factor code, if you use one"), false);
+                        field(ui, &mut self.pr_second, tr("Second (mailbox) password, if your account has one"), true);
                         if self.pr_busy {
                             ui.horizontal(|ui| {
                                 ui.spinner();
-                                ui.label(RichText::new("Signing in to Proton…").size(theme::size::BODY).color(muted));
+                                ui.label(RichText::new(tr("Signing in to Proton…")).size(theme::size::BODY).color(muted));
                             });
-                        } else if go(ui, "Sign in to Proton", true) {
+                        } else if go(ui, tr("Sign in to Proton"), true) {
                             self.connect_proton(ctx);
                         }
                     }
                     _ => {
-                        help(ui, "For Microsoft 365 and Outlook.com. kalendar has no registration of its own with Microsoft, so you bring one: in the Microsoft Entra admin center, register an app for accounts in any organisation and personal accounts, add the platform \"Mobile and desktop applications\" with the redirect address http://localhost, and allow the delegated Graph permission Calendars.ReadWrite. Paste its Application (client) ID here; there is no secret.");
-                        field(ui, &mut self.ms_email, "Your Microsoft address", false);
-                        field(ui, &mut self.ms_client_id, "Application (client) ID", false);
-                        if go(ui, "Sign in with Microsoft…", !waiting) {
+                        help(ui, tr("For Microsoft 365 and Outlook.com. kalendar has no registration of its own with Microsoft, so you bring one: in the Microsoft Entra admin center, register an app for accounts in any organisation and personal accounts, add the platform \"Mobile and desktop applications\" with the redirect address http://localhost, and allow the delegated Graph permission Calendars.ReadWrite. Paste its Application (client) ID here; there is no secret."));
+                        field(ui, &mut self.ms_email, tr("Your Microsoft address"), false);
+                        field(ui, &mut self.ms_client_id, tr("Application (client) ID"), false);
+                        if go(ui, tr("Sign in with Microsoft…"), !waiting) {
                             self.connect_microsoft(ctx);
                         }
                     }
@@ -993,14 +995,14 @@ impl App {
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(RichText::new("Waiting for you to sign in on the page that opened in your browser…").size(theme::size::BODY).color(muted));
-                        if ui.add(egui::Button::new(RichText::new("Cancel").size(theme::size::BODY)).corner_radius(theme::BUTTON_RADIUS)).clicked() {
+                        ui.label(RichText::new(tr("Waiting for you to sign in on the page that opened in your browser…")).size(theme::size::BODY).color(muted));
+                        if ui.add(egui::Button::new(RichText::new(tr("Cancel")).size(theme::size::BODY)).corner_radius(theme::BUTTON_RADIUS)).clicked() {
                             self.cancel_nextcloud();
                         }
                     });
                     if !login.is_empty() {
                         ui.horizontal_wrapped(|ui| {
-                            ui.label(RichText::new("If no page opened, open this one:").size(theme::size::CAPTION).color(muted));
+                            ui.label(RichText::new(tr("If no page opened, open this one:")).size(theme::size::CAPTION).color(muted));
                             ui.hyperlink_to(RichText::new("the sign-in page").size(theme::size::CAPTION), &login);
                         });
                     }
@@ -1012,36 +1014,36 @@ impl App {
             });
         }
         divider(ui, border);
-        heading(ui, "Manage integrations");
+        heading(ui, tr("Manage integrations"));
         let mut refresh: Option<u64> = None;
         let mut remove: Option<u64> = None;
         let subs: Vec<(u64, Calendar)> = self.data.calendars.iter().filter(|c| c.url.is_some()).map(|c| (c.id, c.clone())).collect();
         if subs.is_empty() && !self.data.accounts.iter().any(|a| a.home.is_some()) {
-            ui.label(RichText::new("Nothing is connected yet.").size(theme::size::UI).color(muted));
+            ui.label(RichText::new(tr("Nothing is connected yet.")).size(theme::size::UI).color(muted));
         }
         for (i, c) in subs {
             let url = c.url.clone().unwrap_or_default();
             ui.allocate_ui_with_layout(vec2(ui.available_width(), 70.0), Layout::right_to_left(Align::Center), |ui| {
                     ui.menu_button(RichText::new(icons::ELLIPSIS).size(theme::size::HEADING).color(muted), |ui| {
-                        if ui.button("Refresh").clicked() {
+                        if ui.button(tr("Refresh")).clicked() {
                             refresh = Some(i);
                             ui.close();
                         }
-                        if ui.button(RichText::new("Unsubscribe").color(theme::DANGER)).clicked() {
+                        if ui.button(RichText::new(tr("Unsubscribe")).color(theme::DANGER)).clicked() {
                             remove = Some(i);
                             ui.close();
                         }
                     });
                     ui.add_space(12.0);
                     if self.syncing.contains(&i) {
-                        ui.label(RichText::new("Refreshing…").size(theme::size::LARGE).color(muted));
+                        ui.label(RichText::new(tr("Refreshing…")).size(theme::size::LARGE).color(muted));
                         ui.spinner();
                     } else if let Some(e) = &c.error {
-                        ui.label(RichText::new("Not connected").size(theme::size::LARGE).color(theme::DANGER)).on_hover_text(e);
+                        ui.label(RichText::new(tr("Not connected")).size(theme::size::LARGE).color(theme::DANGER)).on_hover_text(e);
                     } else if c.last_sync.is_some() {
                         ui.label(RichText::new(format!("{} Connected", icons::CHECK)).size(theme::size::LARGE).color(theme::SUCCESS));
                     } else {
-                        ui.label(RichText::new("Waiting").size(theme::size::LARGE).color(muted));
+                        ui.label(RichText::new(tr("Waiting")).size(theme::size::LARGE).color(muted));
                     }
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 let (r, _) = ui.allocate_exact_size(vec2(34.0, 34.0), Sense::hover());
@@ -1052,10 +1054,10 @@ impl App {
                     ui.add_space(12.0);
                     ui.add(egui::Label::new(RichText::new(&c.name).size(theme::size::TITLE)).truncate());
                     let kind = if url == SECRET_URL {
-                        "Private link, kept in the keyring".to_string()
-                    } else if ics::is_proton(&url) { "Proton Calendar".to_string() } else { format!("Feed from {}", ics::default_name(&url)) };
+                        tr("Private link, kept in the keyring").to_string()
+                    } else if ics::is_proton(&url) { tr("Proton Calendar").to_string() } else { trf("Feed from {}", &[&ics::default_name(&url)]) };
                     let when = c.last_sync.as_ref().map(|t| format!("  ·  refreshed {t}")).unwrap_or_default();
-                    ui.add(egui::Label::new(RichText::new(format!("{kind}{when}")).size(theme::size::BODY).color(muted)).truncate());
+                    ui.add(egui::Label::new(RichText::new(trf("{}{}", &[&kind, &when])).size(theme::size::BODY).color(muted)).truncate());
                 });
                 });
             });
@@ -1093,11 +1095,11 @@ impl App {
             ui.allocate_ui_with_layout(vec2(ui.available_width(), 64.0), Layout::right_to_left(Align::Center), |ui| {
                 {
                     ui.menu_button(RichText::new(icons::ELLIPSIS).size(theme::size::HEADING).color(muted), |ui| {
-                        if ui.button("Sync now").clicked() {
+                        if ui.button(tr("Sync now")).clicked() {
                             sync_now = Some(a.id);
                             ui.close();
                         }
-                        if ui.button(RichText::new("Sign out and remove").color(theme::DANGER)).clicked() {
+                        if ui.button(RichText::new(tr("Sign out and remove")).color(theme::DANGER)).clicked() {
                             remove = Some(a.id);
                             ui.close();
                         }
@@ -1105,10 +1107,10 @@ impl App {
                     ui.add_space(12.0);
                     let busy = self.syncing.contains(&a.id) || self.data.calendars.iter().any(|c| c.account == Some(a.id) && self.syncing.contains(&c.id));
                     if busy {
-                        ui.label(RichText::new("Syncing…").size(theme::size::LARGE).color(muted));
+                        ui.label(RichText::new(tr("Syncing…")).size(theme::size::LARGE).color(muted));
                         ui.spinner();
                     } else if let Some(e) = &a.error {
-                        ui.label(RichText::new("Not connected").size(theme::size::LARGE).color(theme::DANGER)).on_hover_text(e);
+                        ui.label(RichText::new(tr("Not connected")).size(theme::size::LARGE).color(theme::DANGER)).on_hover_text(e);
                     } else {
                         ui.label(RichText::new(format!("{} Connected", icons::CHECK)).size(theme::size::LARGE).color(theme::SUCCESS));
                     }
@@ -1119,8 +1121,8 @@ impl App {
                         ui.add_space(10.0);
                         ui.add(egui::Label::new(RichText::new(a.label()).size(theme::size::TITLE)).truncate());
                         let when = a.last_sync.as_ref().map(|t| format!("  ·  synced {t}")).unwrap_or_default();
-                        let kind = if a.proton { "Proton account" } else if a.microsoft { "Microsoft account" } else if a.google { "Google account" } else if a.nextcloud { "Nextcloud account" } else { "CalDAV account" };
-                        ui.add(egui::Label::new(RichText::new(format!("{kind}{when}")).size(theme::size::BODY).color(muted)).truncate());
+                        let kind = if a.proton { tr("Proton account") } else if a.microsoft { tr("Microsoft account") } else if a.google { tr("Google account") } else if a.nextcloud { tr("Nextcloud account") } else { tr("CalDAV account") };
+                        ui.add(egui::Label::new(RichText::new(trf("{}{}", &[&kind, &when])).size(theme::size::BODY).color(muted)).truncate());
                     });
                 });
             });
@@ -1131,7 +1133,7 @@ impl App {
             for c in self.data.calendars.iter_mut().filter(|c| c.account == Some(a.id)) {
                 ui.horizontal_wrapped(|ui| {
                     ui.add_space(14.0);
-                    if ui.checkbox(&mut c.visible, "").on_hover_text("Show and sync this calendar").changed() {
+                    if ui.checkbox(&mut c.visible, "").on_hover_text(tr("Show and sync this calendar")).changed() {
                         changed = true;
                         if c.visible {
                             sync_now = Some(a.id);
@@ -1148,7 +1150,7 @@ impl App {
                     }
                     if c.holds_tasks {
                         let mut on = with_tasks.contains(&c.id);
-                        if ui.checkbox(&mut on, RichText::new("tasks too").size(theme::size::CAPTION).color(muted)).on_hover_text("Bring the tasks kept in this calendar in as a task list").changed() {
+                        if ui.checkbox(&mut on, RichText::new("tasks too").size(theme::size::CAPTION).color(muted)).on_hover_text(tr("Bring the tasks kept in this calendar in as a task list")).changed() {
                             tasks_toggle = Some((c.id, on));
                         }
                     }
@@ -1185,8 +1187,8 @@ impl App {
             self.remove_account(id);
         }
         ui.add_space(14.0);
-        ui.checkbox(&mut self.data.prefs.plaintext_secrets, RichText::new("Keep passwords in a file when no keyring is running").size(theme::size::BODY))
-            .on_hover_text(format!("Off by default. When on, and only if no keyring answers, passwords go to {} as plain text that only you can read.", secrets::file_path().display()));
+        ui.checkbox(&mut self.data.prefs.plaintext_secrets, RichText::new(tr("Keep passwords in a file when no keyring is running")).size(theme::size::BODY))
+            .on_hover_text(trf("Off by default. When on, and only if no keyring answers, passwords go to {} as plain text that only you can read.", &[&secrets::file_path().display()]));
     }
 
     /// Takes the next key combination typed while a shortcut is being
@@ -1262,9 +1264,9 @@ impl App {
         let words = search_words(&self.shortcut_query);
         if !searching {
             ui.horizontal(|ui| {
-                search_field(ui, &mut self.shortcut_query, "Search shortcuts", (ui.available_width() * 0.5).clamp(220.0, 360.0));
+                search_field(ui, &mut self.shortcut_query, tr("Search shortcuts"), (ui.available_width() * 0.5).clamp(220.0, 360.0));
                 ui.add_space(12.0);
-                ui.add(egui::Label::new(RichText::new("Click a shortcut to change it, then press the new keys. Esc cancels.").size(theme::size::UI).color(muted)).wrap());
+                ui.add(egui::Label::new(RichText::new(tr("Click a shortcut to change it, then press the new keys. Esc cancels.")).size(theme::size::UI).color(muted)).wrap());
             });
             ui.add_space(10.0);
         }
@@ -1278,10 +1280,11 @@ impl App {
             }
         };
         // every command's keys, to warn when two share one
-        let all: Vec<(Cmd, &str, Vec<KeyBind>)> = COMMANDS.iter().map(|c| (c.0, c.1, self.binds(c.0))).collect();
+        let all: Vec<(Cmd, &str, Vec<KeyBind>)> = COMMANDS.iter().map(|c| (c.0, tr(c.1), self.binds(c.0))).collect();
         let mut section = "";
         let mut rows = 0;
         for (cmd, label, default, sec) in COMMANDS {
+            let (label, sec) = (&tr(label), &tr(sec));
             if *cmd == Cmd::Paste {
                 // pasting is done with the mouse
                 continue;
@@ -1308,17 +1311,17 @@ impl App {
                     // reset and clear sit to the right of the keys
                     if custom {
                         let r = ui.add(egui::Button::new(RichText::new(icons::UNDO).size(theme::size::BODY).color(muted)).frame(false));
-                        reset = r.on_hover_text(format!("Back to the default ({})", if default.is_empty() { "none" } else { default })).clicked();
+                        reset = r.on_hover_text(trf("Back to the default ({})", &[&if default.is_empty() { "none" } else { default }])).clicked();
                     }
                     if !keys.is_empty() {
                         let r = ui.add(egui::Button::new(RichText::new(icons::X).size(theme::size::BODY).color(muted)).frame(false));
-                        clear = r.on_hover_text("Remove this shortcut").clicked();
+                        clear = r.on_hover_text(tr("Remove this shortcut")).clicked();
                     }
                     let inner = ui.scope(|ui| {
                         if recording {
-                            chip(ui, "Press keys…", mix(side, accent, 0.35), text);
+                            chip(ui, tr("Press keys…"), mix(side, accent, 0.35), text);
                         } else if keys.is_empty() {
-                            chip(ui, "Not set", mix(side, text, 0.06), muted);
+                            chip(ui, tr("Not set"), mix(side, text, 0.06), muted);
                         } else {
                             chips(ui, &keys);
                         }
@@ -1327,13 +1330,13 @@ impl App {
                     if r.hovered() {
                         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
                     }
-                    start = r.on_hover_text("Click, then press the new keys").clicked();
+                    start = r.on_hover_text(tr("Click, then press the new keys")).clicked();
                 }
                 ui.add_space(10.0);
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     ui.add(egui::Label::new(RichText::new(*label).size(theme::size::TITLE).color(mix(muted, text, 0.6))).truncate());
                     if !clash.is_empty() {
-                        ui.label(RichText::new(icons::INFO).size(theme::size::BODY).color(theme::DANGER)).on_hover_text(format!("Also used by: {}", clash.join(", ")));
+                        ui.label(RichText::new(icons::INFO).size(theme::size::BODY).color(theme::DANGER)).on_hover_text(trf("Also used by: {}", &[&clash.join(", ")]));
                     }
                 });
             });
@@ -1349,26 +1352,26 @@ impl App {
         }
         let mut fixed_head = false;
         for (label, keys) in [
-            ("Paste here", "Right-click"),
-            ("Discard the creation of an event", "Esc"),
-            ("Save changes", "Ctrl+Enter"),
-            ("Zoom the hours", "Ctrl+Wheel"),
-            ("Move sideways by days", "Shift+Wheel"),
-            ("Move back or forward (a day in day views)", "Mouse 4 / Mouse 5"),
+            (tr("Paste here"), tr("Right-click")),
+            (tr("Discard the creation of an event"), tr("Esc")),
+            (tr("Save changes"), tr("Ctrl+Enter")),
+            (tr("Zoom the hours"), tr("Ctrl+Wheel")),
+            (tr("Move sideways by days"), tr("Shift+Wheel")),
+            (tr("Move back or forward (a day in day views)"), tr("Mouse 4 / Mouse 5")),
         ] {
-            if !wanted(ui, label, keys, "Fixed") {
+            if !wanted(ui, label, keys, tr("Fixed")) {
                 continue;
             }
             rows += 1;
             if !fixed_head && !searching {
-                section_head(ui, "Fixed", section.is_empty());
+                section_head(ui, tr("Fixed"), section.is_empty());
                 fixed_head = true;
             }
             fixed_row(ui, label, keys);
         }
         if rows == 0 && !searching {
             ui.add_space(30.0);
-            ui.label(RichText::new(format!("No shortcuts match \"{}\"", self.shortcut_query.trim())).size(theme::size::LARGE).color(muted));
+            ui.label(RichText::new(trf("No shortcuts match \"{}\"", &[&self.shortcut_query.trim()])).size(theme::size::LARGE).color(muted));
         }
         if self.recording.is_some() {
             ctx.request_repaint();
@@ -1378,21 +1381,21 @@ impl App {
     fn page_info(&mut self, ui: &mut egui::Ui) {
         if finding(ui) {
             let words = ["about", "kalendar", "version", env!("CARGO_PKG_VERSION"), "data", "file", "folder", "path", "location", "config", "json", "privacy"];
-            page_result(ui, Page::Info, "Version and data files", "Where your calendars, tasks and settings are kept", &words);
+            page_result(ui, Page::Info, tr("Version and data files"), tr("Where your calendars, tasks and settings are kept"), &words);
             return;
         }
         let muted = self.pal.muted;
-        heading(ui, "Kalendar");
-        ui.label(RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).size(theme::size::LARGE));
+        heading(ui, tr("Kalendar"));
+        ui.label(RichText::new(trf("Version {}", &[&env!("CARGO_PKG_VERSION")])).size(theme::size::LARGE));
         ui.add_space(8.0);
-        ui.label(RichText::new("Your calendars and tasks are kept on this computer, in:").size(theme::size::UI).color(muted));
+        ui.label(RichText::new(tr("Your calendars and tasks are kept on this computer, in:")).size(theme::size::UI).color(muted));
         ui.label(RichText::new(data_path().display().to_string()).size(theme::size::UI).monospace());
         ui.add_space(8.0);
-        ui.label(RichText::new("Your settings and shortcuts are kept in:").size(theme::size::UI).color(muted));
+        ui.label(RichText::new(tr("Your settings and shortcuts are kept in:")).size(theme::size::UI).color(muted));
         ui.label(RichText::new(config_path().display().to_string()).size(theme::size::UI).monospace());
         ui.add_space(8.0);
         ui.label(
-            RichText::new("Account passwords and Proton Calendar links are kept in your desktop's keyring, not in these files. Links of other subscribed calendars are stored in data.json as plain text. Without a running keyring a Proton link stays in data.json too; it contains the keys that give access to that calendar, so keep that file private.")
+            RichText::new(tr("Account passwords and Proton Calendar links are kept in your desktop's keyring, not in these files. Links of other subscribed calendars are stored in data.json as plain text. Without a running keyring a Proton link stays in data.json too; it contains the keys that give access to that calendar, so keep that file private."))
                 .size(theme::size::UI)
                 .color(muted),
         );

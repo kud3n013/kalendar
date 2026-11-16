@@ -1,6 +1,7 @@
 //! Passwords and private links, kept in the desktop's keyring and never in
 //! data.json or config.json.
 
+use crate::strings::{later, tr, trf};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -17,7 +18,7 @@ pub fn feed_key(id: u64) -> String {
     format!("feed:{id}")
 }
 
-const NO_KEYRING: &str = "No keyring is running, so this cannot be kept safely. Start one (KWallet or GNOME Keyring), or allow a password file under Settings > Integrations.";
+const NO_KEYRING: &str = later("No keyring is running, so this cannot be kept safely. Start one (KWallet or GNOME Keyring), or allow a password file under Settings > Integrations.");
 
 /// Connects to the Secret Service once.
 fn keyring() -> Result<(), String> {
@@ -83,7 +84,7 @@ pub fn set(key: &str, secret: &str, allow_file: bool) -> Result<(), String> {
             Ok(())
         }
         Err(_) if allow_file => file_set(&file_path(), key, Some(secret)),
-        Err(_) => Err(NO_KEYRING.into()),
+        Err(_) => Err(tr(NO_KEYRING).into()),
     }
 }
 
@@ -96,7 +97,7 @@ pub fn get(key: &str, allow_file: bool) -> Result<String, String> {
                     return Ok(s);
                 }
             }
-            Err(if keyring().is_err() { NO_KEYRING.into() } else { format!("The keyring does not have it ({e}).") })
+            Err(if keyring().is_err() { tr(NO_KEYRING).into() } else { trf("The keyring does not have it ({}).", &[&e]) })
         }
     }
 }

@@ -2,6 +2,7 @@
 //! person signs in on the server's own page, and the server hands this
 //! program an app password of its own. The main password is never seen.
 
+use crate::strings::{tr, trf};
 use super::SyncError;
 use serde_json::Value;
 
@@ -35,7 +36,7 @@ fn base(server: &str) -> Result<String, SyncError> {
     // the app password comes back over this connection
     let local = ["http://localhost", "http://127.0.0.1", "http://[::1]"].iter().any(|p| s.starts_with(p));
     if !s.starts_with("https://") && !local {
-        return Err(SyncError::Other("The server address must start with https://, so the password stays private.".into()));
+        return Err(SyncError::Other(tr("The server address must start with https://, so the password stays private.").into()));
     }
     Ok(s.trim_end_matches("/remote.php/dav").to_string())
 }
@@ -76,11 +77,11 @@ fn parse_granted(body: &str) -> Option<Granted> {
 pub fn start(server: &str) -> Result<Pending, SyncError> {
     let base = base(server)?;
     let (status, body) = post(&format!("{base}/index.php/login/v2"), &[])?;
-    let pending = parse_start(&body).filter(|_| status == 200).ok_or_else(|| SyncError::Other("This does not look like a Nextcloud server.".into()))?;
+    let pending = parse_start(&body).filter(|_| status == 200).ok_or_else(|| SyncError::Other(tr("This does not look like a Nextcloud server.").into()))?;
     // the page to open and the place to ask must be on the server typed
     let host = |u: &str| u.split("://").nth(1).unwrap_or("").split('/').next().unwrap_or("").to_lowercase();
     if host(&pending.endpoint) != host(&base) || !(pending.login.starts_with("https://") || pending.login.starts_with("http://")) {
-        return Err(SyncError::Other("The server sent a sign-in address that is not its own.".into()));
+        return Err(SyncError::Other(tr("The server sent a sign-in address that is not its own.").into()));
     }
     Ok(pending)
 }
@@ -89,9 +90,9 @@ pub fn start(server: &str) -> Result<Pending, SyncError> {
 pub fn poll(p: &Pending) -> Result<Option<Granted>, SyncError> {
     let (status, body) = post(&p.endpoint, &[("token", &p.token)])?;
     match status {
-        200 => parse_granted(&body).map(Some).ok_or_else(|| SyncError::Other("The server's answer could not be read.".into())),
+        200 => parse_granted(&body).map(Some).ok_or_else(|| SyncError::Other(tr("The server's answer could not be read.").into())),
         404 => Ok(None),
-        code => Err(SyncError::Other(format!("The server answered with error {code}."))),
+        code => Err(SyncError::Other(trf("The server answered with error {}.", &[&code]))),
     }
 }
 

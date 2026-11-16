@@ -1,5 +1,6 @@
 //! CalDAV: finding a person's calendars on a server and reading them.
 
+use crate::strings::{tr, trf};
 use super::{Delta, Guard, Provider, RemoteCalendar, SyncError};
 use crate::ics::{self, FeedEvent, FeedTask};
 use crate::model::RemoteKey;
@@ -162,7 +163,7 @@ impl CalDav {
         let mut url = url.to_string();
         for _ in 0..6 {
             if !safe_for_password(&url) {
-                return Err(SyncError::Other("The server address must start with https://, so the password stays private.".into()));
+                return Err(SyncError::Other(tr("The server address must start with https://, so the password stays private.").into()));
             }
             let mut req = ureq::http::Request::builder().method(method).uri(&url).header("User-Agent", "kalendar");
             if same_site(&self.server, &url) {
@@ -181,7 +182,7 @@ impl CalDav {
             if !body.is_empty() {
                 req = req.header("Content-Type", if body.starts_with("BEGIN:") { "text/calendar; charset=utf-8" } else { "application/xml; charset=utf-8" });
             }
-            let req = req.body(body.to_string()).map_err(|e| SyncError::Other(format!("The server address is not valid ({e}).")))?;
+            let req = req.body(body.to_string()).map_err(|e| SyncError::Other(trf("The server address is not valid ({}).", &[&e])))?;
             let mut resp = agent.run(req).map_err(|e| SyncError::Network(e.to_string()))?;
             let status = resp.status().as_u16();
             if matches!(status, 301 | 302 | 303 | 307 | 308) {
@@ -209,7 +210,7 @@ impl CalDav {
             412 => Err(SyncError::Conflict),
             429 | 503 => Err(SyncError::RateLimited),
             404 | 410 => Err(SyncError::Gone),
-            code => Err(SyncError::Other(format!("The server answered with error {code}."))),
+            code => Err(SyncError::Other(trf("The server answered with error {}.", &[&code]))),
         }
     }
 
@@ -225,7 +226,7 @@ impl CalDav {
         let root = origin(&self.server);
         let mut tries = vec![self.server.clone(), format!("{root}/.well-known/caldav"), format!("{root}/")];
         tries.dedup();
-        let mut last = SyncError::Other("No calendars were found at this address.".into());
+        let mut last = SyncError::Other(tr("No calendars were found at this address.").into());
         for t in tries {
             let r = match self.ask("PROPFIND", &t, Some("0"), &body) {
                 Ok(r) => r,
@@ -253,7 +254,7 @@ impl CalDav {
     }
 
     fn bad_answer() -> SyncError {
-        SyncError::Other("The server's answer could not be read.".into())
+        SyncError::Other(tr("The server's answer could not be read.").into())
     }
 
     /// A calendar's change tag and sync token.

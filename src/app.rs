@@ -214,11 +214,11 @@ impl App {
                 server: "https://cloud.example.org".into(),
                 username: "sam".into(),
                 home: Some("https://cloud.example.org/dav/calendars/sam/".into()),
-                last_sync: Some("Nov 11, 10:28".into()),
+                last_sync: Some(tr("Nov 11, 10:28").into()),
                 error: None,
                 ..Default::default()
             });
-            for (i, (name, color, visible)) in [("Home", EVENT_COLORS[6].0, true), ("Team", EVENT_COLORS[2].0, true), ("Holidays", EVENT_COLORS[12].0, false)].into_iter().enumerate() {
+            for (i, (name, color, visible)) in [(tr("Home"), EVENT_COLORS[6].0, true), (tr("Team"), EVENT_COLORS[2].0, true), (tr("Holidays"), EVENT_COLORS[12].0, false)].into_iter().enumerate() {
                 data.calendars.push(Calendar {
                     id: 901 + i as u64,
                     name: name.into(),
@@ -233,8 +233,8 @@ impl App {
             }
         }
         if shot.is_some() && testaid::get().demo_account {
-            data.lists.push(TaskList { id: 910, name: "Shopping".into(), color: EVENT_COLORS[4].0, account: Some(900), remote_id: Some("https://cloud.example.org/dav/calendars/sam/shopping/".into()), ..Default::default() });
-            data.lists.push(TaskList { id: 911, name: "Home".into(), color: EVENT_COLORS[6].0, account: Some(900), remote_id: Some("https://cloud.example.org/dav/calendars/sam/0/".into()), ..Default::default() });
+            data.lists.push(TaskList { id: 910, name: tr("Shopping").into(), color: EVENT_COLORS[4].0, account: Some(900), remote_id: Some("https://cloud.example.org/dav/calendars/sam/shopping/".into()), ..Default::default() });
+            data.lists.push(TaskList { id: 911, name: tr("Home").into(), color: EVENT_COLORS[6].0, account: Some(900), remote_id: Some("https://cloud.example.org/dav/calendars/sam/0/".into()), ..Default::default() });
         }
         let view = data.prefs.initial_view;
         let scroll = (opening_scroll_min(Self::now()) - data.prefs.grid_start_h * 60) as f32 / 60.0 * data.prefs.hour_height();
@@ -422,7 +422,7 @@ impl App {
             self.data = d;
             self.selected = None;
             self.commit();
-            self.say(ctx, "Undone", false);
+            self.say(ctx, tr("Undone"), false);
         }
     }
 
@@ -549,7 +549,7 @@ impl App {
             }
         }
         self.commit();
-        self.say(ctx, format!("Frame skipped on {}", day.format("%a, %b %-d")), true);
+        self.say(ctx, trf("Frame skipped on {}", &[&day.format("%a, %b %-d")]), true);
     }
 
     /// Puts a skipped day back into a frame.
@@ -565,7 +565,7 @@ impl App {
         self.snapshot();
         self.data.frames.retain(|f| f.id != id);
         self.commit();
-        self.say(ctx, "Frame deleted", true);
+        self.say(ctx, tr("Frame deleted"), true);
     }
 
     pub fn open_new_event(&mut self, start: NaiveDateTime, mins: i64, all_day: bool) {
@@ -636,7 +636,7 @@ impl App {
             self.selected = None;
         }
         self.commit();
-        self.say(ctx, if was_session { "Session unscheduled" } else { "Event deleted" }, true);
+        self.say(ctx, if was_session { tr("Session unscheduled") } else { tr("Event deleted") }, true);
     }
 
     /// Ticks or unticks a task. A task whose due date repeats leaves a
@@ -699,7 +699,7 @@ impl App {
                 DueMove::Never => {}
                 DueMove::Ask => {
                     self.toast = Some(Toast {
-                        text: "Scheduled after its due date.".into(),
+                        text: tr("Scheduled after its due date.").into(),
                         until: ctx.input(|i| i.time) + 10.0,
                         undo: false,
                         move_due: Some((task_id, day)),
@@ -762,12 +762,12 @@ impl App {
                 self.anchor_to(start.date());
                 self.data.events.push(moved);
                 self.commit();
-                self.say(ctx, format!("Moved to {}", start.format("%a %b %-d, %H:%M")), true);
+                self.say(ctx, trf("Moved to {}", &[&start.format("%a %b %-d, %H:%M")]), true);
             }
             None => {
                 self.data.events.push(e);
                 self.undo.pop();
-                self.say(ctx, "No free working time found in the next days", false);
+                self.say(ctx, tr("No free working time found in the next days"), false);
             }
         }
     }
@@ -790,16 +790,16 @@ impl App {
                 self.anchor_to(start.date());
                 self.data.events.push(next);
                 self.commit();
-                self.say(ctx, format!("Follow-up on {}", start.format("%a %b %-d, %H:%M")), true);
+                self.say(ctx, trf("Follow-up on {}", &[&start.format("%a %b %-d, %H:%M")]), true);
             }
-            None => self.say(ctx, "No free working time found in the next days", false),
+            None => self.say(ctx, tr("No free working time found in the next days"), false),
         }
     }
 
     /// Ends a running session now and books the rest of its time later.
     pub fn split_session(&mut self, ctx: &egui::Context, id: u64) {
         let Some(at) = self.split_time(id) else {
-            self.say(ctx, "Only a session that is running now can be split", false);
+            self.say(ctx, tr("Only a session that is running now can be split"), false);
             return;
         };
         let Some(e) = self.data.event(id).cloned() else { return };
@@ -816,11 +816,11 @@ impl App {
                 next.end = start + Duration::minutes(rest);
                 self.data.events.push(next);
                 self.commit();
-                self.say(ctx, format!("Remaining {rest} min moved to {}", start.format("%a %b %-d, %H:%M")), true);
+                self.say(ctx, trf("Remaining {} min moved to {}", &[&rest, &start.format("%a %b %-d, %H:%M")]), true);
             }
             None => {
                 self.commit();
-                self.say(ctx, "Session shortened; no free time found for the rest", true);
+                self.say(ctx, tr("Session shortened; no free time found for the rest"), true);
             }
         }
     }
@@ -831,7 +831,7 @@ impl App {
         self.data.events.retain(|e| e.task_id != Some(task_id));
         self.selected = None;
         self.commit();
-        self.say(ctx, "Task deleted", true);
+        self.say(ctx, tr("Task deleted"), true);
     }
 
     /// Shows a day if the current view does not already.

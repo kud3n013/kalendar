@@ -1,5 +1,6 @@
 //! Adding and removing calendars and accounts: links, sign-ins and sign-outs.
 
+use crate::strings::tr;
 use super::*;
 
 impl App {
@@ -10,7 +11,7 @@ impl App {
             Err(e) => return self.say(ctx, e, false),
         };
         if self.data.calendars.iter().any(|c| c.url.as_deref() == Some(url.as_str())) {
-            return self.say(ctx, "You are already subscribed to this calendar", false);
+            return self.say(ctx, tr("You are already subscribed to this calendar"), false);
         }
         let name = self.sub_name.trim();
         let n = self.data.calendars.iter().filter(|c| c.url.is_some()).count();
@@ -60,11 +61,11 @@ impl App {
     pub fn connect_account(&mut self, ctx: &egui::Context) {
         let (server, user) = (self.acct_server.trim().to_string(), self.acct_user.trim().to_string());
         if server.is_empty() || user.is_empty() || self.acct_pass.is_empty() {
-            self.acct_error = Some("Fill in the server address, the user name and the app password.".into());
+            self.acct_error = Some(tr("Fill in the server address, the user name and the app password.").into());
             return;
         }
         if self.data.accounts.iter().any(|a| a.server == server && a.username == user) {
-            self.acct_error = Some("This account is already connected.".into());
+            self.acct_error = Some(tr("This account is already connected.").into());
             return;
         }
         self.acct_error = None;
@@ -112,7 +113,7 @@ impl App {
     pub fn connect_nextcloud(&mut self, ctx: &egui::Context) {
         let server = self.acct_server.trim().to_string();
         if server.is_empty() {
-            self.acct_error = Some("Fill in the server address first.".into());
+            self.acct_error = Some(tr("Fill in the server address first.").into());
             return;
         }
         if self.shot.is_some() || self.nextcloud_wait.is_some() {
@@ -130,10 +131,10 @@ impl App {
                 loop {
                     std::thread::sleep(std::time::Duration::from_secs(2));
                     if stop.load(Ordering::Relaxed) {
-                        return Err(sync::SyncError::Other("Sign-in was called off.".into()));
+                        return Err(sync::SyncError::Other(tr("Sign-in was called off.").into()));
                     }
                     if began.elapsed().as_secs() > NEXTCLOUD_WAIT_S {
-                        return Err(sync::SyncError::Other("Nobody signed in within five minutes. Try again.".into()));
+                        return Err(sync::SyncError::Other(tr("Nobody signed in within five minutes. Try again.").into()));
                     }
                     if let Some(g) = sync::nextcloud::poll(&pending)? {
                         return Ok(g);
@@ -149,7 +150,7 @@ impl App {
     pub fn connect_google(&mut self, ctx: &egui::Context) {
         let (email, client_id, secret) = (self.g_email.trim().to_string(), self.g_client_id.trim().to_string(), self.g_secret.trim().to_string());
         if !email.contains('@') || client_id.is_empty() {
-            self.acct_error = Some("Fill in your Google address and the client ID of your Google Cloud project.".into());
+            self.acct_error = Some(tr("Fill in your Google address and the client ID of your Google Cloud project.").into());
             return;
         }
         if self.shot.is_some() || self.nextcloud_wait.is_some() {
@@ -166,7 +167,7 @@ impl App {
             };
             let res = sync::oauth::authorize(&app, &opened, &stop, NEXTCLOUD_WAIT_S).and_then(|t| match t.refresh {
                 Some(r) => Ok(GoogleGrant { microsoft: false, email, client_id, secret: sync::google::pack(&r, &secret), access: t.access, expires_in: t.expires_in }),
-                None => Err(sync::SyncError::Other("Google signed you in but gave nothing to stay signed in with. Remove kalendar under your Google account's third-party access, then try again.".into())),
+                None => Err(sync::SyncError::Other(tr("Google signed you in but gave nothing to stay signed in with. Remove kalendar under your Google account's third-party access, then try again.").into())),
             });
             send(SyncDone::GoogleDone { res });
         });
@@ -177,7 +178,7 @@ impl App {
     pub fn connect_microsoft(&mut self, ctx: &egui::Context) {
         let (email, client_id) = (self.ms_email.trim().to_string(), self.ms_client_id.trim().to_string());
         if !email.contains('@') || client_id.is_empty() {
-            self.acct_error = Some("Fill in your Microsoft address and the client ID of your app registration.".into());
+            self.acct_error = Some(tr("Fill in your Microsoft address and the client ID of your app registration.").into());
             return;
         }
         if self.shot.is_some() || self.nextcloud_wait.is_some() {
@@ -194,7 +195,7 @@ impl App {
             };
             let res = sync::oauth::authorize(&app, &opened, &stop, NEXTCLOUD_WAIT_S).and_then(|t| match t.refresh {
                 Some(r) => Ok(GoogleGrant { microsoft: true, email, client_id, secret: sync::google::pack(&r, ""), access: t.access, expires_in: t.expires_in }),
-                None => Err(sync::SyncError::Other("Microsoft signed you in but gave nothing to stay signed in with. Check that the app registration allows the offline_access permission.".into())),
+                None => Err(sync::SyncError::Other(tr("Microsoft signed you in but gave nothing to stay signed in with. Check that the app registration allows the offline_access permission.").into())),
             });
             send(SyncDone::GoogleDone { res });
         });
@@ -205,7 +206,7 @@ impl App {
     pub fn connect_proton(&mut self, ctx: &egui::Context) {
         let username = self.pr_user.trim().to_string();
         if username.is_empty() || self.pr_pass.is_empty() {
-            self.acct_error = Some("Fill in your Proton address and password.".into());
+            self.acct_error = Some(tr("Fill in your Proton address and password.").into());
             return;
         }
         if self.shot.is_some() || self.pr_busy {

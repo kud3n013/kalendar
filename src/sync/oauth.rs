@@ -4,6 +4,7 @@
 //! that one answer. A fresh secret per sign-in (PKCE) ties the answer to
 //! this program.
 
+use crate::strings::{tr, trf};
 use super::SyncError;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -58,7 +59,7 @@ fn base64url(input: &[u8]) -> String {
 /// Bytes nobody can guess, from the system.
 fn random(n: usize) -> Result<Vec<u8>, SyncError> {
     let mut buf = vec![0u8; n];
-    std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut buf)).map_err(|e| SyncError::Other(format!("No random numbers could be had ({e}).")))?;
+    std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut buf)).map_err(|e| SyncError::Other(trf("No random numbers could be had ({}).", &[&e])))?;
     Ok(buf)
 }
 
@@ -110,7 +111,7 @@ fn safe(url: &str) -> bool {
 
 fn token_request(app: &OAuthApp, form: &[(&str, &str)]) -> Result<Tokens, SyncError> {
     if !safe(&app.token_url) {
-        return Err(SyncError::Other("The sign-in service's address must start with https://.".into()));
+        return Err(SyncError::Other(tr("The sign-in service's address must start with https://.").into()));
     }
     let mut form: Vec<(&str, &str)> = form.to_vec();
     form.push(("client_id", &app.client_id));
@@ -135,10 +136,10 @@ fn token_request(app: &OAuthApp, form: &[(&str, &str)]) -> Result<Tokens, SyncEr
         return Err(match v["error"].as_str() {
             // the sign-in has run out or was taken back
             Some("invalid_grant") => SyncError::Auth,
-            _ => SyncError::Other(format!("The sign-in service refused ({why}).")),
+            _ => SyncError::Other(trf("The sign-in service refused ({}).", &[&why])),
         });
     }
-    let access = v["access_token"].as_str().ok_or_else(|| SyncError::Other("The sign-in service's answer could not be read.".into()))?;
+    let access = v["access_token"].as_str().ok_or_else(|| SyncError::Other(tr("The sign-in service's answer could not be read.").into()))?;
     Ok(Tokens { access: access.to_string(), refresh: v["refresh_token"].as_str().map(str::to_string), expires_in: v["expires_in"].as_u64().unwrap_or(3600) })
 }
 
@@ -160,7 +161,7 @@ fn answer(stream: &mut std::net::TcpStream, status: &str, page: &str) {
 /// for at most `wait_s` seconds or until `stop` is set.
 pub fn authorize(app: &OAuthApp, opened: &dyn Fn(&str), stop: &AtomicBool, wait_s: u64) -> Result<Tokens, SyncError> {
     // only this computer can reach the port, and it is open only for now
-    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| SyncError::Other(format!("No port could be opened for the sign-in ({e}).")))?;
+    let listener = TcpListener::bind("127.0.0.1:0").map_err(|e| SyncError::Other(trf("No port could be opened for the sign-in ({}).", &[&e])))?;
     let port = listener.local_addr().map_err(|e| SyncError::Other(e.to_string()))?.port();
     listener.set_nonblocking(true).map_err(|e| SyncError::Other(e.to_string()))?;
     // "localhost" may mean the IPv6 address of this computer to the
@@ -192,10 +193,10 @@ pub fn authorize(app: &OAuthApp, opened: &dyn Fn(&str), stop: &AtomicBool, wait_
     let began = Instant::now();
     let code = loop {
         if stop.load(Ordering::Relaxed) {
-            return Err(SyncError::Other("Sign-in was called off.".into()));
+            return Err(SyncError::Other(tr("Sign-in was called off.").into()));
         }
         if began.elapsed().as_secs() > wait_s {
-            return Err(SyncError::Other("Nobody signed in in time. Try again.".into()));
+            return Err(SyncError::Other(tr("Nobody signed in in time. Try again.").into()));
         }
         let mut stream = match listeners.iter().find_map(|l| l.accept().ok()) {
             Some((s, _)) => s,
@@ -217,7 +218,7 @@ pub fn authorize(app: &OAuthApp, opened: &dyn Fn(&str), stop: &AtomicBool, wait_
         }
         if let Some(e) = get("error") {
             answer(&mut stream, "200 OK", FAILED_PAGE);
-            return Err(SyncError::Other(if e == "access_denied" { "Sign-in was declined in the browser.".into() } else { format!("The sign-in page reported: {e}.") }));
+            return Err(SyncError::Other(if e == "access_denied" { tr("Sign-in was declined in the browser.").into() } else { trf("The sign-in page reported: {}.", &[&e]) }));
         }
         match get("code") {
             Some(c) => {

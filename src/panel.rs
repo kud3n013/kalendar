@@ -1,5 +1,6 @@
 //! The task panel (left or right) and the bar above the calendar.
 
+use crate::strings::{tr, trf};
 use crate::ids;
 use crate::motion;
 use crate::theme;
@@ -55,9 +56,9 @@ pub fn icon_btn(ui: &mut egui::Ui, glyph: &str, size: f32, tip: &str, c: (Color3
 
 pub fn due_label(d: NaiveDate, today: NaiveDate) -> String {
     match (d - today).num_days() {
-        -1 => "Yesterday".into(),
-        0 => "Today".into(),
-        1 => "Tomorrow".into(),
+        -1 => tr("Yesterday").into(),
+        0 => tr("Today").into(),
+        1 => tr("Tomorrow").into(),
         _ => d.format("%b %-d").to_string(),
     }
 }
@@ -138,7 +139,7 @@ impl App {
         let muted = self.pal.muted;
         let ctx = &ui.ctx().clone();
         ui.menu_button(RichText::new(icons::CALENDAR).size(theme::size::LARGE).color(muted), |ui| {
-            ui.label(RichText::new("Calendars").color(muted));
+            ui.label(RichText::new(tr("Calendars")).color(muted));
             let mut changed = false;
             for cal in self.data.calendars.iter_mut() {
                 changed |= ui.checkbox(&mut cal.visible, RichText::new(format!("{} {}", icons::CIRCLE, cal.name)).color(rgb(cal.color))).changed();
@@ -147,17 +148,17 @@ impl App {
                 self.commit();
             }
             ui.separator();
-            if ui.button("Subscribe to a calendar…").clicked() {
+            if ui.button(tr("Subscribe to a calendar…")).clicked() {
                 self.open_settings(crate::settings::Page::Calendars);
                 ui.close();
             }
-            if ui.button("Refresh").clicked() {
+            if ui.button(tr("Refresh")).clicked() {
                 self.run(ctx, Cmd::Refresh);
                 ui.close();
             }
         })
         .response
-        .on_hover_text("Calendars");
+        .on_hover_text(tr("Calendars"));
     }
 
     /// The menu that picks the view: day, week, month and so on.
@@ -185,9 +186,9 @@ impl App {
                 });
             }
             ui.separator();
-            ui.menu_button("Number of days", |ui| {
+            ui.menu_button(tr("Number of days"), |ui| {
                 for n in 2..=9u8 {
-                    if ui.selectable_label(v == View::Days(n), format!("{n} days")).clicked() {
+                    if ui.selectable_label(v == View::Days(n), trf("{} days", &[&n])).clicked() {
                         v = View::Days(n);
                         ui.close();
                     }
@@ -195,7 +196,7 @@ impl App {
             });
         })
         .response
-        .on_hover_text("Calendar view");
+        .on_hover_text(tr("Calendar view"));
         self.view = v;
     }
 
@@ -229,7 +230,7 @@ impl App {
                     let narrow = ui.available_width() < 900.0;
                     let tiny = ui.available_width() < 760.0;
                     ui.spacing_mut().item_spacing.x = 7.0;
-                    let r = icon_btn(ui, icons::CALENDAR_DAYS, 17.0, "Go to a date", (self.pal.bg, muted, text));
+                    let r = icon_btn(ui, icons::CALENDAR_DAYS, 17.0, tr("Go to a date"), (self.pal.bg, muted, text));
                     if r.clicked() {
                         self.quick_nav = !self.quick_nav;
                     }
@@ -337,7 +338,7 @@ impl App {
         if !open {
             let (anchor, dx) = if right { (Align2::RIGHT_TOP, -10.0) } else { (Align2::LEFT_TOP, 10.0) };
             egui::Area::new(ids::panel_handle()).anchor(anchor, [dx, 10.0]).order(egui::Order::Foreground).show(ctx, |ui| {
-                if icon_btn(ui, icons::MENU, 17.0, &self.tip("Show the task panel", Cmd::ToggleTasks), c).clicked() {
+                if icon_btn(ui, icons::MENU, 17.0, &self.tip(tr("Show the task panel"), Cmd::ToggleTasks), c).clicked() {
                     self.run(ctx, Cmd::ToggleTasks);
                 }
             });
@@ -350,19 +351,19 @@ impl App {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             let mut tools = |ui: &mut egui::Ui, app: &mut App| {
-                if icon_btn(ui, icons::SETTINGS, 16.0, &app.tip("Settings", Cmd::Prefs), c).clicked() {
+                if icon_btn(ui, icons::SETTINGS, 16.0, &app.tip(tr("Settings"), Cmd::Prefs), c).clicked() {
                     app.open_settings(crate::settings::Page::General);
                 }
-                if icon_btn(ui, icons::HELP, 16.0, &app.tip("Shortcuts", Cmd::Shortcuts), c).clicked() {
+                if icon_btn(ui, icons::HELP, 16.0, &app.tip(tr("Shortcuts"), Cmd::Shortcuts), c).clicked() {
                     app.open_settings(crate::settings::Page::Shortcuts);
                 }
-                if icon_btn(ui, icons::TERMINAL, 15.0, &app.tip("Command bar", Cmd::CommandBar), c).clicked() {
+                if icon_btn(ui, icons::TERMINAL, 15.0, &app.tip(tr("Command bar"), Cmd::CommandBar), c).clicked() {
                     app.run(ctx, Cmd::CommandBar);
                 }
-                if icon_btn(ui, icons::SEARCH, 15.0, &app.tip("Search", Cmd::Search), c).clicked() {
+                if icon_btn(ui, icons::SEARCH, 15.0, &app.tip(tr("Search"), Cmd::Search), c).clicked() {
                     app.run(ctx, Cmd::Search);
                 }
-                if icon_btn(ui, icons::SHUFFLE, 15.0, "Plan my tasks: fit open tasks into free working time", c).clicked() {
+                if icon_btn(ui, icons::SHUFFLE, 15.0, tr("Plan my tasks: fit open tasks into free working time"), c).clicked() {
                     app.run(ctx, Cmd::Plan);
                 }
                 // undo appears while there is something to take back
@@ -370,14 +371,14 @@ impl App {
                 if a > 0.0 {
                     ui.scope(|ui| {
                         ui.set_opacity(a);
-                        if icon_btn(ui, icons::UNDO, 16.0, &app.tip("Undo", Cmd::Undo), c).clicked() {
+                        if icon_btn(ui, icons::UNDO, 16.0, &app.tip(tr("Undo"), Cmd::Undo), c).clicked() {
                             app.do_undo(ctx);
                         }
                     });
                 }
             };
             let mut new_list = |ui: &mut egui::Ui, app: &mut App| {
-                if icon_btn(ui, icons::PLUS, 17.0, "New task list", c).clicked() {
+                if icon_btn(ui, icons::PLUS, 17.0, tr("New task list"), c).clicked() {
                     app.new_list_text = Some((String::new(), true));
                 }
             };
@@ -403,17 +404,17 @@ impl App {
                 // drawn right to left when flipped
                 let order: [(&str, f32, &str, Cmd); 4] = if flipped {
                     [
-                        (icons::CHEVRON_RIGHT, 17.0, "Next", Cmd::Next),
-                        (icons::CALENDAR_CHECK, 16.0, "Today", Cmd::Today),
-                        (icons::CHEVRON_LEFT, 17.0, "Previous", Cmd::Prev),
-                        (icons::REFRESH, 15.0, "Refresh", Cmd::Refresh),
+                        (icons::CHEVRON_RIGHT, 17.0, tr("Next"), Cmd::Next),
+                        (icons::CALENDAR_CHECK, 16.0, tr("Today"), Cmd::Today),
+                        (icons::CHEVRON_LEFT, 17.0, tr("Previous"), Cmd::Prev),
+                        (icons::REFRESH, 15.0, tr("Refresh"), Cmd::Refresh),
                     ]
                 } else {
                     [
-                        (icons::REFRESH, 15.0, "Refresh", Cmd::Refresh),
-                        (icons::CHEVRON_LEFT, 17.0, "Previous", Cmd::Prev),
-                        (icons::CALENDAR_CHECK, 16.0, "Today", Cmd::Today),
-                        (icons::CHEVRON_RIGHT, 17.0, "Next", Cmd::Next),
+                        (icons::REFRESH, 15.0, tr("Refresh"), Cmd::Refresh),
+                        (icons::CHEVRON_LEFT, 17.0, tr("Previous"), Cmd::Prev),
+                        (icons::CALENDAR_CHECK, 16.0, tr("Today"), Cmd::Today),
+                        (icons::CHEVRON_RIGHT, 17.0, tr("Next"), Cmd::Next),
                     ]
                 };
                 for (glyph, size, tip, cmd) in order {
@@ -425,12 +426,12 @@ impl App {
             if right {
                 nav(ui, self, false);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if icon_btn(ui, icons::MENU, 17.0, &self.tip("Hide the task panel", Cmd::ToggleTasks), c).clicked() {
+                    if icon_btn(ui, icons::MENU, 17.0, &self.tip(tr("Hide the task panel"), Cmd::ToggleTasks), c).clicked() {
                         self.run(ctx, Cmd::ToggleTasks);
                     }
                 });
             } else {
-                if icon_btn(ui, icons::MENU, 17.0, &self.tip("Hide the task panel", Cmd::ToggleTasks), c).clicked() {
+                if icon_btn(ui, icons::MENU, 17.0, &self.tip(tr("Hide the task panel"), Cmd::ToggleTasks), c).clicked() {
                     self.run(ctx, Cmd::ToggleTasks);
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| nav(ui, self, true));
@@ -438,21 +439,21 @@ impl App {
         });
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Tasks").font(theme::bold(theme::size::HEADING)));
+            ui.label(RichText::new(tr("Tasks")).font(theme::bold(theme::size::HEADING)));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.menu_button(RichText::new(icons::SLIDERS).size(theme::size::UI).color(muted), |ui| {
                     ui.set_min_width(220.0);
                     let p = &mut self.data.prefs;
-                    ui.label(RichText::new("Pinned lists").color(muted).size(theme::size::SMALL));
-                    let mut ch = ui.checkbox(&mut p.show_due_today, "Due today").changed();
-                    ch |= ui.checkbox(&mut p.show_due_tomorrow, "Due tomorrow").changed();
-                    ch |= ui.checkbox(&mut p.show_due_soon, "Due soon").changed();
+                    ui.label(RichText::new(tr("Pinned lists")).color(muted).size(theme::size::SMALL));
+                    let mut ch = ui.checkbox(&mut p.show_due_today, tr("Due today")).changed();
+                    ch |= ui.checkbox(&mut p.show_due_tomorrow, tr("Due tomorrow")).changed();
+                    ch |= ui.checkbox(&mut p.show_due_soon, tr("Due soon")).changed();
                     ui.separator();
-                    ch |= ui.checkbox(&mut p.show_scheduled_tasks, "Show scheduled tasks").changed();
-                    ch |= ui.checkbox(&mut p.due_on_calendar, "Due dates on the calendar").changed();
+                    ch |= ui.checkbox(&mut p.show_scheduled_tasks, tr("Show scheduled tasks")).changed();
+                    ch |= ui.checkbox(&mut p.due_on_calendar, tr("Due dates on the calendar")).changed();
                     ui.separator();
-                    ui.label(RichText::new("Sort by").color(muted).size(theme::size::SMALL));
-                    for (i, n) in ["My order", "Due date", "Importance"].iter().enumerate() {
+                    ui.label(RichText::new(tr("Sort by")).color(muted).size(theme::size::SMALL));
+                    for (i, n) in [tr("My order"), tr("Due date"), tr("Importance")].iter().enumerate() {
                         ui.radio_value(&mut self.sort_by, i, *n);
                     }
                     if ch {
@@ -460,7 +461,7 @@ impl App {
                     }
                 })
                 .response
-                .on_hover_text("List options");
+                .on_hover_text(tr("List options"));
             });
         });
         // tags as a quick filter
@@ -508,7 +509,7 @@ impl App {
                 let mut lists: Vec<(u64, String, String, Color32, Vec<u64>)> = Vec::new();
                 for id in std::iter::once(0).chain(self.data.lists.iter().map(|l| l.id)) {
                     let (name, color, icon) = self.data.list_look(id);
-                    let name = if id == 0 { self.data.prefs.inbox_name() } else if name.trim().is_empty() { "Untitled list".to_string() } else { name };
+                    let name = if id == 0 { self.data.prefs.inbox_name() } else if name.trim().is_empty() { tr("Untitled list").to_string() } else { name };
                     lists.push((id, name, icon, rgb(color), ids(&|t| t.list == id && visible_in_list(t))));
                 }
                 let done_ids: Vec<u64> = self.data.tasks.iter().filter(|t| t.done).map(|t| t.id).collect();
@@ -516,10 +517,10 @@ impl App {
                 egui::ScrollArea::vertical().id_salt("tasklist").auto_shrink([false, false]).show(ui, |ui| {
                     let mut any_pinned = false;
                     for (key, name, icon, color, items, show) in [
-                        ("overdue", "Overdue", icons::ALARM, theme::DANGER, &overdue, true),
-                        ("today", "Due today", icons::SUN, theme::WARNING, &due_today, p.show_due_today),
-                        ("tomorrow", "Due tomorrow", icons::ARROW_RIGHT, theme::WARNING, &due_tomorrow, p.show_due_tomorrow),
-                        ("soon", "Due soon", icons::CHEVRONS_RIGHT, theme::WARNING, &due_soon, p.show_due_soon),
+                        ("overdue", tr("Overdue"), icons::ALARM, theme::DANGER, &overdue, true),
+                        ("today", tr("Due today"), icons::SUN, theme::WARNING, &due_today, p.show_due_today),
+                        ("tomorrow", tr("Due tomorrow"), icons::ARROW_RIGHT, theme::WARNING, &due_tomorrow, p.show_due_tomorrow),
+                        ("soon", tr("Due soon"), icons::CHEVRONS_RIGHT, theme::WARNING, &due_soon, p.show_due_soon),
                     ] {
                         if show && !items.is_empty() {
                             any_pinned = true;
@@ -537,11 +538,11 @@ impl App {
                         self.section(ui, ctx, &format!("list{id}"), name, glyph, *color, items, Some(*id));
                     }
                     if !done_ids.is_empty() {
-                        self.section(ui, ctx, "done", "Completed", Some((icons::CHECK, muted)), muted, &done_ids, None);
+                        self.section(ui, ctx, "done", tr("Completed"), Some((icons::CHECK, muted)), muted, &done_ids, None);
                     }
                     ui.add_space(10.0);
                     if let Some((mut name, fresh)) = self.new_list_text.take() {
-                        let r = ui.add(egui::TextEdit::singleline(&mut name).hint_text("List name").desired_width(f32::INFINITY));
+                        let r = ui.add(egui::TextEdit::singleline(&mut name).hint_text(tr("List name")).desired_width(f32::INFINITY));
                         if fresh {
                             r.request_focus();
                             ui.scroll_to_rect(r.rect, None);
@@ -573,7 +574,7 @@ impl App {
         }
         let synced = self.data.lists.iter().any(|l| l.id == lid && l.account.is_some());
         let b = ui.add_enabled(!synced, egui::Button::new(RichText::new(format!("{}  Remove", icons::TRASH)).color(theme::DANGER)));
-        let b = b.on_hover_text("Its tasks go to the Inbox").on_disabled_hover_text("This list comes from an account. It goes when it is switched off under Settings, Calendars.");
+        let b = b.on_hover_text(tr("Its tasks go to the Inbox")).on_disabled_hover_text(tr("This list comes from an account. It goes when it is switched off under Settings, Calendars."));
         if b.clicked() {
             self.snapshot();
             self.data.remove_own_list(lid);
@@ -612,7 +613,7 @@ impl App {
         let before = self.data.list_look(lid);
         let mut look = before.clone();
         if with_name {
-            let r = ui.add(egui::TextEdit::singleline(&mut look.0).hint_text(if lid == 0 { "Inbox" } else { "List name" }).desired_width(f32::INFINITY));
+            let r = ui.add(egui::TextEdit::singleline(&mut look.0).hint_text(if lid == 0 { tr("Inbox") } else { tr("List name") }).desired_width(f32::INFINITY));
             if focus {
                 r.request_focus();
             }
@@ -736,7 +737,7 @@ impl App {
         if let Some(lid) = list {
             let at = r.right_bottom() + vec2(0.0, 2.0);
             let dr = Rect::from_center_size(pos2(r.right() - 38.0, r.center().y), vec2(24.0, 24.0));
-            let dots = ui.interact(dr, ids::list_dots(lid), Sense::click()).on_hover_text("Edit or remove");
+            let dots = ui.interact(dr, ids::list_dots(lid), Sense::click()).on_hover_text(tr("Edit or remove"));
             let menu = egui::Popup::menu(&dots);
             let open = menu.is_open();
             if glow > 0.0 || open {
@@ -773,10 +774,10 @@ impl App {
                     let mut d = t.done;
                     if round_check(ui, &mut d).changed() {
                         self.toggle_task(id);
-                        self.say(ctx, if d { "Task completed" } else { "Task reopened" }, true);
+                        self.say(ctx, if d { tr("Task completed") } else { tr("Task reopened") }, true);
                     }
                     // tasks left without a name by an older version still show one
-                    let mut title = RichText::new(if t.title.trim().is_empty() { "New task" } else { &t.title }).size(theme::size::BODY);
+                    let mut title = RichText::new(if t.title.trim().is_empty() { tr("New task") } else { &t.title }).size(theme::size::BODY);
                     if t.done {
                         title = title.color(muted).strikethrough();
                     }
@@ -790,11 +791,11 @@ impl App {
                         self.edit_task(id);
                     }
                     r.context_menu(|ui| {
-                        if ui.button("Edit").clicked() {
+                        if ui.button(tr("Edit")).clicked() {
                             self.edit_task(id);
                             ui.close();
                         }
-                        ui.menu_button("Move to list", |ui| {
+                        ui.menu_button(tr("Move to list"), |ui| {
                             let mut options = vec![(0u64, self.data.prefs.inbox_name())];
                             options.extend(self.data.lists.iter().map(|l| (l.id, l.name.clone())));
                             for (lid, name) in options {
@@ -808,7 +809,7 @@ impl App {
                                 }
                             }
                         });
-                        if ui.button(RichText::new("Delete task").color(theme::DANGER)).clicked() {
+                        if ui.button(RichText::new(tr("Delete task")).color(theme::DANGER)).clicked() {
                             self.delete_task(ctx, id);
                             ui.close();
                         }

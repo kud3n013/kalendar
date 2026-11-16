@@ -1,5 +1,6 @@
 //! Subscribed calendars: fetching a calendar feed (.ics) and reading it.
 
+use crate::strings::{tr, trf};
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, NaiveDateTime, TimeZone, Utc, Weekday};
 use std::collections::HashSet;
 
@@ -35,7 +36,7 @@ pub const AHEAD_DAYS: i64 = 400;
 pub fn normalize_url(input: &str) -> Result<String, String> {
     let u = input.trim();
     if u.is_empty() {
-        return Err("Paste the calendar's link first".into());
+        return Err(tr("Paste the calendar's link first").into());
     }
     let u = if let Some(rest) = u.strip_prefix("webcal://") {
         format!("https://{rest}")
@@ -44,7 +45,7 @@ pub fn normalize_url(input: &str) -> Result<String, String> {
     } else if u.starts_with("https://") || u.starts_with("http://") {
         u.to_string()
     } else if u.contains("://") {
-        return Err("This kind of link is not supported; use an https or webcal link".into());
+        return Err(tr("This kind of link is not supported; use an https or webcal link").into());
     } else {
         format!("https://{u}")
     };
@@ -76,18 +77,18 @@ pub fn fetch(url: &str, now: NaiveDateTime) -> Result<Feed, String> {
         .call()
         .map_err(|e| match e {
             ureq::Error::StatusCode(401 | 403) => {
-                "The link was refused. Check that sharing is still on and the whole link was pasted.".to_string()
+                tr("The link was refused. Check that sharing is still on and the whole link was pasted.").to_string()
             }
-            ureq::Error::StatusCode(404) => "Nothing was found at this link.".to_string(),
-            ureq::Error::StatusCode(code) => format!("The server answered with error {code}."),
-            other => format!("Could not reach the server ({other})."),
+            ureq::Error::StatusCode(404) => tr("Nothing was found at this link.").to_string(),
+            ureq::Error::StatusCode(code) => trf("The server answered with error {}.", &[&code]),
+            other => trf("Could not reach the server ({}).", &[&other]),
         })?;
     let text = resp
         .body_mut()
         .with_config()
         .limit(20 * 1024 * 1024)
         .read_to_string()
-        .map_err(|_| "The answer could not be read.".to_string())?;
+        .map_err(|_| tr("The answer could not be read.").to_string())?;
     parse(&text, now)
 }
 
@@ -451,7 +452,7 @@ pub fn parse(text: &str, now: NaiveDateTime) -> Result<Feed, String> {
         } else {
             ""
         };
-        return Err(format!("This link does not lead to a calendar.{hint}"));
+        return Err(trf("This link does not lead to a calendar.{}", &[&hint]));
     }
     // long lines are folded; a line starting with a space continues the last
     let mut lines: Vec<String> = vec![];

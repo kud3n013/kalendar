@@ -1,5 +1,6 @@
 //! The little language of the quick task field, and durations as text.
 
+use crate::strings::{tr, trf};
 use chrono::{Duration, NaiveDate};
 
 /// What typing in the quick task field means: "#tag", "!high", ">List",
@@ -71,17 +72,17 @@ pub fn parse_duration(w: &str) -> Option<i64> {
 
 pub fn fmt_duration(m: i64) -> String {
     match (m / 60, m % 60) {
-        (0, m) => format!("{m}m"),
-        (h, 0) => format!("{h}h"),
-        (h, m) => format!("{h}h {m}m"),
+        (0, m) => trf("{}m", &[&m]),
+        (h, 0) => trf("{}h", &[&h]),
+        (h, m) => trf("{}h {}m", &[&h, &m]),
     }
 }
 
 pub fn priority_name(p: u8) -> &'static str {
     match p {
-        0 => "None",
-        1..=3 => "High",
-        4..=5 => "Medium",
-        _ => "Low",
+        0 => tr("None"),
+        1..=3 => tr("High"),
+        4..=5 => tr("Medium"),
+        _ => tr("Low"),
     }
 }

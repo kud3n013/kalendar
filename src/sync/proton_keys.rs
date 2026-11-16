@@ -1,6 +1,7 @@
 //! The OpenPGP side of Proton: unlocking keys, decrypting what they
 //! protect, and checking signatures.
 
+use crate::strings::{tr, trf};
 use base64::Engine;
 use pgp::composed::{CleartextSignedMessage, Deserializable, DetachedSignature, Message, MessageBuilder, PlainSessionKey, RawSessionKey, SignedPublicKey, SignedSecretKey};
 use pgp::crypto::{hash::HashAlgorithm, sym::SymmetricKeyAlgorithm};
@@ -13,7 +14,7 @@ use pgp::types::{DecryptionKey, EskType, Password};
 const MODULUS_KEY: &str = "-----BEGIN PGP PUBLIC KEY BLOCK-----\r\n\r\nxjMEXAHLgxYJKwYBBAHaRw8BAQdAFurWXXwjTemqjD7CXjXVyKf0of7n9Ctm\r\nL8v9enkzggHNEnByb3RvbkBzcnAubW9kdWx1c8J3BBAWCgApBQJcAcuDBgsJ\r\nBwgDAgkQNQWFxOlRjyYEFQgKAgMWAgECGQECGwMCHgEAAPGRAP9sauJsW12U\r\nMnTQUZpsbJb53d0Wv55mZIIiJL2XulpWPQD/V6NglBd96lZKBmInSXX/kXat\r\nSv+y0io+LR8i2+jV+AbOOARcAcuDEgorBgEEAZdVAQUBAQdAeJHUz1c9+KfE\r\nkSIgcBRE3WuXC4oj5a2/U3oASExGDW4DAQgHwmEEGBYIABMFAlwBy4MJEDUF\r\nhcTpUY8mAhsMAAD/XQD8DxNI6E78meodQI+wLsrKLeHn32iLvUqJbVDhfWSU\r\nWO4BAMcm1u02t4VKw++ttECPt+HUgPUq5pqQWe5Q2cW4TMsE\r\n=Y4Mw\r\n-----END PGP PUBLIC KEY BLOCK-----";
 
 pub fn b64(text: &str) -> Result<Vec<u8>, String> {
-    base64::engine::general_purpose::STANDARD.decode(text.trim()).map_err(|_| "Proton sent something that is not base64.".to_string())
+    base64::engine::general_purpose::STANDARD.decode(text.trim()).map_err(|_| tr("Proton sent something that is not base64.").to_string())
 }
 
 pub fn to_b64(bytes: &[u8]) -> String {
@@ -23,7 +24,7 @@ pub fn to_b64(bytes: &[u8]) -> String {
 /// The sign-in modulus out of its signed wrapping, once the signature
 /// is shown to be Proton's.
 pub fn signed_modulus(signed: &str) -> Result<Vec<u8>, String> {
-    let bad = || "Proton's sign-in numbers are not signed by Proton.".to_string();
+    let bad = || tr("Proton's sign-in numbers are not signed by Proton.").to_string();
     let (key, _) = SignedPublicKey::from_string(MODULUS_KEY).map_err(|e| e.to_string())?;
     let (msg, _) = CleartextSignedMessage::from_string(signed.trim()).map_err(|_| bad())?;
     msg.verify(&key).map_err(|_| bad())?;
@@ -39,11 +40,11 @@ pub struct Key {
 impl Key {
     /// Reads an armored private key and makes sure `passphrase` opens it.
     pub fn open(armored: &str, passphrase: &[u8]) -> Result<Key, String> {
-        let (key, _) = SignedSecretKey::from_string(armored).map_err(|e| format!("A Proton key could not be read ({e})."))?;
+        let (key, _) = SignedSecretKey::from_string(armored).map_err(|e| trf("A Proton key could not be read ({}).", &[&e]))?;
         let pass = Password::from(passphrase);
         match key.primary_key.unlock(&pass, |_, _| Ok(())) {
             Ok(Ok(())) => Ok(Key { key, pass }),
-            _ => Err("The password does not open this key.".into()),
+            _ => Err(tr("The password does not open this key.").into()),
         }
     }
 
@@ -91,12 +92,12 @@ impl Key {
                 }
             }
         }
-        Err("The event's key could not be opened.".into())
+        Err(tr("The event's key could not be opened.").into())
     }
 
     fn encrypt(&self, data: &[u8], session: Option<(SymmetricKeyAlgorithm, RawSessionKey)>) -> Result<(Vec<u8>, Vec<u8>), String> {
         let public = self.key.to_public_key();
-        let to = public.public_subkeys.first().ok_or("This key cannot encrypt.")?;
+        let to = public.public_subkeys.first().ok_or(tr("This key cannot encrypt."))?;
         let mut rng = rand::thread_rng();
         let alg = session.as_ref().map(|s| s.0).unwrap_or(SymmetricKeyAlgorithm::AES256);
         let mut b = MessageBuilder::from_bytes("", data.to_vec()).seipd_v1(&mut rng, alg);
@@ -105,7 +106,7 @@ impl Key {
         }
         b.encrypt_to_key(&mut rng, to).map_err(|e| e.to_string())?;
         let whole = b.to_vec(&mut rng).map_err(|e| e.to_string())?;
-        let n = first_packet_len(&whole).ok_or("The encrypted event came out malformed.")?;
+        let n = first_packet_len(&whole).ok_or(tr("The encrypted event came out malformed."))?;
         Ok((whole[..n].to_vec(), whole[n..].to_vec()))
     }
 
@@ -154,7 +155,7 @@ fn first_packet_len(b: &[u8]) -> Option<usize> {
 
 /// The first answer any of the keys gives.
 pub fn any<'a, T>(keys: impl IntoIterator<Item = &'a Key>, mut f: impl FnMut(&Key) -> Result<T, String>) -> Result<T, String> {
-    let mut last = "No key is at hand.".to_string();
+    let mut last = tr("No key is at hand.").to_string();
     for k in keys {
         match f(k) {
             Ok(v) => return Ok(v),

@@ -3,6 +3,7 @@
 //! The test values and the method are from go-srp, Copyright (c) 2019
 //! Proton Technologies AG, MIT License.
 
+use crate::strings::{tr, trf};
 use num_bigint::BigUint;
 use sha2::{Digest, Sha512};
 
@@ -30,7 +31,7 @@ pub fn expand_hash(data: &[u8]) -> Vec<u8> {
 
 /// The bcrypt text for a password and sixteen bytes of salt.
 fn bcrypt_text(password: &[u8], salt: &[u8]) -> Result<String, String> {
-    let salt: [u8; 16] = salt.try_into().map_err(|_| "Proton sent a salt of the wrong length.".to_string())?;
+    let salt: [u8; 16] = salt.try_into().map_err(|_| tr("Proton sent a salt of the wrong length.").to_string())?;
     let parts = bcrypt::hash_with_salt(password, 10, salt).map_err(|e| e.to_string())?;
     Ok(parts.format_for_version(bcrypt::Version::TwoY))
 }
@@ -39,7 +40,7 @@ fn bcrypt_text(password: &[u8], salt: &[u8]) -> Result<String, String> {
 /// (versions 3 and 4) are understood.
 pub fn hash_password(version: i64, password: &[u8], salt: &[u8], modulus: &[u8]) -> Result<Vec<u8>, String> {
     if version < 3 {
-        return Err("This Proton account uses an old sign-in. Sign in once at proton.me, then try again.".into());
+        return Err(tr("This Proton account uses an old sign-in. Sign in once at proton.me, then try again.").into());
     }
     let mut salted = salt.to_vec();
     salted.extend_from_slice(b"proton");
@@ -75,7 +76,7 @@ fn multiplier(n: &BigUint) -> BigUint {
 
 /// Works out the proofs for one sign-in. `secret` is only given by tests.
 pub fn proofs(hashed: &[u8], modulus: &[u8], server_ephemeral: &[u8], secret: Option<BigUint>) -> Result<Proofs, String> {
-    let bad = |what: &str| format!("Proton's sign-in numbers are wrong ({what}).");
+    let bad = |what: &str| trf("Proton's sign-in numbers are wrong ({}).", &[&what]);
     let one = BigUint::from(1u8);
     let two = BigUint::from(2u8);
     let n = BigUint::from_bytes_le(modulus);

@@ -1,5 +1,6 @@
 //! Taking in what the background threads hand back.
 
+use crate::strings::{tr, trf};
 use super::*;
 
 impl App {
@@ -28,13 +29,13 @@ impl App {
                             let name = c.name.clone();
                             self.backoff.remove(&cal);
                             if feed_url.is_some() {
-                                self.say(ctx, format!("{name}: {count} events"), false);
+                                self.say(ctx, trf("{}: {} events", &[&name, &count]), false);
                             }
                         }
                         Err(e) => {
                             let text = e.text();
                             if feed_url.is_some() {
-                                self.say(ctx, format!("{name}: {text}"), false);
+                                self.say(ctx, trf("{}: {}", &[&name, &text]), false);
                             }
                             if let Some(c) = self.data.calendar_mut(cal) {
                                 c.error = Some(text.clone());
@@ -61,7 +62,7 @@ impl App {
                                 self.acct_server.clear();
                                 self.acct_user.clear();
                                 let n = list.len();
-                                self.say(ctx, format!("Connected: {n} calendar{}", if n == 1 { "" } else { "s" }), false);
+                                self.say(ctx, trf("Connected: {} calendar{}", &[&n, &if n == 1 { "" } else { "s" }]), false);
                             }
                             self.pull_account(ctx, account);
                         }
@@ -112,7 +113,7 @@ impl App {
                         Ok(g) => {
                             let (server, user) = (g.caldav(), g.username.clone());
                             if self.data.accounts.iter().any(|a| a.server == server && a.username == user) {
-                                self.acct_error = Some("This account is already connected.".into());
+                                self.acct_error = Some(tr("This account is already connected.").into());
                             } else {
                                 let id = self.data.new_id();
                                 self.data.accounts.push(Account { id, server, username: user, nextcloud: true, ..Default::default() });
@@ -130,7 +131,7 @@ impl App {
                         Ok(g) => {
                             let server = if g.microsoft { format!("microsoft:{}", g.email.to_lowercase()) } else { sync::google::server(&g.email) };
                             if self.data.accounts.iter().any(|a| a.server == server) {
-                                self.acct_error = Some("This account is already connected.".into());
+                                self.acct_error = Some(tr("This account is already connected.").into());
                             } else {
                                 let id = self.data.new_id();
                                 self.data.accounts.push(Account { id, server, username: g.email, google: !g.microsoft, microsoft: g.microsoft, client_id: Some(g.client_id), ..Default::default() });
@@ -151,7 +152,7 @@ impl App {
                         Ok(sync::proton::SignIn::Done(g)) => {
                             let server = format!("proton:{}", username.to_lowercase());
                             if self.data.accounts.iter().any(|a| a.server == server) {
-                                self.acct_error = Some("This account is already connected.".into());
+                                self.acct_error = Some(tr("This account is already connected.").into());
                                 crate::worker::spawn("sign-out", move || sync::proton::sign_out(sync::proton::API, &g.uid, &g.access));
                             } else {
                                 let id = self.data.new_id();
@@ -170,12 +171,12 @@ impl App {
                         Ok(sync::proton::SignIn::Human { token, url }) => {
                             self.pr_human = Some(token);
                             let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
-                            self.acct_error = Some("Proton asks for a check that you are human. Finish it on the page that opened in your browser, then press the sign-in button again.".into());
+                            self.acct_error = Some(tr("Proton asks for a check that you are human. Finish it on the page that opened in your browser, then press the sign-in button again.").into());
                         }
                         Err(e) => {
                             self.pr_human = None;
                             self.acct_error = Some(match e {
-                                sync::SyncError::Auth => "Proton refused the user name or password.".into(),
+                                sync::SyncError::Auth => tr("Proton refused the user name or password.").into(),
                                 e => e.text(),
                             });
                         }
@@ -188,7 +189,7 @@ impl App {
                             c.url = Some(url);
                             self.sync_feed(ctx, cal);
                         }
-                        Err(e) => c.error = Some(format!("Its link is in the keyring and could not be read. {e}")),
+                        Err(e) => c.error = Some(trf("Its link is in the keyring and could not be read. {}", &[&e])),
                     }
                 }
                 SyncDone::LinkKept { cal, res } => {
@@ -291,11 +292,11 @@ impl App {
         }
         let own = self.data.calendar(self.data.first_own_calendar()).map(|c| c.name.clone()).unwrap_or_default();
         if conflicts > 0 {
-            self.say(ctx, format!("Conflict: the event was changed on the server, whose copy was kept. Your edit was saved as a copy in {own}."), false);
+            self.say(ctx, trf("Conflict: the event was changed on the server, whose copy was kept. Your edit was saved as a copy in {}.", &[&own]), false);
         } else if task_conflicts > 0 {
-            self.say(ctx, "Conflict: the task was changed on the server, whose copy was kept. Your edit was saved as a copy in the Inbox.", false);
+            self.say(ctx, tr("Conflict: the task was changed on the server, whose copy was kept. Your edit was saved as a copy in the Inbox."), false);
         } else if let Some(e) = &failed {
-            self.say(ctx, format!("A change could not be sent and will be tried again. {e}"), false);
+            self.say(ctx, trf("A change could not be sent and will be tried again. {}", &[&e]), false);
         }
         if let Some(c) = self.data.calendar_mut(cal) {
             c.error = failed;
