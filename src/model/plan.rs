@@ -116,13 +116,41 @@ impl Data {
         None
     }
 
+    /// The windows to try for a task, in order. Its own frames, then
+    /// frames open to anything, then free time; or, when it should be
+    /// worked on now once today's frames are full, its frames today and
+    /// then whatever comes first. The last list is free time (or all of it).
+    fn window_order(&self, own: Vec<Window>, open: Vec<Window>, outside: Vec<Window>, today: NaiveDate) -> Vec<Vec<Window>> {
+        match self.prefs.frame_full {
+            FrameFull::NextFrame => vec![own, open, outside],
+            FrameFull::Now => {
+                let first: Vec<Window> = own.iter().chain(&open).filter(|w| w.start.date() == today).copied().collect();
+                let mut all: Vec<Window> = own.into_iter().chain(open).chain(outside).collect();
+                all.sort_by_key(|w| (w.start, std::cmp::Reverse(w.spec), w.end));
+                vec![first, all]
+            }
+        }
+    }
+
+    /// Where a task stands in the queue for frame time; lower goes first.
+    fn frame_rank(&self, t: &Task) -> u8 {
+        match self.prefs.frame_first {
+            FrameFirst::Priority => if t.priority == 0 { 10 } else { t.priority },
+            FrameFirst::Tags => {
+                let chosen = |x: &String| self.prefs.frame_first_tags.iter().any(|g| g.eq_ignore_ascii_case(x));
+                u8::from(!t.tags.iter().any(chosen))
+            }
+            FrameFirst::Due => 0,
+        }
+    }
+
     /// First place `mins` minutes long at or after `from`, looking up to
     /// PLAN_MAX_SPAN_DAYS days ahead. With a task, its frames come first.
     pub fn next_free_slot(&self, from: NaiveDateTime, mins: i64, task: Option<&Task>) -> Option<NaiveDateTime> {
         let m = from.hour() as i64 * 60 + from.minute() as i64;
         let from = from.date().and_hms_opt(0, 0, 0).unwrap() + Duration::minutes((m + 14) / 15 * 15);
         let (own, open, outside) = self.task_windows(task, from.date(), from, PLAN_MAX_SPAN_DAYS, PLAN_OWN_FRAME_DAYS);
-        [own, open, outside]
+        self.window_order(own, open, outside, from.date())
             .iter()
             .find_map(|ws| ws.iter().find(|w| (w.end - w.start).num_minutes() >= mins).map(|w| w.start))
     }
@@ -130,10 +158,16 @@ impl Data {
     /// Fits open, unscheduled tasks into matching frames, else into free
     /// working time, over the next days. Returns (sessions made, tasks left
     /// behind).
-
     pub fn plan_tasks(&mut self, now: NaiveDateTime) -> (usize, usize) {
+        self.plan_tasks_in(now, None)
+    }
+
+    /// As [`Self::plan_tasks`], for one task list only when `list` is given;
+    /// other tasks and their sessions stay as they are.
+    pub fn plan_tasks_in(&mut self, now: NaiveDateTime, list: Option<u64>) -> (usize, usize) {
+        let in_list = |t: &Task| list.is_none_or(|l| t.list == l);
         // sessions of flexible tasks that have not started may be moved
-        let movable: Vec<u64> = self.tasks.iter().filter(|t| t.flexible && !t.done).map(|t| t.id).collect();
+        let movable: Vec<u64> = self.tasks.iter().filter(|t| t.flexible && !t.done && in_list(t)).map(|t| t.id).collect();
         self.events.retain(|e| !(e.start > now && e.task_id.map(|t| movable.contains(&t)).unwrap_or(false)));
         let snap = 15;
         let mins = now.hour() as i64 * 60 + now.minute() as i64;
@@ -141,50 +175,70 @@ impl Data {
         let mut todo: Vec<Task> = self
             .tasks
             .iter()
-            .filter(|t| !t.done && !self.task_is_scheduled(t.id))
+            .filter(|t| !t.done && in_list(t) && !self.task_is_scheduled(t.id))
             .filter(|t| t.due.is_some() || self.prefs.plan_without_due)
             .cloned()
             .collect();
-        todo.sort_by_key(|t| {
-            (
-                t.due.unwrap_or(NaiveDate::MAX),
-                if t.priority == 0 { 10 } else { t.priority },
-            )
-        });
+        todo.sort_by_key(|t| (t.due.unwrap_or(NaiveDate::MAX), if t.priority == 0 { 10 } else { t.priority }));
         let (mut made, mut left) = (0, 0);
-        for t in todo {
-            let need = t.duration_min.unwrap_or(self.prefs.default_task_min);
-            let can_split = self.prefs.split_long_tasks && need >= PLAN_CHUNK_FROM;
-            // its own frames first, as far as two weeks ahead; then frames
-            // open to any task, then free working time, over the next days
-            let (own, open, outside) = self.task_windows(Some(&t), now.date(), from, PLAN_SPAN_DAYS, PLAN_OWN_FRAME_DAYS);
-            let Some(placed) = fit(&own, need, can_split).or_else(|| fit(&open, need, can_split)).or_else(|| fit(&outside, need, can_split)) else {
-                left += 1;
-                continue;
-            };
-            for (s, e, cal) in placed {
-                let id = self.new_id();
-                self.events.push(Event {
-                    id,
-                    title: t.title.clone(),
-                    notes: t.notes.clone(),
-                    start: s,
-                    end: e,
-                    calendar: cal,
-                    task_id: Some(t.id),
-                    ..Default::default()
-                });
-                made += 1;
-                if self.prefs.auto_due {
-                    if let Some(tt) = self.task_mut(t.id) {
-                        if tt.due.is_none() {
-                            tt.due = Some(s.date());
-                        }
+        // first frame time, handed out in the order the settings ask for;
+        // then what is left goes to free time, soonest due first
+        let mut later = vec![];
+        if self.frames_active() {
+            let mut ranked = todo;
+            ranked.sort_by_key(|t| self.frame_rank(t));
+            for t in ranked {
+                match self.place(&t, now, from, false) {
+                    Some(n) => made += n,
+                    None => later.push(t),
+                }
+            }
+            later.sort_by_key(|t| (t.due.unwrap_or(NaiveDate::MAX), if t.priority == 0 { 10 } else { t.priority }));
+        } else {
+            later = todo;
+        }
+        for t in later {
+            match self.place(&t, now, from, true) {
+                Some(n) => made += n,
+                None => left += 1,
+            }
+        }
+        (made, left)
+    }
+
+    /// Books sessions for a task: in frame time when `last` is false, else
+    /// in the last, widest choice. Returns how many sessions it made.
+    fn place(&mut self, t: &Task, now: NaiveDateTime, from: NaiveDateTime, last: bool) -> Option<usize> {
+        let need = t.duration_min.unwrap_or(self.prefs.default_task_min);
+        let can_split = self.prefs.split_long_tasks && need >= PLAN_CHUNK_FROM;
+        // its own frames as far as two weeks ahead; open frames and free
+        // working time over the next days
+        let (own, open, outside) = self.task_windows(Some(t), now.date(), from, PLAN_SPAN_DAYS, PLAN_OWN_FRAME_DAYS);
+        let mut order = self.window_order(own, open, outside, now.date());
+        let tries = if last { order.split_off(order.len() - 1) } else { order[..order.len() - 1].to_vec() };
+        let placed = tries.iter().find_map(|ws| fit(ws, need, can_split))?;
+        let n = placed.len();
+        for (s, e, cal) in placed {
+            let id = self.new_id();
+            self.events.push(Event {
+                id,
+                title: t.title.clone(),
+                notes: t.notes.clone(),
+                start: s,
+                end: e,
+                calendar: cal,
+                task_id: Some(t.id),
+                ..Default::default()
+            });
+            if self.prefs.auto_due {
+                if let Some(tt) = self.task_mut(t.id) {
+                    if tt.due.is_none() {
+                        tt.due = Some(s.date());
                     }
                 }
             }
         }
-        (made, left)
+        Some(n)
     }
 }
 

@@ -65,6 +65,8 @@ fixed! {
     control_w = "control_w";
     /// the text in the quick add page's try-it field
     quick_try = "quick_try";
+    /// the tags typed on the frames page that get frame time first
+    frame_tags = "frame_tags";
     /// a dragged task would not fit where it was dropped
     drag_misfit = "drag_misfit";
     /// the size and first day the time grid had last frame

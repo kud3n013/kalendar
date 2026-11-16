@@ -40,6 +40,9 @@ pub struct Task {
     pub raw: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub dirty: bool,
+    /// Put away from the Completed list; still kept and synced.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub archived: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug, Default)]

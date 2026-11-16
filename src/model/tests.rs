@@ -530,3 +530,82 @@ fn a_window_save_keeps_what_sync_brought_in() {
     live.take_edits(Task { title: "New".into(), tags: vec!["x".into()], ..open });
     assert_eq!((live.title.as_str(), live.tags.len(), live.etag.as_deref(), live.uid.as_deref()), ("New", 1, Some("2"), Some("u")));
 }
+
+#[test]
+fn a_full_frame_today_waits_for_the_next_one_or_goes_now() {
+    // today's deep frame is taken, free time follows it
+    let busy = |d: &mut Data| {
+        d.events.push(Event { id: 99, title: "Call".into(), start: ymd(11, 16).and_hms_opt(9, 0, 0).unwrap(), end: ymd(11, 16).and_hms_opt(11, 0, 0).unwrap(), ..Default::default() });
+    };
+    let mut d = empty();
+    d.frames.push(deep_frame(1, 1, 9, 11));
+    busy(&mut d);
+    let id = add_task(&mut d, "Write", 60, &["deep"]);
+    d.plan_tasks(monday_8());
+    assert_eq!(sessions(&d), ["Tue 09:00 10:00 Write c1"]);
+    let t = d.task(id).cloned();
+    assert_eq!(d.next_free_slot(monday_8(), 60, t.as_ref()), Some(ymd(11, 17).and_hms_opt(10, 0, 0).unwrap()));
+
+    let mut d = empty();
+    d.prefs.frame_full = FrameFull::Now;
+    d.frames.push(deep_frame(1, 1, 9, 11));
+    busy(&mut d);
+    let id = add_task(&mut d, "Write", 60, &["deep"]);
+    d.plan_tasks(monday_8());
+    assert_eq!(sessions(&d), ["Mon 08:00 09:00 Write c3"]);
+    let t = d.task(id).cloned();
+    assert_eq!(d.next_free_slot(monday_8(), 60, t.as_ref()), Some(ymd(11, 16).and_hms_opt(11, 0, 0).unwrap()));
+}
+
+#[test]
+fn frame_time_goes_first_to_high_priority_or_chosen_tags() {
+    // one hour of frame for two tasks of an hour
+    let two = |d: &mut Data| {
+        d.frames.push(deep_frame(1, 1, 9, 10));
+        let low = add_task(d, "Low", 60, &["deep"]);
+        d.task_mut(low).unwrap().due = Some(ymd(11, 16));
+        let high = add_task(d, "High", 60, &["deep", "focus"]);
+        d.task_mut(high).unwrap().priority = 1;
+        d.task_mut(high).unwrap().due = Some(ymd(11, 18));
+    };
+    let mut d = empty();
+    two(&mut d);
+    d.plan_tasks(monday_8());
+    assert_eq!(sessions(&d), ["Mon 09:00 10:00 High c1", "Tue 09:00 10:00 Low c1"]);
+
+    let mut d = empty();
+    d.prefs.frame_first = FrameFirst::Due;
+    two(&mut d);
+    d.plan_tasks(monday_8());
+    assert_eq!(sessions(&d), ["Mon 09:00 10:00 Low c1", "Tue 09:00 10:00 High c1"]);
+
+    let mut d = empty();
+    d.prefs.frame_first = FrameFirst::Tags;
+    d.prefs.frame_first_tags = vec!["Focus".into()];
+    two(&mut d);
+    d.plan_tasks(monday_8());
+    assert_eq!(sessions(&d), ["Mon 09:00 10:00 High c1", "Tue 09:00 10:00 Low c1"]);
+}
+
+#[test]
+fn planning_one_list_leaves_the_others() {
+    let mut d = empty();
+    d.lists.push(TaskList { id: 50, ..Default::default() });
+    let a = add_task(&mut d, "Work", 60, &[]);
+    d.task_mut(a).unwrap().list = 50;
+    add_task(&mut d, "Home", 60, &[]);
+    assert_eq!(d.plan_tasks_in(monday_8(), Some(50)), (1, 0));
+    assert_eq!(sessions(&d), ["Mon 08:00 09:00 Work c3"]);
+}
+
+#[test]
+fn archiving_puts_away_only_completed_tasks() {
+    let mut d = empty();
+    d.tasks.push(Task { id: 1, done: true, ..Default::default() });
+    d.tasks.push(Task { id: 2, ..Default::default() });
+    d.tasks.push(Task { id: 3, done: true, archived: true, ..Default::default() });
+    assert_eq!(d.archive_done(), 1);
+    assert!(d.task(1).unwrap().archived);
+    assert!(!d.task(2).unwrap().archived);
+    assert_eq!(d.archive_done(), 0);
+}

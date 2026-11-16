@@ -675,6 +675,7 @@ impl App {
         let mut next: Option<Task> = None;
         if let Some(t) = self.data.task_mut(id) {
             t.done = !t.done;
+            t.archived = false;
             if t.done && t.repeat != Repeat::None {
                 if let Some(due) = t.due {
                     let new_due = t.repeat.next(due);

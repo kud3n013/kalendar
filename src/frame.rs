@@ -124,6 +124,7 @@ impl eframe::App for App {
                 "active" => Page::ActiveCalendars,
                 "shortcuts" => Page::Shortcuts,
                 "planner" => Page::Planner,
+                "frames" => Page::Frames,
                 "lists" => Page::Lists,
                 "appearance" => Page::Appearance,
                 "info" => Page::Info,

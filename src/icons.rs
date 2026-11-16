@@ -19,6 +19,7 @@ pub const SHUFFLE: &str = "\u{e15e}"; // shuffle
 pub const UNDO: &str = "\u{e2a1}"; // undo-2
 pub const COPY: &str = "\u{e09e}"; // copy
 pub const TRASH: &str = "\u{e18e}"; // trash-2
+pub const ARCHIVE: &str = "\u{e041}"; // archive
 pub const FLAG: &str = "\u{e0d1}"; // flag
 pub const REPEAT: &str = "\u{e146}"; // repeat
 pub const ALARM: &str = "\u{e03a}"; // alarm-clock

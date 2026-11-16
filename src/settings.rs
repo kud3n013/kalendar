@@ -19,6 +19,7 @@ pub enum Page {
     ActiveCalendars,
     Lists,
     Planner,
+    Frames,
     QuickAdd,
     Info,
 }
@@ -27,12 +28,13 @@ const CONTROL_W: f32 = 390.0;
 const ROW_H: f32 = 56.0;
 
 /// The order pages are listed in search results.
-const SEARCH_ORDER: [(Page, &str); 9] = [
+const SEARCH_ORDER: [(Page, &str); 10] = [
     (Page::General, later("General")),
     (Page::Appearance, later("Appearance")),
     (Page::ActiveCalendars, later("Active calendars")),
     (Page::Lists, later("Task lists")),
     (Page::Planner, later("Planner")),
+    (Page::Frames, later("Frames")),
     (Page::QuickAdd, later("Quick add")),
     (Page::Calendars, later("Calendars")),
     (Page::Info, later("Info")),
@@ -313,6 +315,7 @@ impl App {
                             (Page::ActiveCalendars, icons::SQUARE_CHECK, tr("Active calendars")),
                             (Page::Lists, icons::LIST_TODO, tr("Task lists")),
                             (Page::Planner, icons::SHUFFLE, tr("Planner")),
+                            (Page::Frames, icons::CLOCK, tr("Frames")),
                             (Page::QuickAdd, icons::KEYBOARD, tr("Quick add")),
                         ],
                     ),
@@ -361,7 +364,8 @@ impl App {
                         Page::General => self.page_general(ui),
                         Page::Appearance => self.page_appearance(ui),
                         Page::Planner => self.page_planner(ui),
-                Page::QuickAdd => self.page_quick_add(ui),
+                        Page::Frames => self.page_frames(ui),
+                        Page::QuickAdd => self.page_quick_add(ui),
                         Page::ActiveCalendars => self.page_active(ui),
                         Page::Lists => self.page_lists(ui),
                         Page::Calendars => self.page_calendars(ui, &ctx),
@@ -387,6 +391,7 @@ impl App {
                 Page::General => self.page_general(ui),
                 Page::Appearance => self.page_appearance(ui),
                 Page::Planner => self.page_planner(ui),
+                Page::Frames => self.page_frames(ui),
                 Page::QuickAdd => self.page_quick_add(ui),
                 Page::ActiveCalendars => self.page_active(ui),
                 Page::Lists => self.page_lists(ui),
@@ -512,7 +517,7 @@ impl App {
     }
 
     fn page_planner(&mut self, ui: &mut egui::Ui) {
-        let (muted, border) = (self.pal.muted, self.pal.border);
+        let muted = self.pal.muted;
         heading(ui, tr("Planner"));
         let searching = finding(ui);
         if !searching {
@@ -520,7 +525,7 @@ impl App {
                 egui::Label::new(
                     RichText::new(
                         "\"Plan my tasks\" fits open tasks into your frames: blocks of time set aside for certain kinds of work. \
-                         Without frames, or when none fits, it uses free time on working days, 08:00 to 18:00.",
+                         Frames come first (see Frames); otherwise it uses free time on working days, 08:00 to 18:00.",
                     )
                     .size(theme::size::UI)
                     .color(muted),
@@ -533,15 +538,59 @@ impl App {
         let yes_no = [(true, tr("Yes").to_string()), (false, tr("No").to_string())];
         row(ui, tr("Split long tasks"), tr("Tasks of two hours or more may be cut into several sessions."), |ui| combo(ui, "sp", &mut p.split_long_tasks, &yes_no));
         row(ui, tr("Schedule tasks with no due date"), "", |ui| combo(ui, "pn", &mut p.plan_without_due, &yes_no));
-        divider(ui, border);
+    }
+
+    /// Frames: how the planner uses them, then the frames themselves.
+    fn page_frames(&mut self, ui: &mut egui::Ui) {
+        let (muted, border) = (self.pal.muted, self.pal.border);
+        heading(ui, tr("Frames"));
+        let searching = finding(ui);
+        if !searching {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(
+                        "Frames are blocks of time set aside for certain kinds of work. \
+                         \"Plan my tasks\" puts each task into the frames whose filter it matches.",
+                    )
+                    .size(theme::size::UI)
+                    .color(muted),
+                )
+                .wrap(),
+            );
+            ui.add_space(10.0);
+        }
+        let p = &mut self.data.prefs;
+        let yes_no = [(true, tr("Yes").to_string()), (false, tr("No").to_string())];
         row(ui, tr("Plan into frames"), tr("Put tasks into the frames whose filter they match."), |ui| combo(ui, "pf", &mut p.use_frames, &yes_no));
         row(ui, tr("When no frame fits"), tr("What happens to a task that no frame takes."), |ui| {
             combo(ui, "po", &mut p.plan_outside_frames, &[(true, tr("Plan in working hours").into()), (false, tr("Leave unplanned").into())]);
         });
+        row(ui, tr("When today's frames are full"), tr("Where a task goes once its frames have no room left today."), |ui| {
+            combo(ui, "ff", &mut p.frame_full, &[(FrameFull::NextFrame, tr("Next matching frame").into()), (FrameFull::Now, tr("Free time now").into())]);
+        });
+        row(ui, tr("Frame time goes first to"), tr("Which tasks get a frame when there is not room for all of them."), |ui| {
+            combo(
+                ui,
+                "fp",
+                &mut p.frame_first,
+                &[(FrameFirst::Priority, tr("High priority").into()), (FrameFirst::Tags, tr("Tasks with chosen tags").into()), (FrameFirst::Due, tr("Earliest due date").into())],
+            );
+        });
+        if p.frame_first == FrameFirst::Tags {
+            row(ui, tr("Chosen tags"), tr("Separated by spaces; # is optional."), |ui| {
+                let id = ids::frame_tags();
+                let mut text = ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| p.frame_first_tags.join(" "));
+                let cw = ui.data(|d| d.get_temp::<f32>(ids::control_w())).unwrap_or(CONTROL_W);
+                if ui.add(egui::TextEdit::singleline(&mut text).hint_text("deep-work admin").desired_width(cw)).changed() {
+                    p.frame_first_tags = text.split_whitespace().map(|t| t.trim_start_matches('#').to_string()).filter(|t| !t.is_empty()).collect();
+                }
+                ui.data_mut(|d| d.insert_temp(id, text));
+            });
+        }
         divider(ui, border);
         if searching {
             let names: Vec<&str> = self.data.frames.iter().map(|f| f.name.as_str()).collect();
-            page_result(ui, Page::Planner, tr("Frames"), tr("Blocks of time set aside for certain kinds of work"), &[&["time block", "deep work"][..], &names].concat());
+            page_result(ui, Page::Frames, tr("Frames"), tr("Blocks of time set aside for certain kinds of work"), &[&["time block", "deep work"][..], &names].concat());
             return;
         }
         self.frame_list(ui);

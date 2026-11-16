@@ -49,6 +49,28 @@ pub enum DueMove {
     Never,
 }
 
+/// Where a task goes when its frames have no room left today.
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug, Default)]
+pub enum FrameFull {
+    /// the next of its frames, on a later day
+    #[default]
+    NextFrame,
+    /// the first free time, from now on
+    Now,
+}
+
+/// Which tasks get frame time first.
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug, Default)]
+pub enum FrameFirst {
+    /// high priority first
+    #[default]
+    Priority,
+    /// tasks with one of the chosen tags first
+    Tags,
+    /// earliest due date first
+    Due,
+}
+
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug, Default)]
 pub enum PanelSide {
     #[default]
@@ -95,6 +117,12 @@ pub struct Prefs {
     pub use_frames: bool,
     /// tasks no frame fits go into free working time; else they are left
     pub plan_outside_frames: bool,
+    /// a task whose frames are full today waits for the next one, or goes now
+    pub frame_full: FrameFull,
+    /// which tasks get frame time first
+    pub frame_first: FrameFirst,
+    /// the tags that go first when `frame_first` is `Tags`
+    pub frame_first_tags: Vec<String>,
     pub show_due_today: bool,
     pub show_due_tomorrow: bool,
     pub show_due_soon: bool,
@@ -143,6 +171,9 @@ impl Default for Prefs {
             plan_without_due: true,
             use_frames: true,
             plan_outside_frames: true,
+            frame_full: FrameFull::NextFrame,
+            frame_first: FrameFirst::Priority,
+            frame_first_tags: vec![],
             show_due_today: true,
             show_due_tomorrow: true,
             show_due_soon: true,

@@ -536,7 +536,7 @@ impl App {
                     let name = if id == 0 { self.data.prefs.inbox_name() } else if name.trim().is_empty() { tr("Untitled list").to_string() } else { name };
                     lists.push((id, name, icon, rgb(color), ids(&|t| t.list == id && visible_in_list(t))));
                 }
-                let done_ids: Vec<u64> = self.data.tasks.iter().filter(|t| t.done).map(|t| t.id).collect();
+                let done_ids: Vec<u64> = self.data.tasks.iter().filter(|t| t.done && !t.archived).map(|t| t.id).collect();
 
                 // the bar gets its own lane beside the lists instead of
                 // floating over them, with room for their washes, which
@@ -592,9 +592,18 @@ impl App {
         self.ui_list_edit(ctx);
     }
 
-    /// What a list's menu offers: change how it looks, or remove it.
+    /// What a list's menu offers: plan its tasks, change how it looks, or
+    /// remove it.
     fn list_menu(&mut self, ui: &mut egui::Ui, lid: u64, at: egui::Pos2) {
         let mut m = Menu::start(ui);
+        let open = self.data.tasks.iter().any(|t| t.list == lid && !t.done);
+        let b = m.item_if(ui, open, icons::SHUFFLE, tr("Plan this list"), false);
+        if b.on_hover_text(tr("Plan the open tasks of this list only")).on_disabled_hover_text(tr("No open tasks in this list")).clicked() {
+            let ctx = ui.ctx().clone();
+            self.plan(&ctx, Some(lid));
+            ui.close();
+        }
+        m.line(ui);
         if m.item(ui, icons::PEN, tr("Edit"), false).clicked() {
             self.list_edit = Some(crate::ListEdit { id: lid, at, fresh: true, snapped: false });
             ui.close();
@@ -755,6 +764,17 @@ impl App {
             row_btn(ui, pr, &add, icons::PLUS, theme::size::LARGE, glow, false, text, (muted, text));
             add_clicked = add.clicked();
         }
+        // the Completed list puts its tasks away in one go
+        if key == "done" {
+            let pr = Rect::from_center_size(pos2(r.right() - 38.0, r.center().y), vec2(24.0, 24.0));
+            let b = ui.interact(pr, ids::section(&format!("{key}_archive")), Sense::click()).on_hover_text(tr("Archive completed tasks"));
+            row_btn(ui, pr, &b, icons::ARCHIVE, theme::size::LARGE, glow, false, text, (muted, text));
+            if b.clicked() {
+                let n = self.archive_done();
+                self.say(ctx, trf("Archived {} tasks", &[&n]), true);
+                return;
+            }
+        }
         if add_clicked {
             if let Some(l) = list {
                 self.open_new_task(l);
@@ -807,6 +827,14 @@ impl App {
                 self.say(ctx, trf("Moved to {}", &[&name]), true);
             }
         }
+    }
+
+    /// Archives every completed task, as one step that can be undone.
+    pub fn archive_done(&mut self) -> usize {
+        self.snapshot();
+        let n = self.data.archive_done();
+        self.commit();
+        n
     }
 
     /// Puts a task in another list, as one step that can be undone.

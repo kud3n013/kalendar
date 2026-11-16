@@ -423,6 +423,15 @@ impl Data {
     pub fn calendar_color(&self, id: u64) -> [u8; 3] {
         self.calendar(id).map(|c| c.color).unwrap_or([66, 133, 244])
     }
+    /// Archives the completed tasks; returns how many.
+    pub fn archive_done(&mut self) -> usize {
+        let mut n = 0;
+        for t in self.tasks.iter_mut().filter(|t| t.done && !t.archived) {
+            t.archived = true;
+            n += 1;
+        }
+        n
+    }
     pub fn event_visible(&self, e: &Event) -> bool {
         if !self.calendar(e.calendar).map(|c| c.visible).unwrap_or(true) {
             return false;

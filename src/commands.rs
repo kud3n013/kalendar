@@ -285,19 +285,7 @@ impl App {
                     self.split_session(ctx, id);
                 }
             }
-            Cmd::Plan => {
-                self.snapshot();
-                let (made, left) = self.data.plan_tasks(Self::now());
-                self.commit();
-                let msg = if made == 0 && left == 0 {
-                    tr("Nothing to plan").to_string()
-                } else if left > 0 {
-                    trf("Planned {} session(s); {} task(s) did not fit in the next {} days", &[&made, &left, &PLAN_SPAN_DAYS])
-                } else {
-                    trf("Planned {} session(s)", &[&made])
-                };
-                self.say(ctx, msg, made > 0);
-            }
+            Cmd::Plan => self.plan(ctx, None),
             Cmd::ToggleTasks => self.data.prefs.sidebar_open = !self.data.prefs.sidebar_open,
             Cmd::ToggleTheme => {
                 let dark_now = self.pal.dark;
@@ -423,6 +411,23 @@ impl App {
         if let Some(c) = fired(false) {
             self.run(ctx, c);
         }
+    }
+}
+
+impl App {
+    /// Plans open tasks, or only those of one list; says what came of it.
+    pub fn plan(&mut self, ctx: &egui::Context, list: Option<u64>) {
+        self.snapshot();
+        let (made, left) = self.data.plan_tasks_in(Self::now(), list);
+        self.commit();
+        let msg = if made == 0 && left == 0 {
+            tr("Nothing to plan").to_string()
+        } else if left > 0 {
+            trf("Planned {} session(s); {} task(s) did not fit in the next {} days", &[&made, &left, &PLAN_SPAN_DAYS])
+        } else {
+            trf("Planned {} session(s)", &[&made])
+        };
+        self.say(ctx, msg, made > 0);
     }
 }
 
