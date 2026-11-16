@@ -672,8 +672,17 @@ impl App {
 
     /// Puts a task on the calendar and applies the due-date rules.
     pub fn schedule_task(&mut self, ctx: &egui::Context, task_id: u64, start: NaiveDateTime) {
-        let Some(t) = self.data.task(task_id).cloned() else { return };
+        if self.data.task(task_id).is_none() {
+            return;
+        }
         self.snapshot();
+        self.place_task(ctx, task_id, start);
+        self.commit();
+    }
+
+    /// Adds the calendar block for a task, without its own undo step.
+    pub fn place_task(&mut self, ctx: &egui::Context, task_id: u64, start: NaiveDateTime) {
+        let Some(t) = self.data.task(task_id).cloned() else { return };
         let mins = t.duration_min.unwrap_or(self.data.prefs.default_task_min);
         let id = self.data.new_id();
         let cal = self.data.task_calendar();
@@ -686,12 +695,11 @@ impl App {
             calendar: cal,
             notes: t.notes.clone(),
             task_id: Some(task_id),
-        color: None,
-        ..Default::default()
+            color: None,
+            ..Default::default()
         });
         self.selected = Some(id);
         self.after_task_scheduled(ctx, task_id, start.date());
-        self.commit();
     }
 
     pub fn after_task_scheduled(&mut self, ctx: &egui::Context, task_id: u64, day: NaiveDate) {

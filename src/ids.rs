@@ -63,6 +63,8 @@ fixed! {
     settings_find = "settings_find";
     /// how wide the controls of the settings page are, for this frame
     control_w = "control_w";
+    /// the text in the quick add page's try-it field
+    quick_try = "quick_try";
     /// a dragged task would not fit where it was dropped
     drag_misfit = "drag_misfit";
     /// the size and first day the time grid had last frame

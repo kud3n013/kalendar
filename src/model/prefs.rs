@@ -105,6 +105,8 @@ pub struct Prefs {
     pub plaintext_secrets: bool,
     /// shortcut overrides: command id -> keys, e.g. "plan" -> "Ctrl+Shift+P"
     pub keybinds: std::collections::HashMap<String, String>,
+    /// how the quick task field reads what is typed
+    pub quick: QuickSyntax,
 }
 
 impl Default for Prefs {
@@ -148,6 +150,7 @@ impl Default for Prefs {
             hour_height_px: None,
             plaintext_secrets: false,
             keybinds: Default::default(),
+            quick: QuickSyntax::default(),
         }
     }
 }

@@ -284,9 +284,10 @@ impl App {
     }
 
     /// Adds a task typed into a quick field.
-    pub fn add_task(&mut self, text: &str, list: u64) {
-        let today = Local::now().date_naive();
-        let q = parse_quick(text, today);
+    /// A typed time puts it straight onto the calendar.
+    pub fn add_task(&mut self, ctx: &egui::Context, text: &str, list: u64) {
+        let now = Local::now().naive_local();
+        let q = parse_quick(text, now.date(), &self.data.prefs.quick);
         if q.title.trim().is_empty() {
             return;
         }
@@ -300,11 +301,13 @@ impl App {
             };
         }
         let id = self.data.new_id();
+        let start = q.start(now);
         self.data.tasks.insert(
             0,
             Task {
                 id,
                 title: q.title,
+                repeat: q.repeat,
                 due: q.due,
                 priority: q.priority,
                 duration_min: q.duration_min,
@@ -313,6 +316,9 @@ impl App {
                 ..Default::default()
             },
         );
+        if let Some(start) = start {
+            self.place_task(ctx, id, start);
+        }
         self.commit();
     }
 

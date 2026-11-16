@@ -19,6 +19,7 @@ pub enum Page {
     ActiveCalendars,
     Lists,
     Planner,
+    QuickAdd,
     Info,
 }
 
@@ -26,12 +27,13 @@ const CONTROL_W: f32 = 390.0;
 const ROW_H: f32 = 56.0;
 
 /// The order pages are listed in search results.
-const SEARCH_ORDER: [(Page, &str); 8] = [
+const SEARCH_ORDER: [(Page, &str); 9] = [
     (Page::General, later("General")),
     (Page::Appearance, later("Appearance")),
     (Page::ActiveCalendars, later("Active calendars")),
     (Page::Lists, later("Task lists")),
     (Page::Planner, later("Planner")),
+    (Page::QuickAdd, later("Quick add")),
     (Page::Calendars, later("Calendars")),
     (Page::Info, later("Info")),
     (Page::Shortcuts, later("Shortcuts")),
@@ -311,6 +313,7 @@ impl App {
                             (Page::ActiveCalendars, icons::SQUARE_CHECK, tr("Active calendars")),
                             (Page::Lists, icons::LIST_TODO, tr("Task lists")),
                             (Page::Planner, icons::SHUFFLE, tr("Planner")),
+                            (Page::QuickAdd, icons::KEYBOARD, tr("Quick add")),
                         ],
                     ),
                     (tr("About"), vec![(Page::Info, icons::INFO, tr("Info"))]),
@@ -358,6 +361,7 @@ impl App {
                         Page::General => self.page_general(ui),
                         Page::Appearance => self.page_appearance(ui),
                         Page::Planner => self.page_planner(ui),
+                Page::QuickAdd => self.page_quick_add(ui),
                         Page::ActiveCalendars => self.page_active(ui),
                         Page::Lists => self.page_lists(ui),
                         Page::Calendars => self.page_calendars(ui, &ctx),
@@ -383,6 +387,7 @@ impl App {
                 Page::General => self.page_general(ui),
                 Page::Appearance => self.page_appearance(ui),
                 Page::Planner => self.page_planner(ui),
+                Page::QuickAdd => self.page_quick_add(ui),
                 Page::ActiveCalendars => self.page_active(ui),
                 Page::Lists => self.page_lists(ui),
                 Page::Calendars => self.page_calendars(ui, ctx),
@@ -766,6 +771,99 @@ impl App {
             self.commit();
             self.say(&ctx, trf("Calendar \"{}\" removed", &[&name]), true);
         }
+    }
+
+    /// How the quick task field reads text: a preset of marks like another
+    /// app's, each mark changeable, plain dates, and the person's own words.
+    fn page_quick_add(&mut self, ui: &mut egui::Ui) {
+        let (muted, border, accent) = (self.pal.muted, self.pal.border, self.pal.accent);
+        let hour12 = self.data.prefs.hour12;
+        heading(ui, tr("Quick add"));
+        let searching = finding(ui);
+        if !searching {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(tr(
+                        "How the new task bar (Ctrl+T) reads what you type. A time, as in \"call mum fri at 5pm\", puts the task straight on the calendar; \
+                         a date alone makes it the due date. Put words in \"quotes\" to keep them in the title.",
+                    ))
+                    .size(theme::size::UI)
+                    .color(muted),
+                )
+                .wrap(),
+            );
+            ui.add_space(10.0);
+        }
+        let q = &mut self.data.prefs.quick;
+        let presets: Vec<(QuickPreset, String)> = QuickPreset::ALL.iter().map(|p| (*p, p.label().to_string())).collect();
+        row(ui, tr("Preset"), tr("Marks like those of the app you are used to. Changing a mark below makes them your own."), |ui| {
+            combo(ui, "qp", &mut q.preset, &presets)
+        });
+        row(ui, tr("Understand plain dates and times"), tr("\"tomorrow\", \"fri 5pm\", \"every monday\" without a mark before them."), |ui| {
+            switch(ui, &mut q.natural, accent);
+        });
+        row(ui, tr("Numeric dates"), "", |ui| {
+            combo(ui, "qd", &mut q.day_first, &[(true, tr("Day/Month (12/4 is 12 April)").into()), (false, tr("Month/Day (12/4 is December 4)").into())])
+        });
+        divider(ui, border);
+        let mut toks = q.tokens();
+        let before = toks.clone();
+        for k in Kind::ALL {
+            let sample = toks.sample(k);
+            let tip = trf("Marks for the {}, split by spaces. A mark of two or more letters is a word before the value.", &[&k.label().to_lowercase()]);
+            row(ui, k.label(), &tip, |ui| {
+                ui.add(egui::TextEdit::singleline(toks.get_mut(k)).desired_width(110.0).hint_text(tr("none")));
+                ui.add_space(10.0);
+                ui.label(RichText::new(sample).size(theme::size::UI).color(muted));
+            });
+        }
+        if toks != before {
+            q.custom = toks;
+            q.preset = QuickPreset::Custom;
+        }
+        divider(ui, border);
+        if searching {
+            page_result(ui, Page::QuickAdd, tr("Abbreviations"), tr("Your own short words, each standing for others"), &["tmr", "shortcut", "natural language", "todoist", "ticktick", "things"]);
+            return;
+        }
+        ui.label(RichText::new(tr("Abbreviations")).font(theme::bold(20.0)));
+        ui.add_space(2.0);
+        ui.label(RichText::new(tr("A word of yours that stands for others: \"eod\" for \"at 17:00\", \"w\" for \">Work\".")).size(theme::size::UI).color(muted));
+        ui.add_space(6.0);
+        let mut remove = None;
+        for (i, (short, long)) in q.abbrevs.iter_mut().enumerate() {
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(short).desired_width(110.0).hint_text(tr("eod")));
+                ui.label(RichText::new(icons::CHEVRON_RIGHT).color(muted));
+                ui.add(egui::TextEdit::singleline(long).desired_width((ui.available_width() - 40.0).max(120.0)).hint_text(tr("at 17:00")));
+                if ui.add(egui::Button::new(RichText::new(icons::X).color(muted)).frame(false)).on_hover_text(tr("Remove")).clicked() {
+                    remove = Some(i);
+                }
+            });
+        }
+        if let Some(i) = remove {
+            q.abbrevs.remove(i);
+        }
+        if ui.add(egui::Button::new(RichText::new(format!("{}  {}", icons::PLUS, tr("Add abbreviation"))).size(theme::size::UI)).frame(false)).clicked() {
+            q.abbrevs.push((String::new(), String::new()));
+        }
+        divider(ui, border);
+        ui.label(RichText::new(tr("Try it")).font(theme::bold(20.0)));
+        ui.add_space(4.0);
+        let id = ids::quick_try();
+        let mut text = ui.data(|d| d.get_temp::<String>(id)).unwrap_or_default();
+        ui.add(egui::TextEdit::singleline(&mut text).hint_text(q.tokens().hint()).desired_width(f32::INFINITY));
+        let now = App::now();
+        let r = parse_quick(&text, now.date(), q);
+        if !text.trim().is_empty() {
+            ui.add_space(4.0);
+            ui.label(RichText::new(format!("\u{201c}{}\u{201d}", r.title)).size(theme::size::UI));
+            let chips = r.chips(now, hour12);
+            if !chips.is_empty() {
+                ui.label(RichText::new(chips.join("   ")).size(theme::size::UI).color(accent));
+            }
+        }
+        ui.data_mut(|d| d.insert_temp(id, text));
     }
 
     /// Task lists: name, colour and icon of each, new ones, and removing.

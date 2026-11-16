@@ -864,6 +864,8 @@ impl App {
             }
         };
         let mut close = false;
+        let hint = self.data.prefs.quick.tokens().hint();
+        let accent = self.pal.accent;
         egui::Window::new("newtask")
             .id(ids::new_task())
             .title_bar(false)
@@ -875,7 +877,7 @@ impl App {
                     ui.label(RichText::new(icons::SQUARE_CHECK).size(theme::size::LARGE).color(muted));
                     let r = ui.add(
                         egui::TextEdit::singleline(&mut self.new_task_text)
-                            .hint_text(tr("New task   #tag  !high  >list  30m  .tomorrow"))
+                            .hint_text(hint)
                             .font(FontId::proportional(theme::size::LARGE))
                             .desired_width(f32::INFINITY),
                     );
@@ -886,7 +888,7 @@ impl App {
                         if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                             let t = std::mem::take(&mut self.new_task_text);
                             if !t.trim().is_empty() {
-                                self.add_task(&t, self.new_task_list);
+                                self.add_task(ctx, &t, self.new_task_list);
                                 close = true;
                             }
                         } else if ui.input(|i| i.pointer.any_click()) {
@@ -894,7 +896,19 @@ impl App {
                         }
                     }
                 });
-                ui.label(RichText::new(trf("Enter adds the task to {}  ·  Esc closes", &[&list_name])).size(theme::size::TINY).color(muted));
+                // what the typed text will become, read live
+                let now = chrono::Local::now().naive_local();
+                let q = parse_quick(&self.new_task_text, now.date(), &self.data.prefs.quick);
+                let chips = q.chips(now, self.data.prefs.hour12);
+                if !chips.is_empty() {
+                    ui.label(RichText::new(chips.join("   ")).size(theme::size::CAPTION).color(accent));
+                }
+                let lead = if q.start(now).is_some() {
+                    trf("Enter puts it on the calendar and in {}  ·  Esc closes", &[&list_name])
+                } else {
+                    trf("Enter adds the task to {}  ·  Esc closes", &[&list_name])
+                };
+                ui.label(RichText::new(lead).size(theme::size::TINY).color(muted));
             });
         if close {
             self.new_task_open = false;
