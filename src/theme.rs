@@ -117,3 +117,45 @@ pub const BUTTON_RADIUS: f32 = 7.0;
 pub const CARD_RADIUS: f32 = 10.0;
 /// small chips, such as key caps
 pub const CHIP_RADIUS: f32 = 5.0;
+
+/// The outline of a squircle: a rectangle whose corners are superellipse
+/// arcs (continuous curvature) instead of circular ones.
+pub fn squircle_points(rect: egui::Rect, radius: f32) -> Vec<egui::Pos2> {
+    let r = radius.min(rect.width() / 2.0).min(rect.height() / 2.0);
+    if r <= 0.5 {
+        return vec![rect.left_top(), rect.right_top(), rect.right_bottom(), rect.left_bottom()];
+    }
+    const STEPS: usize = 10;
+    // |x|^4 + |y|^4 = r^4, so the offsets are cos(t)^0.5 and sin(t)^0.5
+    let arc = |i: usize| {
+        let t = std::f32::consts::FRAC_PI_2 * i as f32 / STEPS as f32;
+        (t.cos().max(0.0).sqrt(), t.sin().max(0.0).sqrt())
+    };
+    let mut pts = Vec::with_capacity(4 * (STEPS + 1));
+    let (l, t, rt, b) = (rect.left(), rect.top(), rect.right(), rect.bottom());
+    for i in 0..=STEPS {
+        let (c, s) = arc(i);
+        pts.push(egui::pos2(rt - r + r * s, t + r - r * c)); // top right
+    }
+    for i in 0..=STEPS {
+        let (c, s) = arc(i);
+        pts.push(egui::pos2(rt - r + r * c, b - r + r * s)); // bottom right
+    }
+    for i in 0..=STEPS {
+        let (c, s) = arc(i);
+        pts.push(egui::pos2(l + r - r * s, b - r + r * c)); // bottom left
+    }
+    for i in 0..=STEPS {
+        let (c, s) = arc(i);
+        pts.push(egui::pos2(l + r - r * c, t + r - r * s)); // top left
+    }
+    pts
+}
+
+pub fn fill_squircle(p: &egui::Painter, rect: egui::Rect, radius: f32, fill: Color32) {
+    p.add(egui::Shape::convex_polygon(squircle_points(rect, radius), fill, egui::Stroke::NONE));
+}
+
+pub fn stroke_squircle(p: &egui::Painter, rect: egui::Rect, radius: f32, stroke: egui::Stroke) {
+    p.add(egui::Shape::closed_line(squircle_points(rect, radius), stroke));
+}
