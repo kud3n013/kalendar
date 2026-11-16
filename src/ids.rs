@@ -52,6 +52,8 @@ fixed! {
     toast = "toast";
     quick_nav_area = "quicknav_area";
     panel_bottom = "panel_bottom";
+    /// the Save, Cancel and Delete row of an editor window
+    editor_buttons = "editor_buttons";
     panel_handle = "panel_handle";
     list_edit = "list_edit";
     /// the layer the dragged block's ghost is painted on

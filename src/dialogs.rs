@@ -141,13 +141,17 @@ fn editor_label(ui: &mut egui::Ui, text: &str, muted: egui::Color32) {
     ui.add_sized([EDITOR_LABEL_W, 20.0], egui::Label::new(RichText::new(text).color(muted)).halign(Align::LEFT));
 }
 
-/// Notes, then Save, Cancel and (for what already exists) Delete, the same
-/// in every editor. Returns save, cancel, delete.
-fn editor_footer(ui: &mut egui::Ui, notes: &mut String, can_delete: bool) -> (bool, bool, bool) {
-    let (mut save, mut cancel, mut delete) = (false, false, false);
+/// The editor's notes, at the end of its fields; Ctrl+Enter saves.
+fn editor_notes(ui: &mut egui::Ui, notes: &mut String) -> bool {
     ui.add_space(4.0);
     ui.add(egui::TextEdit::multiline(notes).hint_text(tr("Notes")).desired_rows(3).desired_width(f32::INFINITY));
-    ui.add_space(4.0);
+    ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter))
+}
+
+/// Save, Cancel and Delete, kept at the foot of the editor window
+/// whatever its size; returns save, cancel, delete.
+fn editor_buttons(ui: &mut egui::Ui, can_delete: bool) -> (bool, bool, bool) {
+    let (mut save, mut cancel, mut delete) = (false, false, false);
     ui.horizontal(|ui| {
         if ui.button(RichText::new(tr("Save")).strong()).on_hover_text(tr("Ctrl+Enter")).clicked() {
             save = true;
@@ -163,9 +167,6 @@ fn editor_footer(ui: &mut egui::Ui, notes: &mut String, can_delete: bool) -> (bo
             });
         }
     });
-    if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter)) {
-        save = true;
-    }
     (save, cancel, delete)
 }
 
@@ -984,7 +985,8 @@ impl App {
             tr("Event")
         };
         let at = self.editor_spot(ctx, ids::event_editor().with(ed.ev.id), ed.anchor_rect);
-        let (save, cancel, delete) = self.edit_window(ctx, "event_editor", title, at, |app, ui| app.event_form(ui, &mut ed));
+        let can_delete = !ed.is_new;
+        let (save, cancel, delete) = self.edit_window(ctx, "event_editor", title, at, can_delete, |app, ui| app.event_form(ui, &mut ed));
         self.finish_event_edit(ctx, ed, save, cancel, delete);
     }
 
@@ -1012,7 +1014,8 @@ impl App {
         name: &str,
         title: &str,
         at: egui::Pos2,
-        mut form: impl FnMut(&mut App, &mut egui::Ui) -> (bool, bool, bool),
+        can_delete: bool,
+        mut form: impl FnMut(&mut App, &mut egui::Ui) -> bool,
     ) -> (bool, bool, bool) {
         let builder = egui::ViewportBuilder::default()
             .with_title(title)
@@ -1026,17 +1029,27 @@ impl App {
             if class == egui::ViewportClass::EmbeddedWindow {
                 self.own_windows = false;
                 ui.set_width(EDITOR_SIZE[0] - 28.0);
-                out = form(self, ui);
+                let save = form(self, ui);
+                ui.add_space(4.0);
+                out = editor_buttons(ui, can_delete);
+                out.0 |= save;
                 return;
             }
             self.own_windows = true;
             let ctx = ui.ctx().clone();
-            egui::CentralPanel::default().frame(egui::Frame::new().fill(self.pal.bg).inner_margin(14)).show(ui, |ui| {
+            // the buttons sit at the foot of the window; the fields scroll above them
+            egui::Panel::bottom(ids::editor_buttons())
+                .show_separator_line(false)
+                .frame(egui::Frame::new().fill(self.pal.bg).inner_margin(egui::Margin { left: 14, right: 14, top: 8, bottom: 14 }))
+                .show(ui, |ui| out = editor_buttons(ui, can_delete));
+            let mut save = false;
+            egui::CentralPanel::default().frame(egui::Frame::new().fill(self.pal.bg).inner_margin(egui::Margin { left: 14, right: 14, top: 14, bottom: 0 })).show(ui, |ui| {
                 egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    out = form(self, ui);
+                    save = form(self, ui);
                 });
             });
+            out.0 |= save;
             let (close, esc) = ctx.input(|i| (i.viewport().close_requested(), i.key_pressed(egui::Key::Escape)));
             if close || esc {
                 out.1 = true;
@@ -1068,8 +1081,8 @@ impl App {
         ed.base = Some(now);
     }
 
-    /// The event editor's fields; returns save, cancel, delete.
-    fn event_form(&mut self, ui: &mut egui::Ui, ed: &mut EventEdit) -> (bool, bool, bool) {
+    /// The event editor's fields; returns whether to save.
+    fn event_form(&mut self, ui: &mut egui::Ui, ed: &mut EventEdit) -> bool {
         let is_task = ed.ev.task_id.is_some();
         let hour12 = self.data.prefs.hour12;
         let muted = self.pal.muted;
@@ -1159,9 +1172,8 @@ impl App {
             });
             ui.end_row();
         });
-        let (s, cancel, delete) = editor_footer(ui, &mut ed.ev.notes, !ed.is_new);
-        save |= s;
-        (save, cancel, delete)
+        save |= editor_notes(ui, &mut ed.ev.notes);
+        save
     }
 
     fn finish_event_edit(&mut self, ctx: &egui::Context, ed: EventEdit, save: bool, cancel: bool, delete: bool) {
@@ -1210,7 +1222,7 @@ impl App {
         let Some(mut ed) = self.task_editor.take() else { return };
         self.sync_task_edit(&mut ed);
         let at = self.editor_spot(ctx, ids::task_editor().with(ed.task.id), None);
-        let (save, cancel, delete) = self.edit_window(ctx, "task_editor", tr("Task"), at, |app, ui| app.task_form(ui, &mut ed));
+        let (save, cancel, delete) = self.edit_window(ctx, "task_editor", tr("Task"), at, true, |app, ui| app.task_form(ui, &mut ed));
         self.finish_task_edit(ctx, ed, save, cancel, delete);
     }
 
@@ -1235,8 +1247,8 @@ impl App {
         ed.base = now;
     }
 
-    /// The task editor's fields; returns save, cancel, delete.
-    fn task_form(&mut self, ui: &mut egui::Ui, ed: &mut TaskEdit) -> (bool, bool, bool) {
+    /// The task editor's fields; returns whether to save.
+    fn task_form(&mut self, ui: &mut egui::Ui, ed: &mut TaskEdit) -> bool {
         let today = Local::now().date_naive();
         let muted = self.pal.muted;
         let mut save = editor_title(ui, &mut ed.task.title, tr("New Task"), &mut ed.focus);
@@ -1302,9 +1314,8 @@ impl App {
             }
             ui.label(RichText::new(line).size(theme::size::TINY).color(muted));
         }
-        let (s, cancel, delete) = editor_footer(ui, &mut ed.task.notes, true);
-        save |= s;
-        (save, cancel, delete)
+        save |= editor_notes(ui, &mut ed.task.notes);
+        save
     }
 
     fn finish_task_edit(&mut self, ctx: &egui::Context, mut ed: TaskEdit, save: bool, cancel: bool, delete: bool) {
