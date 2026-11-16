@@ -23,23 +23,6 @@ pub const UNDO_CHOICES: [u32; 5] = [0, 5, 10, 15, 30];
 pub const PLAN_SPAN_DAYS: i64 = 3; // the planner fills this many days
 pub const PLAN_MAX_SPAN_DAYS: i64 = 8; // longest look-ahead
 pub const PLAN_OWN_FRAME_DAYS: i64 = 15; // how far ahead a task's own frame is looked for
-/// Whether things move at all; follows the setting under Appearance.
-pub static ANIMATE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
-
-/// How long an animation of `secs` takes: nothing when they are off.
-pub fn anim(secs: f32) -> f32 {
-    if ANIMATE.load(std::sync::atomic::Ordering::Relaxed) {
-        secs
-    } else {
-        0.0
-    }
-}
-
-pub const ANIM_FAST_S: f32 = 0.1;
-pub const ANIM_S: f32 = 0.175;
-pub const ANIM_LONG_S: f32 = 0.275;
-/// one page of the calendar sliding over to the next
-pub const ANIM_SLIDE_S: f32 = 0.55;
 /// Event colours, in menu order.
 pub const EVENT_COLORS: [([u8; 3], &str); 13] = [
     ([0xf1, 0x76, 0xa8], "Pink"),
@@ -64,7 +47,6 @@ pub const DUE_SOON_DAYS: i64 = 7; // "Due soon" looks this many days ahead
 /// below this window width: one day, no task panel
 pub const COMPACT_W: f32 = 700.0;
 /// how fast a zoom closes in on its goal, per second
-pub const ZOOM_RATE: f32 = 14.0;
 pub const ZOOM_STEP: f32 = 1.1; // one wheel notch while zooming
 pub const SYNC_EVERY_S: f64 = 900.0; // subscribed and synced calendars refresh every 15 minutes
 pub const PUSH_AFTER_S: f64 = 2.0; // a change made here is sent to its server this much later

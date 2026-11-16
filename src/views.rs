@@ -1,5 +1,6 @@
 //! What is drawn in the main window: toolbar, task list and calendar views.
 
+use crate::motion;
 use crate::icons;
 use crate::model::*;
 use crate::{fill_squircle, mix, rgb, stroke_squircle, App, Cmd, CreateEdit, CreateKind, Drag, Palette};
@@ -367,7 +368,7 @@ impl App {
                 let y = hrect.top() + 47.0 + (ev_rows + k) as f32 * 22.0;
                 let r = Rect::from_min_max(pos2(x0 + i as f32 * col_w + 2.0, y), pos2(x0 + (i + 1) as f32 * col_w - 4.0, y + 20.0));
                 let over = hresp.hover_pos().map(|p| r.contains(p)).unwrap_or(false);
-                let glow = ui.ctx().animate_bool_with_time(Id::unique(("due", *tid)), over, anim(ANIM_FAST_S));
+                let glow = ui.ctx().animate_bool_with_time(Id::unique(("due", *tid)), over, motion::HOVER.secs());
                 hp.rect_filled(r, 4.0, mix(self.pal.bg, self.pal.text, 0.03 + 0.07 * glow));
                 hp.rect_stroke(r, 4.0, Stroke::new(1.0, mix(self.pal.border, self.pal.text, 0.25)), StrokeKind::Inside);
                 let c = hp.with_clip_rect(r.shrink(2.0));
@@ -423,7 +424,7 @@ impl App {
             // step cannot be seen
             let was = self.data.prefs.hour_height();
             let dt = ctx.input(|i| i.stable_dt).min(0.05);
-            let mut h = if anim(1.0) > 0.0 { at + (goal - at) * (1.0 - (-dt * ZOOM_RATE).exp()) } else { goal };
+            let mut h = if motion::on() { at + (goal - at) * (1.0 - (-dt * motion::ZOOM_RATE).exp()) } else { goal };
             if (goal - h).abs() < 0.02 {
                 h = goal;
                 self.zoom_goal = None;
@@ -591,7 +592,7 @@ impl App {
                 if !*draft {
                     let dragging = matches!(&self.drag, Some(Drag::Move { id, .. }) | Some(Drag::Resize { id }) if *id == e.id);
                     // a zoom or a new column width moves every block at once, like the frames
-                    let secs = if regrid { 0.0 } else if dragging { anim(ANIM_FAST_S) * 0.6 } else { anim(ANIM_S) };
+                    let secs = if regrid { 0.0 } else if dragging { motion::FOLLOW.secs() } else { motion::NORMAL.secs() };
                     let key = Id::unique(("block", e.id, (*day - e.start.date()).num_days()));
                     let ax = ctx.animate_value_with_time(key.with("x"), target.left() - x0, secs);
                     let aw = ctx.animate_value_with_time(key.with("w"), target.width(), secs);
@@ -626,7 +627,7 @@ impl App {
         let hover_id = resp.hover_pos().and_then(|hp| items.iter().rev().find(|it| !it.draft && it.rect.contains(hp))).map(|it| it.id);
         for it in &items {
             let hovered = !it.draft && self.drag.is_none() && self.drag_task.is_none() && hover_id == Some(it.id);
-            let glow = ctx.animate_bool_with_time(Id::unique(("glow", it.id)), hovered, anim(ANIM_FAST_S));
+            let glow = ctx.animate_bool_with_time(Id::unique(("glow", it.id)), hovered, motion::HOVER.secs());
             draw_item(&painter, &self.pal, it, self.selected == Some(it.id) && !it.draft, glow);
         }
 
@@ -759,10 +760,10 @@ impl App {
                     if dir != 0 {
                         let now_s = ctx.input(|i| i.time);
                         let since = ctx.data(|d| d.get_temp::<(i64, f64)>(edge_id)).filter(|e| e.0 == dir).map_or(now_s, |e| e.1);
-                        if now_s - since > 0.3 {
+                        if now_s - since > motion::EDGE_HOLD_S {
                             self.step(dir);
                             // and again, a little slower, while it stays there
-                            at_edge = Some((dir, now_s + 0.25));
+                            at_edge = Some((dir, now_s + motion::EDGE_REPEAT_S));
                         } else {
                             at_edge = Some((dir, since));
                         }
@@ -934,7 +935,7 @@ impl App {
                     let frame = ctx.cumulative_frame_nr();
                     let seen = ctx.data(|d| d.get_temp::<u64>(key)).is_some_and(|f| f + 1 >= frame);
                     ctx.data_mut(|d| d.insert_temp(key, frame));
-                    let secs = if regrid || !seen { 0.0 } else { anim(ANIM_FAST_S) * 0.6 };
+                    let secs = if regrid || !seen { 0.0 } else { motion::FOLLOW.secs() };
                     let ax = ctx.animate_value_with_time(key.with("x"), r.left() - x0, secs);
                     let at = ctx.animate_value_with_time(key.with("t"), r.top() - rect.top(), secs);
                     let ab = ctx.animate_value_with_time(key.with("b"), r.bottom() - rect.top(), secs);
@@ -1024,7 +1025,7 @@ impl App {
                 let (from, to) = if row == 0 { (0, 6) } else { (6, EVENT_COLORS.len()) };
                 for (i, (col, name)) in EVENT_COLORS.iter().enumerate().take(to).skip(from) {
                     let (r, resp) = ui.allocate_exact_size(vec2(24.0, 24.0), Sense::click());
-                    let grow = ctx.animate_bool_with_time(Id::unique(("dot", i)), resp.hovered(), anim(ANIM_FAST_S));
+                    let grow = ctx.animate_bool_with_time(Id::unique(("dot", i)), resp.hovered(), motion::HOVER.secs());
                     ui.painter().circle_filled(r.center(), 9.0 + 2.0 * grow, rgb(*col));
                     if ev.color == Some(*col) {
                         ui.painter().circle_stroke(r.center(), 12.0, Stroke::new(1.5, self.pal.text));

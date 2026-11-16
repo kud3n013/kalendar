@@ -3,6 +3,7 @@
 mod ics;
 mod icons;
 mod model;
+mod motion;
 mod panel;
 mod secrets;
 mod settings;
@@ -496,14 +497,10 @@ pub struct App {
     pub ctx_target: Option<u64>,
     /// the frame (and its day) under the last right-click, if no event was
     pub ctx_frame: Option<(u64, NaiveDate)>,
-    /// start time, direction (0 = fade) and reach (share of the width) of
-    /// the slide when the view changes
-    pub nav_anim: (f64, f32, f32),
-    /// how long the page slide under way takes
-    pub nav_secs: f32,
-    /// the calendar page as last painted, and the one sliding away
+    /// the page sliding (or fading) when the view or its days change
+    pub slide: motion::Slide,
+    /// the calendar page as last painted, at rest
     pub page_shot: Vec<egui::epaint::ClippedShape>,
-    pub page_old: Vec<egui::epaint::ClippedShape>,
     pub last_shown: Option<(View, NaiveDate)>,
     /// test aid: show a right-click menu in a window ("event" or "task")
     pub demo_menu: Option<String>,
@@ -647,10 +644,8 @@ impl App {
             drag_task: None,
             ctx_target: None,
             ctx_frame: None,
-            nav_anim: (-10.0, 0.0, 1.0),
-            nav_secs: anim(ANIM_SLIDE_S),
+            slide: motion::Slide::default(),
             page_shot: vec![],
-            page_old: vec![],
             last_shown: None,
             demo_menu: std::env::var("KALENDAR_SHOW_MENU").ok(),
             ctx_time: None,
@@ -2458,7 +2453,7 @@ impl eframe::App for App {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = &ui.ctx().clone();
-        ANIMATE.store(self.data.prefs.animations, std::sync::atomic::Ordering::Relaxed);
+        motion::ANIMATE.store(self.data.prefs.animations, std::sync::atomic::Ordering::Relaxed);
         ctx.set_theme(match self.data.prefs.theme {
             Theme::System => egui::ThemePreference::System,
             Theme::Light => egui::ThemePreference::Light,
@@ -2483,7 +2478,7 @@ impl eframe::App for App {
             s.visuals.selection.stroke.color = Color32::WHITE;
             s.spacing.item_spacing = egui::vec2(8.0, 6.0);
             s.spacing.button_padding = egui::vec2(8.0, 4.0);
-            s.animation_time = anim(ANIM_S);
+            s.animation_time = motion::NORMAL.secs();
             // the one corner radius, everywhere
             let cr = egui::CornerRadius::same(RADIUS as u8);
             s.visuals.window_corner_radius = cr;
@@ -2558,36 +2553,24 @@ impl eframe::App for App {
         // the days run; another view fades in
         let time = ctx.input(|i| i.time);
         let shown = (self.view, self.anchor);
+        // a step in time, as the share of the columns it moved (a step
+        // shorter than the days on screen moves just that many columns)
+        let mut stepped: Option<f32> = None;
         if let Some(last) = self.last_shown {
             if last != shown {
                 let moved = (shown.1 - last.1).num_days();
-                self.nav_anim = if last.0 != shown.0 || moved == 0 {
-                    self.page_old.clear();
-                    (time, 0.0, 1.0)
+                if last.0 != shown.0 || moved == 0 {
+                    self.slide.fade(time);
                 } else {
-                    // a step shorter than the days on screen moves just that
-                    // many columns; `part` is the share of the columns moved
                     let part = match shown.0 {
                         View::Days(n) => (moved.abs() as f32 / n.max(1) as f32).min(1.0),
                         _ => 1.0,
                     };
-                    self.page_old = std::mem::take(&mut self.page_shot);
-                    // a block carried over the edge turns the page briskly
-                    self.nav_secs = if self.drag.is_some() { anim(ANIM_SLIDE_S) * 0.55 } else { anim(ANIM_SLIDE_S) };
-                    (time, moved.signum() as f32, part)
-                };
+                    stepped = Some(moved.signum() as f32 * part);
+                }
             }
         }
         self.last_shown = Some(shown);
-        let (began, dir, part) = self.nav_anim;
-        let t = (((time - began) as f32) / if dir == 0.0 { anim(ANIM_LONG_S) } else { self.nav_secs }.max(1e-4)).clamp(0.0, 1.0);
-        // gentle at both ends
-        let ease = if t < 0.5 { 4.0 * t * t * t } else { 1.0 - (-2.0 * t + 2.0).powi(3) / 2.0 };
-        if t < 1.0 {
-            ctx.request_repaint();
-        } else {
-            self.page_old.clear();
-        }
         egui::CentralPanel::default().frame(egui::Frame::new().fill(self.pal.bg)).show(ui, |ui| {
             let full = ui.max_rect();
             ui.set_clip_rect(full);
@@ -2595,15 +2578,19 @@ impl eframe::App for App {
             // slide past it, exactly as far as the days moved
             let gutter = if matches!(self.view, View::Month | View::Agenda) { 0.0 } else { GUTTER_W };
             let cols = full.with_min_x(full.left() + gutter);
-            let reach = cols.width() * part;
-            let sliding = t < 1.0 && dir != 0.0;
-            let dx = if sliding { (dir * (1.0 - ease) * reach).round() } else { 0.0 };
+            if let Some(share) = stepped {
+                self.slide.step(time, share * cols.width(), std::mem::take(&mut self.page_shot), cols.width());
+            }
+            self.slide.settle(time);
+            if self.slide.moving(time) {
+                ui.ctx().request_repaint();
+            }
+            let sliding = self.slide.sliding(time);
+            let dx = self.slide.offset(time).round();
             let layer = ui.layer_id();
             let first = ctx.graphics(|g| g.get(layer).map_or(0, |l| l.next_idx().0));
             ui.scope_builder(egui::UiBuilder::new().max_rect(full.translate(egui::vec2(dx, 0.0))), |ui| {
-                if dir == 0.0 {
-                    ui.set_opacity(0.25 + 0.75 * ease);
-                }
+                ui.set_opacity(self.slide.opacity(time));
                 match self.view {
                     View::Month => self.ui_month(ui),
                     View::Agenda => self.ui_agenda(ui),
@@ -2611,6 +2598,7 @@ impl eframe::App for App {
                 }
             });
             // keep what was painted, in its resting place, for the next slide
+            let spread = dx.abs() + 1.0;
             self.page_shot = ctx.graphics(|g| {
                 g.get(layer).map_or(vec![], |l| {
                     l.all_entries()
@@ -2621,10 +2609,10 @@ impl eframe::App for App {
                             // what the edge of the view cut off while sliding
                             // is there again once the page is at rest
                             if sliding && cs.clip_rect.left() <= full.left() + 0.5 {
-                                cs.clip_rect.min.x -= reach;
+                                cs.clip_rect.min.x -= spread;
                             }
                             if sliding && cs.clip_rect.right() >= full.right() - 0.5 {
-                                cs.clip_rect.max.x += reach;
+                                cs.clip_rect.max.x += spread;
                             }
                             cs.clip_rect = cs.clip_rect.translate(egui::vec2(-dx, 0.0));
                             cs
@@ -2632,19 +2620,21 @@ impl eframe::App for App {
                         .collect()
                 })
             });
-            if sliding {
+            if sliding && dx != 0.0 {
                 let p = ui.painter();
-                // the page that is leaving, as it was last painted, over the
-                // stretch the new one has not reached yet
-                let off = egui::vec2(dx - dir * reach, 0.0);
-                let old = if dir > 0.0 { cols.with_max_x(cols.left() + dx) } else { cols.with_min_x(cols.right() + dx) };
-                p.rect_filled(old, 0.0, self.pal.bg);
-                for cs in &self.page_old {
-                    let mut shape = cs.shape.clone();
-                    shape.translate(off);
-                    p.with_clip_rect(cs.clip_rect.translate(off).intersect(old)).add(shape);
+                // the pages slid aside, as they were last painted, over the
+                // stretch the page on screen does not cover
+                let open = if dx > 0.0 { cols.with_max_x(cols.left() + dx) } else { cols.with_min_x(cols.right() + dx) };
+                p.rect_filled(open, 0.0, self.pal.bg);
+                for (shapes, rest) in &self.slide.pages {
+                    let off = egui::vec2(dx + rest, 0.0);
+                    for cs in shapes {
+                        let mut shape = cs.shape.clone();
+                        shape.translate(off);
+                        p.with_clip_rect(cs.clip_rect.translate(off).intersect(open)).add(shape);
+                    }
                 }
-                // and the gutter of the new page, where it will rest
+                // and the gutter of the page on screen, where it rests
                 if gutter > 0.0 {
                     let strip = full.with_max_x(cols.left());
                     p.rect_filled(strip, 0.0, self.pal.bg);

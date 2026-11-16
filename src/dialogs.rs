@@ -1,5 +1,6 @@
 //! Pop-up windows: editors, preferences, shortcuts, command bar, messages.
 
+use crate::motion;
 use crate::icons;
 use crate::model::*;
 use crate::views::midnight;
@@ -118,7 +119,7 @@ fn morph_begin(ui: &mut egui::Ui, kind: u8) -> egui::Ui {
         Some(_) => now,
         None => now - 10.0,
     };
-    let secs = anim(ANIM_LONG_S);
+    let secs = motion::LONG.secs();
     let h = last.map(|l| ctx.animate_value_with_time(id.with("h"), l.0, secs));
     ctx.data_mut(|d| d.insert_temp(id.with("now"), (frame, kind, since)));
     let top = ui.cursor().min;
@@ -1279,8 +1280,8 @@ impl App {
             t.born = born;
         }
         // fades and rises in, fades out
-        let a_in = (((now - born) as f32) / anim(ANIM_S)).clamp(0.0, 1.0);
-        let a_out = (((until - now) as f32) / anim(ANIM_S)).clamp(0.0, 1.0);
+        let a_in = (((now - born) as f32) / motion::NORMAL.secs()).clamp(0.0, 1.0);
+        let a_out = (((until - now) as f32) / motion::NORMAL.secs()).clamp(0.0, 1.0);
         let alpha = a_in.min(a_out);
         if alpha < 1.0 {
             ctx.request_repaint();

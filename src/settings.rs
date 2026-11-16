@@ -1,5 +1,6 @@
 //! The settings window: a window of its own with a list of pages on the left.
 
+use crate::motion;
 use crate::icons;
 use crate::model::*;
 use crate::{bind_label, ics, mix, parse_bind, rgb, secrets, App, Cmd, KeyBind, COMMANDS};
@@ -212,7 +213,7 @@ fn switch(ui: &mut egui::Ui, on: &mut bool, accent: Color32) -> egui::Response {
         *on = !*on;
         resp.mark_changed();
     }
-    let t = ui.ctx().animate_bool_with_time(resp.id, *on, anim(ANIM_FAST_S));
+    let t = ui.ctx().animate_bool_with_time(resp.id, *on, motion::HOVER.secs());
     let off = ui.visuals().widgets.inactive.bg_fill;
     let track = if resp.hovered() { mix(off, ui.visuals().text_color(), 0.06) } else { off };
     ui.painter().rect_filled(r, 11.0, mix(track, accent, t));
@@ -325,7 +326,7 @@ impl App {
                     for (page, icon, name) in pages {
                         let on = self.settings_page == page && !searching;
                         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 40.0), Sense::click());
-                        let glow = ui.ctx().animate_bool_with_time(ui.scope_id().with(("nav", name)), resp.hovered() || on, anim(ANIM_FAST_S));
+                        let glow = ui.ctx().animate_bool_with_time(ui.scope_id().with(("nav", name)), resp.hovered() || on, motion::HOVER.secs());
                         if glow > 0.0 {
                             ui.painter().rect_filled(r, 9.0, mix(side, text, if on { 0.10 } else { 0.05 } * glow));
                         }

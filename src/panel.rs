@@ -1,5 +1,6 @@
 //! The task panel (left or right) and the bar above the calendar.
 
+use crate::motion;
 use crate::icons;
 use crate::model::*;
 use crate::{fill_squircle, mix, rgb, App, Cmd};
@@ -44,7 +45,7 @@ fn round_check(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
 pub fn icon_btn(ui: &mut egui::Ui, glyph: &str, size: f32, tip: &str, c: (Color32, Color32, Color32)) -> egui::Response {
     let (side, muted, text) = c;
     let (r, resp) = ui.allocate_exact_size(vec2(size + 12.0, size + 12.0), Sense::click());
-    let glow = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), anim(ANIM_FAST_S));
+    let glow = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), motion::HOVER.secs());
     if glow > 0.0 {
         fill_squircle(ui.painter(), r, RADIUS, mix(side, text, 0.08 * glow));
     }
@@ -68,7 +69,7 @@ pub fn due_label(d: NaiveDate, today: NaiveDate) -> String {
 impl App {
     /// The small month for jumping to a date.
     fn ui_quick_nav(&mut self, ctx: &egui::Context, at: egui::Pos2) {
-        let a = ctx.animate_bool_with_time(Id::unique("quicknav"), self.quick_nav, anim(ANIM_S));
+        let a = ctx.animate_bool_with_time(Id::unique("quicknav"), self.quick_nav, motion::NORMAL.secs());
         if a <= 0.0 {
             return;
         }
@@ -106,7 +107,7 @@ impl App {
                         for i in 0..42 {
                             let d = start + Duration::days(i);
                             let (r, resp) = ui.allocate_exact_size(vec2(30.0, 26.0), Sense::click());
-                            let glow = ctx.animate_bool_with_time(Id::unique(("qnd", i)), resp.hovered(), anim(ANIM_FAST_S));
+                            let glow = ctx.animate_bool_with_time(Id::unique(("qnd", i)), resp.hovered(), motion::HOVER.secs());
                             if d == today {
                                 ui.painter().circle_filled(r.center(), 11.0, RED);
                             } else if glow > 0.0 {
@@ -369,7 +370,7 @@ impl App {
                     app.run(ctx, Cmd::Plan);
                 }
                 // undo appears while there is something to take back
-                let a = ctx.animate_bool_with_time(Id::unique("undo_btn"), !app.undo.is_empty(), anim(ANIM_S));
+                let a = ctx.animate_bool_with_time(Id::unique("undo_btn"), !app.undo.is_empty(), motion::NORMAL.secs());
                 if a > 0.0 {
                     ui.scope(|ui| {
                         ui.set_opacity(a);
@@ -683,7 +684,7 @@ impl App {
         let (r, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
         // the menu button sits on the row, so the row itself is not "hovered" there
         let editing = list.is_some() && self.list_edit.as_ref().map(|e| e.id) == list;
-        let glow = ctx.animate_bool_with_time(Id::unique(("sec", key)), resp.hovered() || ui.rect_contains_pointer(r) || editing, anim(ANIM_FAST_S));
+        let glow = ctx.animate_bool_with_time(Id::unique(("sec", key)), resp.hovered() || ui.rect_contains_pointer(r) || editing, motion::HOVER.secs());
         if glow > 0.0 {
             fill_squircle(ui.painter(), r.expand2(vec2(6.0, 0.0)), RADIUS, mix(side, text, 0.05 * glow));
         }
@@ -703,7 +704,7 @@ impl App {
         fill_squircle(p, pill, RADIUS, mix(side, text, 0.10));
         p.text(pill.center(), Align2::CENTER_CENTER, count, FontId::proportional(11.5), muted);
         // chevron turns as the group opens
-        let turn = ctx.animate_bool_with_time(Id::unique(("chev", key)), !collapsed, anim(ANIM_S));
+        let turn = ctx.animate_bool_with_time(Id::unique(("chev", key)), !collapsed, motion::NORMAL.secs());
         let c = pos2(r.right() - 10.0, r.center().y);
         let ang = std::f32::consts::PI * (1.0 - 0.5 * turn); // left when closed, down when open
         let dir = vec2(ang.cos(), ang.sin());
@@ -752,7 +753,7 @@ impl App {
             menu.show(|ui| self.list_menu(ui, lid, at));
             resp.context_menu(|ui| self.list_menu(ui, lid, at));
         }
-        let a = ctx.animate_bool_with_time(Id::unique(("open", key)), !collapsed, anim(ANIM_S));
+        let a = ctx.animate_bool_with_time(Id::unique(("open", key)), !collapsed, motion::NORMAL.secs());
         if a > 0.0 {
             ui.scope(|ui| {
                 ui.set_opacity(a);
@@ -849,7 +850,7 @@ impl App {
                 }
             });
             let hovered = ui.rect_contains_pointer(inner.response.rect);
-            let glow = ctx.animate_bool_with_time(Id::unique(("row", salt, id)), hovered, anim(ANIM_FAST_S));
+            let glow = ctx.animate_bool_with_time(Id::unique(("row", salt, id)), hovered, motion::HOVER.secs());
             if glow > 0.0 {
                 fill_squircle(ui.painter(), inner.response.rect.expand2(vec2(6.0, 0.0)), RADIUS, mix(side, text, 0.06).gamma_multiply(glow * 0.6));
             }
