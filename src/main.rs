@@ -3,6 +3,8 @@
 mod ics;
 mod icons;
 mod model;
+mod theme;
+pub use theme::{mix, rgb, Palette};
 mod motion;
 mod panel;
 mod secrets;
@@ -113,67 +115,6 @@ fn account_error(a: Option<&Account>, e: &sync::SyncError) -> String {
         (Some(a), sync::SyncError::Auth) if a.google => "Google wants you to sign in again: sign out of this account here, then sign in once more. While a Google Cloud project is in Testing, a sign-in lasts 7 days.".into(),
         _ => e.text(),
     }
-}
-
-pub struct Palette {
-    pub dark: bool,
-    pub bg: Color32,
-    pub side: Color32,
-    pub rail: Color32,
-    pub border: Color32,
-    pub border_minor: Color32,
-    pub text: Color32,
-    pub muted: Color32,
-    pub accent: Color32,
-    pub today: Color32,
-    pub weekend: Color32,
-    pub now: Color32,
-}
-
-impl Palette {
-    pub fn new(dark: bool) -> Self {
-        if dark {
-            Palette {
-                dark,
-                bg: Color32::from_rgb(0x22, 0x22, 0x22),
-                side: Color32::from_rgb(0x1c, 0x1c, 0x1c),
-                rail: Color32::from_rgb(0x1c, 0x1c, 0x1c),
-
-                border: Color32::from_rgb(0x3a, 0x3a, 0x3a),
-                border_minor: Color32::from_rgb(0x30, 0x30, 0x30),
-                text: Color32::from_rgb(0xf4, 0xf4, 0xf5),
-                muted: Color32::from_rgb(0x96, 0x95, 0xa0),
-                accent: Color32::from_rgb(0x62, 0x5e, 0xfc),
-                today: Color32::from_rgb(0x2a, 0x2d, 0x35),
-                weekend: Color32::from_rgb(0x29, 0x29, 0x29),
-                now: Color32::from_rgb(0xea, 0x43, 0x35),
-            }
-        } else {
-            Palette {
-                dark,
-                bg: Color32::WHITE,
-                side: Color32::WHITE,
-                rail: Color32::from_rgb(0xf7, 0xf7, 0xf7),
-
-                border: Color32::from_rgb(0xe1, 0xe0, 0xe0),
-                border_minor: Color32::from_rgb(0xec, 0xec, 0xec),
-                text: Color32::from_rgb(0x1f, 0x23, 0x28),
-                muted: Color32::from_rgb(0x7f, 0x82, 0x85),
-                accent: Color32::from_rgb(0x62, 0x5e, 0xfc),
-                today: Color32::from_rgb(0xf3, 0xf7, 0xfe),
-                weekend: Color32::from_rgb(0xf9, 0xf9, 0xf9),
-                now: Color32::from_rgb(0xea, 0x43, 0x35),
-            }
-        }
-    }
-}
-
-pub fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
-    let f = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * t).round() as u8;
-    Color32::from_rgb(f(a.r(), b.r()), f(a.g(), b.g()), f(a.b(), b.b()))
-}
-pub fn rgb(c: [u8; 3]) -> Color32 {
-    Color32::from_rgb(c[0], c[1], c[2])
 }
 
 /// The outline of a squircle: a rectangle whose corners are superellipse
@@ -2474,13 +2415,13 @@ impl eframe::App for App {
             s.visuals.panel_fill = bg;
             s.visuals.window_fill = side;
             s.visuals.override_text_color = Some(text);
-            s.visuals.selection.bg_fill = Color32::from_rgb(0x62, 0x5e, 0xfc);
+            s.visuals.selection.bg_fill = theme::ACCENT;
             s.visuals.selection.stroke.color = Color32::WHITE;
             s.spacing.item_spacing = egui::vec2(8.0, 6.0);
             s.spacing.button_padding = egui::vec2(8.0, 4.0);
             s.animation_time = motion::NORMAL.secs();
             // the one corner radius, everywhere
-            let cr = egui::CornerRadius::same(RADIUS as u8);
+            let cr = egui::CornerRadius::same(theme::RADIUS as u8);
             s.visuals.window_corner_radius = cr;
             s.visuals.menu_corner_radius = cr;
             for w in [

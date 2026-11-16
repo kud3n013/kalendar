@@ -1,6 +1,7 @@
 //! Pop-up windows: editors, preferences, shortcuts, command bar, messages.
 
 use crate::motion;
+use crate::theme;
 use crate::icons;
 use crate::model::*;
 use crate::views::midnight;
@@ -207,7 +208,7 @@ impl App {
                 // what the block becomes: a task session, a plain event or a frame
                 ui.horizontal(|ui| {
                     for (kind, label) in [(CreateKind::Task, "Task"), (CreateKind::Event, "Event"), (CreateKind::Frame, "Frame")] {
-                        let r = ui.selectable_label(c.kind == kind, RichText::new(label).size(13.5));
+                        let r = ui.selectable_label(c.kind == kind, RichText::new(label).size(theme::size::CAPTION));
                         let r = if kind == CreateKind::Frame { r.on_hover_text("Reserve this time every week for a kind of work") } else { r };
                         if r.clicked() {
                             c.kind = kind;
@@ -215,7 +216,7 @@ impl App {
                         }
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(RichText::new(c.ev.start.format("%a, %b %-d").to_string()).size(12.0).color(muted));
+                        ui.label(RichText::new(c.ev.start.format("%a, %b %-d").to_string()).size(theme::size::SMALL).color(muted));
                     });
                 });
                 let is_task = c.kind != CreateKind::Event;
@@ -223,7 +224,7 @@ impl App {
                 let resp = ui.add(
                     egui::TextEdit::singleline(&mut c.ev.title)
                         .hint_text(hint)
-                        .font(FontId::proportional(18.0))
+                        .font(FontId::proportional(theme::size::HEADING))
                         .desired_width(f32::INFINITY),
                 );
                 if c.focus {
@@ -540,19 +541,19 @@ impl App {
                 if ed.from_block.is_some() {
                     ui.horizontal(|ui| {
                         for (kind, label) in [(CreateKind::Task, "Task"), (CreateKind::Event, "Event"), (CreateKind::Frame, "Frame")] {
-                            if ui.selectable_label(kind == CreateKind::Frame, RichText::new(label).size(13.5)).clicked() && kind != CreateKind::Frame {
+                            if ui.selectable_label(kind == CreateKind::Frame, RichText::new(label).size(theme::size::CAPTION)).clicked() && kind != CreateKind::Frame {
                                 back = Some(kind);
                             }
                         }
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            ui.label(RichText::new(&hours).size(12.0).color(muted));
+                            ui.label(RichText::new(&hours).size(theme::size::SMALL).color(muted));
                         });
                     });
                 }
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut ed.frame.name)
                         .hint_text("Frame name, e.g. Deep work")
-                        .font(FontId::proportional(18.0))
+                        .font(FontId::proportional(theme::size::HEADING))
                         .desired_width(f32::INFINITY),
                 );
                 if ed.focus {
@@ -676,7 +677,7 @@ impl App {
 
                 ui.add_space(6.0);
                 ui.label(RichText::new("Tasks it takes").strong());
-                ui.label(RichText::new("With no list and no tags it takes any task.").size(11.5).color(muted));
+                ui.label(RichText::new("With no list and no tags it takes any task.").size(theme::size::TINY).color(muted));
                 ui.add_space(2.0);
                 egui::Grid::new("framefilter").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
                     label(ui, "Lists");
@@ -758,7 +759,7 @@ impl App {
                     }
                     if !ed.is_new {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui.button(RichText::new("Delete").color(egui::Color32::from_rgb(0xeb, 0x62, 0x62))).clicked() {
+                            if ui.button(RichText::new("Delete").color(theme::DANGER)).clicked() {
                                 delete = true;
                             }
                         });
@@ -843,11 +844,11 @@ impl App {
             .show(ctx, |ui| {
                 ui.set_width(520.0);
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new(icons::SQUARE_CHECK).size(16.0).color(muted));
+                    ui.label(RichText::new(icons::SQUARE_CHECK).size(theme::size::LARGE).color(muted));
                     let r = ui.add(
                         egui::TextEdit::singleline(&mut self.new_task_text)
                             .hint_text("New task   #tag  !high  >list  30m  .tomorrow")
-                            .font(FontId::proportional(16.0))
+                            .font(FontId::proportional(theme::size::LARGE))
                             .desired_width(f32::INFINITY),
                     );
                     if focus {
@@ -865,7 +866,7 @@ impl App {
                         }
                     }
                 });
-                ui.label(RichText::new(format!("Enter adds the task to {list_name}  ·  Esc closes")).size(11.5).color(muted));
+                ui.label(RichText::new(format!("Enter adds the task to {list_name}  ·  Esc closes")).size(theme::size::TINY).color(muted));
             });
         if close {
             self.new_task_open = false;
@@ -897,7 +898,7 @@ impl App {
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut ed.ev.title)
                         .hint_text(if is_task { "New Task" } else { "New Event" })
-                        .font(FontId::proportional(18.0))
+                        .font(FontId::proportional(theme::size::HEADING))
                         .desired_width(f32::INFINITY),
                 );
                 if ed.focus {
@@ -980,7 +981,7 @@ impl App {
                     } else {
                         format!("{mins} min")
                     };
-                    ui.label(RichText::new(text).color(muted).size(11.5));
+                    ui.label(RichText::new(text).color(muted).size(theme::size::TINY));
                 }
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Calendar").color(muted));
@@ -1057,7 +1058,7 @@ impl App {
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut ed.task.title)
                         .hint_text("New Task")
-                        .font(FontId::proportional(18.0))
+                        .font(FontId::proportional(theme::size::HEADING))
                         .desired_width(f32::INFINITY),
                 );
                 if ed.focus {
@@ -1132,7 +1133,7 @@ impl App {
                     if let Some(n) = need {
                         line += &format!("  ·  still needed {}", fmt_duration(n));
                     }
-                    ui.label(RichText::new(line).size(11.5).color(muted));
+                    ui.label(RichText::new(line).size(theme::size::TINY).color(muted));
                 }
                 ui.add(egui::TextEdit::multiline(&mut ed.task.notes).hint_text("Notes").desired_rows(3).desired_width(f32::INFINITY));
                 ui.horizontal(|ui| {
@@ -1203,7 +1204,7 @@ impl App {
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut q)
                         .hint_text("Type a command or search events and tasks")
-                        .font(FontId::proportional(16.0))
+                        .font(FontId::proportional(theme::size::LARGE))
                         .desired_width(f32::INFINITY),
                 );
                 if focus {
@@ -1236,7 +1237,7 @@ impl App {
                         ui.horizontal(|ui| {
                             let clicked = ui.selectable_label(false, *label).clicked();
                             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                ui.label(RichText::new(keys).color(muted).monospace().size(11.0));
+                                ui.label(RichText::new(keys).color(muted).monospace().size(theme::size::MICRO));
                             });
                             if clicked || (enter && first) {
                                 run = Some(*cmd);
@@ -1297,7 +1298,7 @@ impl App {
                 egui::Frame::new()
                     .fill(fill)
                     .stroke(Stroke::new(1.0, border))
-                    .corner_radius(10)
+                    .corner_radius(theme::CARD_RADIUS)
                     .inner_margin(Margin::symmetric(14, 8))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {

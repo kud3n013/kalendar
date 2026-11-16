@@ -1,6 +1,7 @@
 //! The settings window: a window of its own with a list of pages on the left.
 
 use crate::motion;
+use crate::theme;
 use crate::icons;
 use crate::model::*;
 use crate::{bind_label, ics, mix, parse_bind, rgb, secrets, App, Cmd, KeyBind, COMMANDS};
@@ -19,14 +20,8 @@ pub enum Page {
     Info,
 }
 
-const GREEN: Color32 = Color32::from_rgb(0x4c, 0xc3, 0x7a);
-const RED: Color32 = Color32::from_rgb(0xeb, 0x62, 0x62);
 const CONTROL_W: f32 = 390.0;
 const ROW_H: f32 = 56.0;
-
-fn bold(size: f32) -> FontId {
-    FontId::new(size, egui::FontFamily::Name("bold".into()))
-}
 
 /// The order pages are listed in search results.
 const SEARCH_ORDER: [(Page, &str); 8] = [
@@ -84,7 +79,7 @@ fn shown(ui: &mut egui::Ui, texts: &[&str]) -> bool {
         if !first {
             ui.add_space(22.0);
         }
-        let r = ui.add(egui::Label::new(RichText::new(name).font(bold(20.0))).sense(Sense::click()));
+        let r = ui.add(egui::Label::new(RichText::new(name).font(theme::bold(20.0))).sense(Sense::click()));
         if r.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
@@ -110,9 +105,9 @@ fn page_result(ui: &mut egui::Ui, page: Page, title: &str, desc: &str, extra: &[
         ui.painter().rect_filled(r, 8.0, mix(ui.visuals().panel_fill, text, 0.05));
     }
     let p = ui.painter();
-    p.text(r.left_center() + vec2(0.0, -9.0), egui::Align2::LEFT_CENTER, title, FontId::proportional(17.0), text);
-    p.text(r.left_center() + vec2(0.0, 12.0), egui::Align2::LEFT_CENTER, desc, FontId::proportional(14.0), muted);
-    p.text(r.right_center() - vec2(10.0, 0.0), egui::Align2::RIGHT_CENTER, icons::CHEVRON_RIGHT, FontId::proportional(16.0), muted);
+    p.text(r.left_center() + vec2(0.0, -9.0), egui::Align2::LEFT_CENTER, title, FontId::proportional(theme::size::TITLE), text);
+    p.text(r.left_center() + vec2(0.0, 12.0), egui::Align2::LEFT_CENTER, desc, FontId::proportional(theme::size::BODY), muted);
+    p.text(r.right_center() - vec2(10.0, 0.0), egui::Align2::RIGHT_CENTER, icons::CHEVRON_RIGHT, FontId::proportional(theme::size::LARGE), muted);
     if resp.clicked() {
         ui.data_mut(|d| d.get_temp_mut_or_default::<Find>(find_id()).jump = Some(page));
     }
@@ -126,7 +121,7 @@ fn search_field(ui: &mut egui::Ui, text: &mut String, hint: &str, width: f32) {
         egui::TextEdit::singleline(text)
             .background_color(fill)
             .hint_text(format!("{}   {hint}", icons::SEARCH))
-            .font(FontId::proportional(15.0))
+            .font(FontId::proportional(theme::size::UI))
             .margin(Margin::symmetric(10, 8))
             .desired_width(width),
     );
@@ -143,23 +138,23 @@ fn row(ui: &mut egui::Ui, label: &str, tip: &str, add: impl FnOnce(&mut egui::Ui
         return;
     }
     let avail = ui.available_width();
-    let label_w = ui.painter().layout_no_wrap(label.to_string(), FontId::proportional(17.0), Color32::WHITE).size().x + if tip.is_empty() { 0.0 } else { 26.0 };
+    let label_w = ui.painter().layout_no_wrap(label.to_string(), FontId::proportional(theme::size::TITLE), Color32::WHITE).size().x + if tip.is_empty() { 0.0 } else { 26.0 };
     let wide = (avail * 0.42).clamp(170.0, CONTROL_W);
     // too narrow for the name beside its control: the control goes below
     let stack = label_w + 24.0 + wide > avail;
     let cw = if stack { avail.min(CONTROL_W) } else { wide };
     ui.data_mut(|d| d.insert_temp(egui::Id::unique("control_w"), cw));
     let name = |ui: &mut egui::Ui| {
-        ui.add(egui::Label::new(RichText::new(label).size(17.0)).truncate());
+        ui.add(egui::Label::new(RichText::new(label).size(theme::size::TITLE)).truncate());
         if !tip.is_empty() {
-            ui.label(RichText::new("(i)").size(12.0).weak()).on_hover_text(tip);
+            ui.label(RichText::new("(i)").size(theme::size::SMALL).weak()).on_hover_text(tip);
         }
     };
     let control = |ui: &mut egui::Ui| {
         ui.allocate_ui_with_layout(vec2(cw, 44.0), Layout::left_to_right(Align::Center), |ui| {
             ui.spacing_mut().interact_size.y = 44.0;
             ui.spacing_mut().button_padding = vec2(14.0, 10.0);
-            ui.style_mut().override_font_id = Some(FontId::proportional(16.0));
+            ui.style_mut().override_font_id = Some(FontId::proportional(theme::size::LARGE));
             add(ui);
         });
     };
@@ -202,7 +197,7 @@ fn heading(ui: &mut egui::Ui, text: &str) {
         return;
     }
     ui.add_space(6.0);
-    ui.label(RichText::new(text).font(bold(20.0)));
+    ui.label(RichText::new(text).font(theme::bold(20.0)));
     ui.add_space(6.0);
 }
 
@@ -320,7 +315,7 @@ impl App {
                 ] {
                     ui.horizontal(|ui| {
                         ui.add_space(8.0);
-                        ui.label(RichText::new(group).size(16.0).color(muted));
+                        ui.label(RichText::new(group).size(theme::size::LARGE).color(muted));
                     });
                     ui.add_space(6.0);
                     for (page, icon, name) in pages {
@@ -330,8 +325,8 @@ impl App {
                         if glow > 0.0 {
                             ui.painter().rect_filled(r, 9.0, mix(side, text, if on { 0.10 } else { 0.05 } * glow));
                         }
-                        ui.painter().text(r.left_center() + vec2(28.0, 0.0), egui::Align2::CENTER_CENTER, icon, FontId::proportional(16.0), muted);
-                        ui.painter().text(r.left_center() + vec2(52.0, 0.0), egui::Align2::LEFT_CENTER, name, FontId::proportional(17.0), text);
+                        ui.painter().text(r.left_center() + vec2(28.0, 0.0), egui::Align2::CENTER_CENTER, icon, FontId::proportional(theme::size::LARGE), muted);
+                        ui.painter().text(r.left_center() + vec2(52.0, 0.0), egui::Align2::LEFT_CENTER, name, FontId::proportional(theme::size::TITLE), text);
                         if resp.clicked() {
                             self.settings_page = page;
                             self.settings_query.clear();
@@ -396,7 +391,7 @@ impl App {
         if found.hits == 0 {
             ui.add_space(40.0);
             ui.vertical_centered(|ui| {
-                ui.label(RichText::new(format!("No settings match \"{}\"", self.settings_query.trim())).size(17.0).color(self.pal.muted));
+                ui.label(RichText::new(format!("No settings match \"{}\"", self.settings_query.trim())).size(theme::size::TITLE).color(self.pal.muted));
             });
         }
         if let Some(page) = found.jump {
@@ -515,7 +510,7 @@ impl App {
                         "\"Plan my tasks\" fits open tasks into your frames: blocks of time set aside for certain kinds of work. \
                          Without frames, or when none fits, it uses free time on working days, 08:00 to 18:00.",
                     )
-                    .size(15.0)
+                    .size(theme::size::UI)
                     .color(muted),
                 )
                 .wrap(),
@@ -548,9 +543,9 @@ impl App {
     fn frame_list(&mut self, ui: &mut egui::Ui) {
         let (muted, border, side, text, accent) = (self.pal.muted, self.pal.border, self.pal.side, self.pal.text, self.pal.accent);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Frames").font(bold(20.0)));
+            ui.label(RichText::new("Frames").font(theme::bold(20.0)));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let b = egui::Button::new(RichText::new("+ New frame").size(15.0).color(Color32::WHITE)).fill(self.pal.accent).corner_radius(8);
+                let b = egui::Button::new(RichText::new("+ New frame").size(theme::size::UI).color(Color32::WHITE)).fill(self.pal.accent).corner_radius(theme::RADIUS);
                 if ui.add(b).clicked() {
                     let cal = self.data.first_own_calendar();
                     self.open_new_frame(App::now().date(), 9 * 60, 11 * 60, cal, String::new());
@@ -562,7 +557,7 @@ impl App {
         if self.data.frames.is_empty() {
             ui.add(
                 egui::Label::new(
-                    RichText::new("No frames yet. Make one here, from the + menu, or by right-clicking the calendar.").size(15.0).color(muted),
+                    RichText::new("No frames yet. Make one here, from the + menu, or by right-clicking the calendar.").size(theme::size::UI).color(muted),
                 )
                 .wrap(),
             );
@@ -591,7 +586,7 @@ impl App {
             // the buttons first, so the text is cut short rather than run under them
             ui.allocate_ui_with_layout(vec2(ui.available_width(), 56.0), Layout::right_to_left(Align::Center), |ui| {
                 switch(ui, &mut f.enabled, accent).on_hover_text(if f.enabled { "On: the planner uses it" } else { "Off: the planner skips it" });
-                let b = egui::Button::new(RichText::new(format!("{} Edit", icons::PEN)).size(14.0)).fill(mix(side, text, 0.07)).corner_radius(7);
+                let b = egui::Button::new(RichText::new(format!("{} Edit", icons::PEN)).size(theme::size::BODY)).fill(mix(side, text, 0.07)).corner_radius(theme::BUTTON_RADIUS);
                 if ui.add(b).clicked() {
                     edit = Some(id);
                 }
@@ -602,8 +597,8 @@ impl App {
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 2.0;
                         let c = if f.enabled { text } else { muted };
-                        ui.add(egui::Label::new(RichText::new(&name).size(16.0).color(c)).truncate());
-                        ui.add(egui::Label::new(RichText::new(format!("{when}  ·  {what}")).size(13.0).color(muted)).truncate());
+                        ui.add(egui::Label::new(RichText::new(&name).size(theme::size::LARGE).color(c)).truncate());
+                        ui.add(egui::Label::new(RichText::new(format!("{when}  ·  {what}")).size(theme::size::CAPTION).color(muted)).truncate());
                     });
                 });
             });
@@ -660,19 +655,19 @@ impl App {
         let ctx = ui.ctx().clone();
         let (muted, border, side, text) = (self.pal.muted, self.pal.border, self.pal.side, self.pal.text);
         heading(ui, "Active calendars");
-        ui.add(egui::Label::new(RichText::new("Show or hide calendars, rename them, change their colour, add new ones or remove them.").size(15.0).color(muted)).wrap());
+        ui.add(egui::Label::new(RichText::new("Show or hide calendars, rename them, change their colour, add new ones or remove them.").size(theme::size::UI).color(muted)).wrap());
         ui.add_space(12.0);
         // add a calendar of one's own
         ui.horizontal(|ui| {
             let r = ui.add(
                 egui::TextEdit::singleline(&mut self.new_cal_name)
                     .hint_text("New calendar name")
-                    .font(FontId::proportional(15.0))
+                    .font(FontId::proportional(theme::size::UI))
                     .margin(Margin::symmetric(10, 8))
                     .desired_width((ui.available_width() - 330.0).clamp(120.0, 300.0)),
             );
             let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            let b = egui::Button::new(RichText::new("+ Add calendar").size(15.0).color(Color32::WHITE)).fill(self.pal.accent).corner_radius(8);
+            let b = egui::Button::new(RichText::new("+ Add calendar").size(theme::size::UI).color(Color32::WHITE)).fill(self.pal.accent).corner_radius(theme::RADIUS);
             if (ui.add(b).clicked() || enter) && !self.new_cal_name.trim().is_empty() {
                 self.snapshot();
                 let n = self.data.calendars.len();
@@ -687,7 +682,7 @@ impl App {
                 });
                 self.commit();
             }
-            if ui.add(egui::Button::new(RichText::new("Subscribe by link…").size(15.0)).corner_radius(8)).clicked() {
+            if ui.add(egui::Button::new(RichText::new("Subscribe by link…").size(theme::size::UI)).corner_radius(theme::RADIUS)).clicked() {
                 self.settings_page = Page::Calendars;
             }
         });
@@ -705,17 +700,17 @@ impl App {
             ui.allocate_ui_with_layout(vec2(ui.available_width(), 52.0), Layout::right_to_left(Align::Center), |ui| {
                 {
                     if self.confirm_remove == Some(cid) {
-                        if ui.add(egui::Button::new(RichText::new("Cancel").size(14.0)).corner_radius(7)).clicked() {
+                        if ui.add(egui::Button::new(RichText::new("Cancel").size(theme::size::BODY)).corner_radius(theme::BUTTON_RADIUS)).clicked() {
                             ask = Some(None);
                         }
                         let label = if subscribed { "Unsubscribe".to_string() } else { format!("Remove with its {} events", counts[i]) };
-                        if ui.add(egui::Button::new(RichText::new(label).size(14.0).color(Color32::WHITE)).fill(RED).corner_radius(7)).clicked() {
+                        if ui.add(egui::Button::new(RichText::new(label).size(theme::size::BODY).color(Color32::WHITE)).fill(theme::DANGER).corner_radius(theme::BUTTON_RADIUS)).clicked() {
                             remove = Some(cid);
                         }
                     } else {
                         // an account's calendar goes when the account is signed out
                         let last_own = (!subscribed && own_count <= 1) || synced;
-                        let b = egui::Button::new(RichText::new(if subscribed { "Unsubscribe" } else { "Remove" }).size(14.0).color(RED)).fill(mix(side, text, 0.07)).corner_radius(7);
+                        let b = egui::Button::new(RichText::new(if subscribed { "Unsubscribe" } else { "Remove" }).size(theme::size::BODY).color(theme::DANGER)).fill(mix(side, text, 0.07)).corner_radius(theme::BUTTON_RADIUS);
                         let resp = ui.add_enabled(!last_own, b);
                         if synced {
                             resp.on_disabled_hover_text("Untick it under Integrations to stop syncing it, or sign out of its account there");
@@ -728,7 +723,7 @@ impl App {
                 }
                 // the count only where there is room for it and a name
                 if ui.available_width() > 300.0 {
-                    ui.label(RichText::new(what).size(13.0).color(muted));
+                    ui.label(RichText::new(what).size(theme::size::CAPTION).color(muted));
                 }
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     ui.checkbox(&mut c.visible, "").on_hover_text("Show on the calendar");
@@ -749,7 +744,7 @@ impl App {
                         });
                     });
                     let w = (ui.available_width() - 8.0).clamp(60.0, 280.0);
-                    ui.add(egui::TextEdit::singleline(&mut c.name).font(FontId::proportional(16.0)).desired_width(w).id_salt(("calname", cid)));
+                    ui.add(egui::TextEdit::singleline(&mut c.name).font(FontId::proportional(theme::size::LARGE)).desired_width(w).id_salt(("calname", cid)));
                 });
             });
             let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
@@ -780,18 +775,18 @@ impl App {
         }
         let (muted, border, side, text) = (self.pal.muted, self.pal.border, self.pal.side, self.pal.text);
         heading(ui, "Task lists");
-        ui.add(egui::Label::new(RichText::new("Rename your task lists, change their colour and icon, add new ones or remove them.").size(15.0).color(muted)).wrap());
+        ui.add(egui::Label::new(RichText::new("Rename your task lists, change their colour and icon, add new ones or remove them.").size(theme::size::UI).color(muted)).wrap());
         ui.add_space(12.0);
         ui.horizontal(|ui| {
             let r = ui.add(
                 egui::TextEdit::singleline(&mut self.new_list_name)
                     .hint_text("New list name")
-                    .font(FontId::proportional(15.0))
+                    .font(FontId::proportional(theme::size::UI))
                     .margin(Margin::symmetric(10, 8))
                     .desired_width((ui.available_width() - 330.0).clamp(120.0, 300.0)),
             );
             let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            let b = egui::Button::new(RichText::new("+ Add list").size(15.0).color(Color32::WHITE)).fill(self.pal.accent).corner_radius(8);
+            let b = egui::Button::new(RichText::new("+ Add list").size(theme::size::UI).color(Color32::WHITE)).fill(self.pal.accent).corner_radius(theme::RADIUS);
             if (ui.add(b).clicked() || enter) && !self.new_list_name.trim().is_empty() {
                 self.snapshot();
                 let name = std::mem::take(&mut self.new_list_name);
@@ -809,16 +804,16 @@ impl App {
             // the button first; the name takes what is left
             ui.allocate_ui_with_layout(vec2(ui.available_width(), 52.0), Layout::right_to_left(Align::Center), |ui| {
                 if lid == 0 {
-                    ui.label(RichText::new("always there").size(13.0).color(muted));
+                    ui.label(RichText::new("always there").size(theme::size::CAPTION).color(muted));
                 } else {
-                    let b = egui::Button::new(RichText::new("Remove").size(14.0).color(RED)).fill(mix(side, text, 0.07)).corner_radius(7);
+                    let b = egui::Button::new(RichText::new("Remove").size(theme::size::BODY).color(theme::DANGER)).fill(mix(side, text, 0.07)).corner_radius(theme::BUTTON_RADIUS);
                     let resp = ui.add_enabled(!synced, b).on_hover_text("Its tasks go to the Inbox");
                     if resp.on_disabled_hover_text("Untick it under Integrations to stop syncing it, or sign out of its account there").clicked() {
                         remove = Some(lid);
                     }
                 }
                 if ui.available_width() > 300.0 {
-                    ui.label(RichText::new(what).size(13.0).color(muted));
+                    ui.label(RichText::new(what).size(theme::size::CAPTION).color(muted));
                 }
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 // the ring or icon opens colours and icons
@@ -829,7 +824,7 @@ impl App {
                 if icon.is_empty() {
                     ui.painter().circle_stroke(r.center(), 6.5, Stroke::new(2.0, rgb(color)));
                 } else {
-                    ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, &icon, FontId::proportional(18.0), rgb(color));
+                    ui.painter().text(r.center(), egui::Align2::CENTER_CENTER, &icon, FontId::proportional(theme::size::HEADING), rgb(color));
                 }
                 let resp = resp.on_hover_text("Colour and icon");
                 egui::Popup::from_toggle_button_response(&resp).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
@@ -839,7 +834,7 @@ impl App {
                 });
                 let edit = egui::TextEdit::singleline(&mut name)
                     .hint_text(if lid == 0 { "Inbox" } else { "List name" })
-                    .font(FontId::proportional(16.0))
+                    .font(FontId::proportional(theme::size::LARGE))
                     .desired_width((ui.available_width() - 8.0).clamp(60.0, 280.0))
                     .id_salt(("listname", lid));
                 if ui.add(edit).changed() {
@@ -866,7 +861,7 @@ impl App {
         }
         let (muted, border, side, text) = (self.pal.muted, self.pal.border, self.pal.side, self.pal.text);
         heading(ui, "Integrate your calendars");
-        ui.add(egui::Label::new(RichText::new("Bring calendars in from a link or from an account. Pick a kind to set it up.").size(16.0).color(muted)).wrap());
+        ui.add(egui::Label::new(RichText::new("Bring calendars in from a link or from an account. Pick a kind to set it up.").size(theme::size::LARGE).color(muted)).wrap());
         ui.add_space(12.0);
         // one button per kind; the chosen one shows its form below
         const KINDS: [(u8, &str); 6] = [(1, "Calendar feed"), (2, "CalDAV"), (3, "Nextcloud"), (4, "Google"), (5, "Microsoft"), (6, "Proton")];
@@ -875,9 +870,9 @@ impl App {
             let w = ((ui.available_width() - 50.0) / 6.0).floor().clamp(96.0, 230.0);
             for (kind, label) in KINDS {
                 let on = self.sub_kind == kind;
-                let b = egui::Button::new(RichText::new(label).size(15.0))
+                let b = egui::Button::new(RichText::new(label).size(theme::size::UI))
                     .min_size(vec2(w, 48.0))
-                    .corner_radius(8)
+                    .corner_radius(theme::RADIUS)
                     .fill(mix(side, text, if on { 0.2 } else { 0.09 }))
                     .stroke(Stroke::new(1.0, if on { self.pal.accent } else { Color32::TRANSPARENT }));
                 if ui.add(b).clicked() {
@@ -888,9 +883,9 @@ impl App {
         });
         if self.sub_kind != 0 {
             ui.add_space(12.0);
-            egui::Frame::new().fill(mix(side, text, 0.04)).stroke(Stroke::new(1.0, border)).corner_radius(10).inner_margin(Margin::same(16)).show(ui, |ui| {
+            egui::Frame::new().fill(mix(side, text, 0.04)).stroke(Stroke::new(1.0, border)).corner_radius(theme::CARD_RADIUS).inner_margin(Margin::same(16)).show(ui, |ui| {
                 let help = |ui: &mut egui::Ui, t: &str| {
-                    ui.add(egui::Label::new(RichText::new(t).size(14.0).color(muted)).wrap());
+                    ui.add(egui::Label::new(RichText::new(t).size(theme::size::BODY).color(muted)).wrap());
                     ui.add_space(6.0);
                 };
                 let field = |ui: &mut egui::Ui, value: &mut String, hint: &str, secret: bool| {
@@ -898,7 +893,7 @@ impl App {
                         egui::TextEdit::singleline(value)
                             .hint_text(hint)
                             .password(secret)
-                            .font(FontId::proportional(15.0))
+                            .font(FontId::proportional(theme::size::UI))
                             .margin(Margin::symmetric(10, 8))
                             .desired_width(f32::INFINITY),
                     );
@@ -908,7 +903,7 @@ impl App {
                 let accent = self.pal.accent;
                 let go = |ui: &mut egui::Ui, label: &str, enabled: bool| {
                     ui.add_space(2.0);
-                    ui.add_enabled(enabled, egui::Button::new(RichText::new(label).size(15.0).color(Color32::WHITE)).fill(accent).corner_radius(8)).clicked()
+                    ui.add_enabled(enabled, egui::Button::new(RichText::new(label).size(theme::size::UI).color(Color32::WHITE)).fill(accent).corner_radius(theme::RADIUS)).clicked()
                 };
                 let waiting = self.nextcloud_wait.is_some();
                 let both_ways = "Its calendars come in and stay in step both ways: what you change here is sent to the server. Repeating events can't be changed here yet.";
@@ -920,11 +915,11 @@ impl App {
                         let r = field(ui, &mut self.sub_url, "https://…/calendar.ics  or  webcal://…", false);
                         let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                         if ics::normalize_url(&self.sub_url).ok().as_deref().map(ics::is_proton).unwrap_or(false) {
-                            ui.label(RichText::new("Proton Calendar link recognised").size(13.0).color(GREEN));
+                            ui.label(RichText::new("Proton Calendar link recognised").size(theme::size::CAPTION).color(theme::SUCCESS));
                         }
                         ui.horizontal(|ui| {
-                            ui.add(egui::TextEdit::singleline(&mut self.sub_name).hint_text("Name (optional)").font(FontId::proportional(15.0)).margin(Margin::symmetric(10, 8)).desired_width(260.0));
-                            let b = egui::Button::new(RichText::new("Subscribe").size(15.0).color(Color32::WHITE)).fill(accent).corner_radius(8);
+                            ui.add(egui::TextEdit::singleline(&mut self.sub_name).hint_text("Name (optional)").font(FontId::proportional(theme::size::UI)).margin(Margin::symmetric(10, 8)).desired_width(260.0));
+                            let b = egui::Button::new(RichText::new("Subscribe").size(theme::size::UI).color(Color32::WHITE)).fill(accent).corner_radius(theme::RADIUS);
                             if ui.add(b).clicked() || enter {
                                 let count = self.data.calendars.len();
                                 self.subscribe(ctx);
@@ -948,7 +943,7 @@ impl App {
                             }
                             if connecting {
                                 ui.spinner();
-                                ui.label(RichText::new("Connecting…").size(15.0).color(muted));
+                                ui.label(RichText::new("Connecting…").size(theme::size::UI).color(muted));
                             }
                         });
                     }
@@ -977,7 +972,7 @@ impl App {
                         if self.pr_busy {
                             ui.horizontal(|ui| {
                                 ui.spinner();
-                                ui.label(RichText::new("Signing in to Proton…").size(14.0).color(muted));
+                                ui.label(RichText::new("Signing in to Proton…").size(theme::size::BODY).color(muted));
                             });
                         } else if go(ui, "Sign in to Proton", true) {
                             self.connect_proton(ctx);
@@ -997,21 +992,21 @@ impl App {
                     ui.add_space(6.0);
                     ui.horizontal(|ui| {
                         ui.spinner();
-                        ui.label(RichText::new("Waiting for you to sign in on the page that opened in your browser…").size(14.0).color(muted));
-                        if ui.add(egui::Button::new(RichText::new("Cancel").size(14.0)).corner_radius(7)).clicked() {
+                        ui.label(RichText::new("Waiting for you to sign in on the page that opened in your browser…").size(theme::size::BODY).color(muted));
+                        if ui.add(egui::Button::new(RichText::new("Cancel").size(theme::size::BODY)).corner_radius(theme::BUTTON_RADIUS)).clicked() {
                             self.cancel_nextcloud();
                         }
                     });
                     if !login.is_empty() {
                         ui.horizontal_wrapped(|ui| {
-                            ui.label(RichText::new("If no page opened, open this one:").size(13.0).color(muted));
-                            ui.hyperlink_to(RichText::new("the sign-in page").size(13.0), &login);
+                            ui.label(RichText::new("If no page opened, open this one:").size(theme::size::CAPTION).color(muted));
+                            ui.hyperlink_to(RichText::new("the sign-in page").size(theme::size::CAPTION), &login);
                         });
                     }
                 }
                 if let Some(e) = self.acct_error.as_ref().filter(|_| self.sub_kind >= 2) {
                     ui.add_space(4.0);
-                    ui.add(egui::Label::new(RichText::new(e).size(14.0).color(RED)).wrap());
+                    ui.add(egui::Label::new(RichText::new(e).size(theme::size::BODY).color(theme::DANGER)).wrap());
                 }
             });
         }
@@ -1021,31 +1016,31 @@ impl App {
         let mut remove: Option<u64> = None;
         let subs: Vec<(u64, Calendar)> = self.data.calendars.iter().filter(|c| c.url.is_some()).map(|c| (c.id, c.clone())).collect();
         if subs.is_empty() && !self.data.accounts.iter().any(|a| a.home.is_some()) {
-            ui.label(RichText::new("Nothing is connected yet.").size(15.0).color(muted));
+            ui.label(RichText::new("Nothing is connected yet.").size(theme::size::UI).color(muted));
         }
         for (i, c) in subs {
             let url = c.url.clone().unwrap_or_default();
             ui.allocate_ui_with_layout(vec2(ui.available_width(), 70.0), Layout::right_to_left(Align::Center), |ui| {
-                    ui.menu_button(RichText::new(icons::ELLIPSIS).size(18.0).color(muted), |ui| {
+                    ui.menu_button(RichText::new(icons::ELLIPSIS).size(theme::size::HEADING).color(muted), |ui| {
                         if ui.button("Refresh").clicked() {
                             refresh = Some(i);
                             ui.close();
                         }
-                        if ui.button(RichText::new("Unsubscribe").color(RED)).clicked() {
+                        if ui.button(RichText::new("Unsubscribe").color(theme::DANGER)).clicked() {
                             remove = Some(i);
                             ui.close();
                         }
                     });
                     ui.add_space(12.0);
                     if self.syncing.contains(&i) {
-                        ui.label(RichText::new("Refreshing…").size(16.0).color(muted));
+                        ui.label(RichText::new("Refreshing…").size(theme::size::LARGE).color(muted));
                         ui.spinner();
                     } else if let Some(e) = &c.error {
-                        ui.label(RichText::new("Not connected").size(16.0).color(RED)).on_hover_text(e);
+                        ui.label(RichText::new("Not connected").size(theme::size::LARGE).color(theme::DANGER)).on_hover_text(e);
                     } else if c.last_sync.is_some() {
-                        ui.label(RichText::new(format!("{} Connected", icons::CHECK)).size(16.0).color(GREEN));
+                        ui.label(RichText::new(format!("{} Connected", icons::CHECK)).size(theme::size::LARGE).color(theme::SUCCESS));
                     } else {
-                        ui.label(RichText::new("Waiting").size(16.0).color(muted));
+                        ui.label(RichText::new("Waiting").size(theme::size::LARGE).color(muted));
                     }
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 let (r, _) = ui.allocate_exact_size(vec2(34.0, 34.0), Sense::hover());
@@ -1054,17 +1049,17 @@ impl App {
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 2.0;
                     ui.add_space(12.0);
-                    ui.add(egui::Label::new(RichText::new(&c.name).size(17.0)).truncate());
+                    ui.add(egui::Label::new(RichText::new(&c.name).size(theme::size::TITLE)).truncate());
                     let kind = if url == SECRET_URL {
                         "Private link, kept in the keyring".to_string()
                     } else if ics::is_proton(&url) { "Proton Calendar".to_string() } else { format!("Feed from {}", ics::default_name(&url)) };
                     let when = c.last_sync.as_ref().map(|t| format!("  ·  refreshed {t}")).unwrap_or_default();
-                    ui.add(egui::Label::new(RichText::new(format!("{kind}{when}")).size(14.0).color(muted)).truncate());
+                    ui.add(egui::Label::new(RichText::new(format!("{kind}{when}")).size(theme::size::BODY).color(muted)).truncate());
                 });
                 });
             });
             if let Some(e) = &c.error {
-                ui.add(egui::Label::new(RichText::new(e).size(13.0).color(RED)).wrap());
+                ui.add(egui::Label::new(RichText::new(e).size(theme::size::CAPTION).color(theme::DANGER)).wrap());
             }
             let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
             ui.painter().rect_filled(r, 0.0, border);
@@ -1096,12 +1091,12 @@ impl App {
             // the status and menu first; the name takes what is left
             ui.allocate_ui_with_layout(vec2(ui.available_width(), 64.0), Layout::right_to_left(Align::Center), |ui| {
                 {
-                    ui.menu_button(RichText::new(icons::ELLIPSIS).size(18.0).color(muted), |ui| {
+                    ui.menu_button(RichText::new(icons::ELLIPSIS).size(theme::size::HEADING).color(muted), |ui| {
                         if ui.button("Sync now").clicked() {
                             sync_now = Some(a.id);
                             ui.close();
                         }
-                        if ui.button(RichText::new("Sign out and remove").color(RED)).clicked() {
+                        if ui.button(RichText::new("Sign out and remove").color(theme::DANGER)).clicked() {
                             remove = Some(a.id);
                             ui.close();
                         }
@@ -1109,27 +1104,27 @@ impl App {
                     ui.add_space(12.0);
                     let busy = self.syncing.contains(&a.id) || self.data.calendars.iter().any(|c| c.account == Some(a.id) && self.syncing.contains(&c.id));
                     if busy {
-                        ui.label(RichText::new("Syncing…").size(16.0).color(muted));
+                        ui.label(RichText::new("Syncing…").size(theme::size::LARGE).color(muted));
                         ui.spinner();
                     } else if let Some(e) = &a.error {
-                        ui.label(RichText::new("Not connected").size(16.0).color(RED)).on_hover_text(e);
+                        ui.label(RichText::new("Not connected").size(theme::size::LARGE).color(theme::DANGER)).on_hover_text(e);
                     } else {
-                        ui.label(RichText::new(format!("{} Connected", icons::CHECK)).size(16.0).color(GREEN));
+                        ui.label(RichText::new(format!("{} Connected", icons::CHECK)).size(theme::size::LARGE).color(theme::SUCCESS));
                     }
                 }
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 2.0;
                         ui.add_space(10.0);
-                        ui.add(egui::Label::new(RichText::new(a.label()).size(17.0)).truncate());
+                        ui.add(egui::Label::new(RichText::new(a.label()).size(theme::size::TITLE)).truncate());
                         let when = a.last_sync.as_ref().map(|t| format!("  ·  synced {t}")).unwrap_or_default();
                         let kind = if a.proton { "Proton account" } else if a.microsoft { "Microsoft account" } else if a.google { "Google account" } else if a.nextcloud { "Nextcloud account" } else { "CalDAV account" };
-                        ui.add(egui::Label::new(RichText::new(format!("{kind}{when}")).size(14.0).color(muted)).truncate());
+                        ui.add(egui::Label::new(RichText::new(format!("{kind}{when}")).size(theme::size::BODY).color(muted)).truncate());
                     });
                 });
             });
             if let Some(e) = &a.error {
-                ui.add(egui::Label::new(RichText::new(e).size(13.0).color(RED)).wrap());
+                ui.add(egui::Label::new(RichText::new(e).size(theme::size::CAPTION).color(theme::DANGER)).wrap());
             }
             // its calendars: a tick brings one in and keeps it in step
             for c in self.data.calendars.iter_mut().filter(|c| c.account == Some(a.id)) {
@@ -1143,16 +1138,16 @@ impl App {
                     }
                     let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
                     ui.painter().circle_filled(r.center(), 6.0, rgb(c.color));
-                    ui.label(RichText::new(&c.name).size(15.0));
+                    ui.label(RichText::new(&c.name).size(theme::size::UI));
                     if c.read_only {
-                        ui.label(RichText::new("read-only").size(13.0).color(muted));
+                        ui.label(RichText::new("read-only").size(theme::size::CAPTION).color(muted));
                     }
                     if let Some(e) = &c.error {
-                        ui.label(RichText::new("could not sync").size(13.0).color(RED)).on_hover_text(e);
+                        ui.label(RichText::new("could not sync").size(theme::size::CAPTION).color(theme::DANGER)).on_hover_text(e);
                     }
                     if c.holds_tasks {
                         let mut on = with_tasks.contains(&c.id);
-                        if ui.checkbox(&mut on, RichText::new("tasks too").size(13.0).color(muted)).on_hover_text("Bring the tasks kept in this calendar in as a task list").changed() {
+                        if ui.checkbox(&mut on, RichText::new("tasks too").size(theme::size::CAPTION).color(muted)).on_hover_text("Bring the tasks kept in this calendar in as a task list").changed() {
                             tasks_toggle = Some((c.id, on));
                         }
                     }
@@ -1164,10 +1159,10 @@ impl App {
                     ui.add_space(42.0);
                     let (r, _) = ui.allocate_exact_size(vec2(18.0, 18.0), Sense::hover());
                     ui.painter().circle_filled(r.center(), 6.0, rgb(l.color));
-                    ui.label(RichText::new(&l.name).size(15.0));
-                    ui.label(RichText::new(if l.read_only { "task list, read-only" } else { "task list" }).size(13.0).color(muted));
+                    ui.label(RichText::new(&l.name).size(theme::size::UI));
+                    ui.label(RichText::new(if l.read_only { "task list, read-only" } else { "task list" }).size(theme::size::CAPTION).color(muted));
                     if let Some(e) = &l.error {
-                        ui.label(RichText::new("could not sync").size(13.0).color(RED)).on_hover_text(e);
+                        ui.label(RichText::new("could not sync").size(theme::size::CAPTION).color(theme::DANGER)).on_hover_text(e);
                     }
                 });
             }
@@ -1189,7 +1184,7 @@ impl App {
             self.remove_account(id);
         }
         ui.add_space(14.0);
-        ui.checkbox(&mut self.data.prefs.plaintext_secrets, RichText::new("Keep passwords in a file when no keyring is running").size(14.0))
+        ui.checkbox(&mut self.data.prefs.plaintext_secrets, RichText::new("Keep passwords in a file when no keyring is running").size(theme::size::BODY))
             .on_hover_text(format!("Off by default. When on, and only if no keyring answers, passwords go to {} as plain text that only you can read.", secrets::file_path().display()));
     }
 
@@ -1222,8 +1217,8 @@ impl App {
         self.record_key(&ctx);
         let (muted, text, side, accent) = (self.pal.muted, self.pal.text, self.pal.side, self.pal.accent);
         let chip = |ui: &mut egui::Ui, k: &str, fill: Color32, color: Color32| {
-            egui::Frame::new().fill(fill).corner_radius(RADIUS as u8).inner_margin(Margin::symmetric(9, 5)).show(ui, |ui| {
-                ui.label(RichText::new(k).size(15.0).color(color));
+            egui::Frame::new().fill(fill).corner_radius(theme::RADIUS as u8).inner_margin(Margin::symmetric(9, 5)).show(ui, |ui| {
+                ui.label(RichText::new(k).size(theme::size::UI).color(color));
             });
         };
         // drawn right to left: last alternative first, last key first
@@ -1235,7 +1230,7 @@ impl App {
                     chip(ui, k, mix(side, text, 0.14), text);
                 }
                 if ai > 0 {
-                    ui.label(RichText::new("or").size(15.0).color(muted));
+                    ui.label(RichText::new("or").size(theme::size::UI).color(muted));
                 }
             }
         };
@@ -1246,7 +1241,7 @@ impl App {
                 chips(ui, keys);
                 ui.add_space(10.0);
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    ui.add(egui::Label::new(RichText::new(label).size(17.0).color(mix(muted, text, 0.6))).truncate());
+                    ui.add(egui::Label::new(RichText::new(label).size(theme::size::TITLE).color(mix(muted, text, 0.6))).truncate());
                 });
             });
         };
@@ -1254,7 +1249,7 @@ impl App {
             if !first {
                 ui.add_space(22.0);
             }
-            ui.label(RichText::new(sec).font(bold(20.0)));
+            ui.label(RichText::new(sec).font(theme::bold(20.0)));
             ui.add_space(6.0);
             let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
             ui.painter().rect_filled(r, 0.0, muted);
@@ -1268,7 +1263,7 @@ impl App {
             ui.horizontal(|ui| {
                 search_field(ui, &mut self.shortcut_query, "Search shortcuts", (ui.available_width() * 0.5).clamp(220.0, 360.0));
                 ui.add_space(12.0);
-                ui.add(egui::Label::new(RichText::new("Click a shortcut to change it, then press the new keys. Esc cancels.").size(15.0).color(muted)).wrap());
+                ui.add(egui::Label::new(RichText::new("Click a shortcut to change it, then press the new keys. Esc cancels.").size(theme::size::UI).color(muted)).wrap());
             });
             ui.add_space(10.0);
         }
@@ -1311,11 +1306,11 @@ impl App {
                     ui.spacing_mut().item_spacing.x = 6.0;
                     // reset and clear sit to the right of the keys
                     if custom {
-                        let r = ui.add(egui::Button::new(RichText::new(icons::UNDO).size(14.0).color(muted)).frame(false));
+                        let r = ui.add(egui::Button::new(RichText::new(icons::UNDO).size(theme::size::BODY).color(muted)).frame(false));
                         reset = r.on_hover_text(format!("Back to the default ({})", if default.is_empty() { "none" } else { default })).clicked();
                     }
                     if !keys.is_empty() {
-                        let r = ui.add(egui::Button::new(RichText::new(icons::X).size(14.0).color(muted)).frame(false));
+                        let r = ui.add(egui::Button::new(RichText::new(icons::X).size(theme::size::BODY).color(muted)).frame(false));
                         clear = r.on_hover_text("Remove this shortcut").clicked();
                     }
                     let inner = ui.scope(|ui| {
@@ -1335,9 +1330,9 @@ impl App {
                 }
                 ui.add_space(10.0);
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    ui.add(egui::Label::new(RichText::new(*label).size(17.0).color(mix(muted, text, 0.6))).truncate());
+                    ui.add(egui::Label::new(RichText::new(*label).size(theme::size::TITLE).color(mix(muted, text, 0.6))).truncate());
                     if !clash.is_empty() {
-                        ui.label(RichText::new(icons::INFO).size(14.0).color(RED)).on_hover_text(format!("Also used by: {}", clash.join(", ")));
+                        ui.label(RichText::new(icons::INFO).size(theme::size::BODY).color(theme::DANGER)).on_hover_text(format!("Also used by: {}", clash.join(", ")));
                     }
                 });
             });
@@ -1372,7 +1367,7 @@ impl App {
         }
         if rows == 0 && !searching {
             ui.add_space(30.0);
-            ui.label(RichText::new(format!("No shortcuts match \"{}\"", self.shortcut_query.trim())).size(16.0).color(muted));
+            ui.label(RichText::new(format!("No shortcuts match \"{}\"", self.shortcut_query.trim())).size(theme::size::LARGE).color(muted));
         }
         if self.recording.is_some() {
             ctx.request_repaint();
@@ -1387,17 +1382,17 @@ impl App {
         }
         let muted = self.pal.muted;
         heading(ui, "Kalendar");
-        ui.label(RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).size(16.0));
+        ui.label(RichText::new(format!("Version {}", env!("CARGO_PKG_VERSION"))).size(theme::size::LARGE));
         ui.add_space(8.0);
-        ui.label(RichText::new("Your calendars and tasks are kept on this computer, in:").size(15.0).color(muted));
-        ui.label(RichText::new(data_path().display().to_string()).size(15.0).monospace());
+        ui.label(RichText::new("Your calendars and tasks are kept on this computer, in:").size(theme::size::UI).color(muted));
+        ui.label(RichText::new(data_path().display().to_string()).size(theme::size::UI).monospace());
         ui.add_space(8.0);
-        ui.label(RichText::new("Your settings and shortcuts are kept in:").size(15.0).color(muted));
-        ui.label(RichText::new(config_path().display().to_string()).size(15.0).monospace());
+        ui.label(RichText::new("Your settings and shortcuts are kept in:").size(theme::size::UI).color(muted));
+        ui.label(RichText::new(config_path().display().to_string()).size(theme::size::UI).monospace());
         ui.add_space(8.0);
         ui.label(
             RichText::new("Account passwords and Proton Calendar links are kept in your desktop's keyring, not in these files. Links of other subscribed calendars are stored in data.json as plain text. Without a running keyring a Proton link stays in data.json too; it contains the keys that give access to that calendar, so keep that file private.")
-                .size(15.0)
+                .size(theme::size::UI)
                 .color(muted),
         );
     }

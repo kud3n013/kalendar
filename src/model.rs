@@ -46,7 +46,6 @@ pub const WORK_END_MIN: i64 = 18 * 60; // to 18:00, Monday to Friday
 pub const DUE_SOON_DAYS: i64 = 7; // "Due soon" looks this many days ahead
 /// below this window width: one day, no task panel
 pub const COMPACT_W: f32 = 700.0;
-/// how fast a zoom closes in on its goal, per second
 pub const ZOOM_STEP: f32 = 1.1; // one wheel notch while zooming
 pub const SYNC_EVERY_S: f64 = 900.0; // subscribed and synced calendars refresh every 15 minutes
 pub const PUSH_AFTER_S: f64 = 2.0; // a change made here is sent to its server this much later
@@ -54,7 +53,6 @@ pub const NEXTCLOUD_WAIT_S: u64 = 300; // how long a browser sign-in is waited f
 pub const SYNC_ON_FOCUS_S: f64 = 60.0; // coming back to the window refreshes, at most this often
 pub const NEW_EVENT_MIN: i64 = 60; // new events are one hour long
 pub const NEW_EVENT_NOON_H: i64 = 12; // on a later day they start at 12:00
-pub const RADIUS: f32 = 8.0; // the one corner radius used across the UI
 
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
 pub enum View {

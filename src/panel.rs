@@ -1,6 +1,7 @@
 //! The task panel (left or right) and the bar above the calendar.
 
 use crate::motion;
+use crate::theme;
 use crate::icons;
 use crate::model::*;
 use crate::{fill_squircle, mix, rgb, App, Cmd};
@@ -9,12 +10,6 @@ use eframe::egui::{
     self, pos2, vec2, Align, Align2, Color32, FontId, Id, Layout, Margin, Rect, RichText, Sense, Stroke,
 };
 
-const RED: Color32 = Color32::from_rgb(0xeb, 0x62, 0x62);
-const ORANGE: Color32 = Color32::from_rgb(0xff, 0x8f, 0x1e);
-
-fn bold(size: f32) -> FontId {
-    FontId::new(size, egui::FontFamily::Name("bold".into()))
-}
 
 /// A flat button that only shows its label.
 fn flat(ui: &mut egui::Ui, label: impl Into<egui::WidgetText>) -> egui::Response {
@@ -47,7 +42,7 @@ pub fn icon_btn(ui: &mut egui::Ui, glyph: &str, size: f32, tip: &str, c: (Color3
     let (r, resp) = ui.allocate_exact_size(vec2(size + 12.0, size + 12.0), Sense::click());
     let glow = ui.ctx().animate_bool_with_time(resp.id, resp.hovered(), motion::HOVER.secs());
     if glow > 0.0 {
-        fill_squircle(ui.painter(), r, RADIUS, mix(side, text, 0.08 * glow));
+        fill_squircle(ui.painter(), r, theme::RADIUS, mix(side, text, 0.08 * glow));
     }
     ui.painter().text(r.center(), Align2::CENTER_CENTER, glyph, FontId::proportional(size), mix(muted, text, 0.6 * glow));
     if tip.is_empty() {
@@ -88,12 +83,12 @@ impl App {
                 egui::Frame::popup(ui.style()).inner_margin(Margin::same(12)).show(ui, |ui| {
                     ui.set_width(7.0 * 30.0);
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(first.format("%B %Y").to_string()).font(bold(14.0)));
+                        ui.label(RichText::new(first.format("%B %Y").to_string()).font(theme::bold(theme::size::BODY)));
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if flat(ui, RichText::new(icons::CHEVRON_RIGHT).size(14.0)).clicked() {
+                            if flat(ui, RichText::new(icons::CHEVRON_RIGHT).size(theme::size::BODY)).clicked() {
                                 step = 1;
                             }
-                            if flat(ui, RichText::new(icons::CHEVRON_LEFT).size(14.0)).clicked() {
+                            if flat(ui, RichText::new(icons::CHEVRON_LEFT).size(theme::size::BODY)).clicked() {
                                 step = -1;
                             }
                         });
@@ -101,7 +96,7 @@ impl App {
                     egui::Grid::new("qn").spacing([0.0, 0.0]).min_col_width(30.0).show(ui, |ui| {
                         for i in 0..7 {
                             let d = start + Duration::days(i);
-                            ui.vertical_centered(|ui| ui.label(RichText::new(&d.format("%a").to_string()[..2]).size(10.5).color(muted)));
+                            ui.vertical_centered(|ui| ui.label(RichText::new(&d.format("%a").to_string()[..2]).size(theme::size::MICRO).color(muted)));
                         }
                         ui.end_row();
                         for i in 0..42 {
@@ -109,12 +104,12 @@ impl App {
                             let (r, resp) = ui.allocate_exact_size(vec2(30.0, 26.0), Sense::click());
                             let glow = ctx.animate_bool_with_time(Id::unique(("qnd", i)), resp.hovered(), motion::HOVER.secs());
                             if d == today {
-                                ui.painter().circle_filled(r.center(), 11.0, RED);
+                                ui.painter().circle_filled(r.center(), 11.0, theme::DANGER);
                             } else if glow > 0.0 {
                                 ui.painter().circle_filled(r.center(), 11.0, mix(self.pal.side, text, 0.14 * glow));
                             }
                             let c = if d == today { Color32::WHITE } else if d.month() != first.month() { muted } else { text };
-                            ui.painter().text(r.center(), Align2::CENTER_CENTER, d.day().to_string(), FontId::proportional(12.0), c);
+                            ui.painter().text(r.center(), Align2::CENTER_CENTER, d.day().to_string(), FontId::proportional(theme::size::SMALL), c);
                             if self.visible_days().contains(&d) && d != today {
                                 ui.painter().circle_filled(r.center_bottom() + vec2(0.0, -2.0), 1.5, accent);
                             }
@@ -141,7 +136,7 @@ impl App {
     fn calendars_menu(&mut self, ui: &mut egui::Ui) {
         let muted = self.pal.muted;
         let ctx = &ui.ctx().clone();
-        ui.menu_button(RichText::new(icons::CALENDAR).size(16.0).color(muted), |ui| {
+        ui.menu_button(RichText::new(icons::CALENDAR).size(theme::size::LARGE).color(muted), |ui| {
             ui.label(RichText::new("Calendars").color(muted));
             let mut changed = false;
             for cal in self.data.calendars.iter_mut() {
@@ -168,7 +163,7 @@ impl App {
     fn view_menu(&mut self, ui: &mut egui::Ui) {
         let muted = self.pal.muted;
         let mut v = self.view;
-        ui.menu_button(RichText::new(format!("{}  {}", v.label(), icons::CHEVRON_DOWN)).size(13.5).color(muted), |ui| {
+        ui.menu_button(RichText::new(format!("{}  {}", v.label(), icons::CHEVRON_DOWN)).size(theme::size::CAPTION).color(muted), |ui| {
             // just wide enough for the names and their keys
             ui.set_width(130.0);
             for (o, key) in [
@@ -184,7 +179,7 @@ impl App {
                         ui.close();
                     }
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        ui.label(RichText::new(key).monospace().size(11.0).color(muted));
+                        ui.label(RichText::new(key).monospace().size(theme::size::MICRO).color(muted));
                     });
                 });
             }
@@ -238,7 +233,7 @@ impl App {
                         self.quick_nav = !self.quick_nav;
                     }
                     go_at = r.rect.left_bottom() + vec2(0.0, 6.0);
-                    ui.label(RichText::new(month.to_lowercase()).font(bold(if narrow { 20.0 } else { 26.0 })).color(text));
+                    ui.label(RichText::new(month.to_lowercase()).font(theme::bold(if narrow { 20.0 } else { 26.0 })).color(text));
                     if !tiny {
                         ui.label(RichText::new(last.year().to_string()).size(if narrow { 20.0 } else { 26.0 }).color(muted));
                     }
@@ -442,12 +437,12 @@ impl App {
         });
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Tasks").font(bold(18.0)));
+            ui.label(RichText::new("Tasks").font(theme::bold(theme::size::HEADING)));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                ui.menu_button(RichText::new(icons::SLIDERS).size(15.0).color(muted), |ui| {
+                ui.menu_button(RichText::new(icons::SLIDERS).size(theme::size::UI).color(muted), |ui| {
                     ui.set_min_width(220.0);
                     let p = &mut self.data.prefs;
-                    ui.label(RichText::new("Pinned lists").color(muted).size(12.0));
+                    ui.label(RichText::new("Pinned lists").color(muted).size(theme::size::SMALL));
                     let mut ch = ui.checkbox(&mut p.show_due_today, "Due today").changed();
                     ch |= ui.checkbox(&mut p.show_due_tomorrow, "Due tomorrow").changed();
                     ch |= ui.checkbox(&mut p.show_due_soon, "Due soon").changed();
@@ -455,7 +450,7 @@ impl App {
                     ch |= ui.checkbox(&mut p.show_scheduled_tasks, "Show scheduled tasks").changed();
                     ch |= ui.checkbox(&mut p.due_on_calendar, "Due dates on the calendar").changed();
                     ui.separator();
-                    ui.label(RichText::new("Sort by").color(muted).size(12.0));
+                    ui.label(RichText::new("Sort by").color(muted).size(theme::size::SMALL));
                     for (i, n) in ["My order", "Due date", "Importance"].iter().enumerate() {
                         ui.radio_value(&mut self.sort_by, i, *n);
                     }
@@ -477,7 +472,7 @@ impl App {
                 ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
                 for t in &tags {
                     let on = self.filter_tag.as_deref() == Some(t.as_str());
-                    if ui.selectable_label(on, RichText::new(format!("#{t}")).size(11.5).color(if on { Color32::WHITE } else { muted })).clicked() {
+                    if ui.selectable_label(on, RichText::new(format!("#{t}")).size(theme::size::TINY).color(if on { Color32::WHITE } else { muted })).clicked() {
                         self.filter_tag = if on { None } else { Some(t.clone()) };
                     }
                 }
@@ -520,10 +515,10 @@ impl App {
                 egui::ScrollArea::vertical().id_salt("tasklist").auto_shrink([false, false]).show(ui, |ui| {
                     let mut any_pinned = false;
                     for (key, name, icon, color, items, show) in [
-                        ("overdue", "Overdue", icons::ALARM, RED, &overdue, true),
-                        ("today", "Due today", icons::SUN, ORANGE, &due_today, p.show_due_today),
-                        ("tomorrow", "Due tomorrow", icons::ARROW_RIGHT, ORANGE, &due_tomorrow, p.show_due_tomorrow),
-                        ("soon", "Due soon", icons::CHEVRONS_RIGHT, ORANGE, &due_soon, p.show_due_soon),
+                        ("overdue", "Overdue", icons::ALARM, theme::DANGER, &overdue, true),
+                        ("today", "Due today", icons::SUN, theme::WARNING, &due_today, p.show_due_today),
+                        ("tomorrow", "Due tomorrow", icons::ARROW_RIGHT, theme::WARNING, &due_tomorrow, p.show_due_tomorrow),
+                        ("soon", "Due soon", icons::CHEVRONS_RIGHT, theme::WARNING, &due_soon, p.show_due_soon),
                     ] {
                         if show && !items.is_empty() {
                             any_pinned = true;
@@ -576,7 +571,7 @@ impl App {
             return;
         }
         let synced = self.data.lists.iter().any(|l| l.id == lid && l.account.is_some());
-        let b = ui.add_enabled(!synced, egui::Button::new(RichText::new(format!("{}  Remove", icons::TRASH)).color(RED)));
+        let b = ui.add_enabled(!synced, egui::Button::new(RichText::new(format!("{}  Remove", icons::TRASH)).color(theme::DANGER)));
         let b = b.on_hover_text("Its tasks go to the Inbox").on_disabled_hover_text("This list comes from an account. It goes when it is switched off under Settings, Calendars.");
         if b.clicked() {
             self.snapshot();
@@ -642,13 +637,13 @@ impl App {
                 let (gr, gresp) = ui.allocate_exact_size(vec2(27.0, 27.0), Sense::click());
                 let on = look.2 == glyph;
                 if on || gresp.hovered() {
-                    fill_squircle(ui.painter(), gr, RADIUS, mix(side, text, if on { 0.16 } else { 0.08 }));
+                    fill_squircle(ui.painter(), gr, theme::RADIUS, mix(side, text, if on { 0.16 } else { 0.08 }));
                 }
                 let c = if on { rgb(look.1) } else { muted };
                 if glyph.is_empty() {
                     ui.painter().circle_stroke(gr.center(), 5.5, Stroke::new(2.0, c));
                 } else {
-                    ui.painter().text(gr.center(), Align2::CENTER_CENTER, glyph, FontId::proportional(15.0), c);
+                    ui.painter().text(gr.center(), Align2::CENTER_CENTER, glyph, FontId::proportional(theme::size::UI), c);
                 }
                 if gresp.clicked() {
                     look.2 = glyph.to_string();
@@ -686,23 +681,23 @@ impl App {
         let editing = list.is_some() && self.list_edit.as_ref().map(|e| e.id) == list;
         let glow = ctx.animate_bool_with_time(Id::unique(("sec", key)), resp.hovered() || ui.rect_contains_pointer(r) || editing, motion::HOVER.secs());
         if glow > 0.0 {
-            fill_squircle(ui.painter(), r.expand2(vec2(6.0, 0.0)), RADIUS, mix(side, text, 0.05 * glow));
+            fill_squircle(ui.painter(), r.expand2(vec2(6.0, 0.0)), theme::RADIUS, mix(side, text, 0.05 * glow));
         }
         let p = ui.painter();
         let ic = pos2(r.left() + 9.0, r.center().y);
         match icon {
             Some((g, c)) => {
-                p.text(ic, Align2::CENTER_CENTER, g, FontId::proportional(15.0), c);
+                p.text(ic, Align2::CENTER_CENTER, g, FontId::proportional(theme::size::UI), c);
             }
             None => {
                 p.circle_stroke(ic, 5.5, Stroke::new(2.0, color));
             }
         }
-        let g = p.text(pos2(r.left() + 28.0, r.center().y), Align2::LEFT_CENTER, name, bold(15.0), text);
+        let g = p.text(pos2(r.left() + 28.0, r.center().y), Align2::LEFT_CENTER, name, theme::bold(theme::size::UI), text);
         let count = items.len().to_string();
         let pill = Rect::from_center_size(pos2(g.right() + 18.0, r.center().y), vec2(10.0 + 8.0 * count.len() as f32, 18.0));
-        fill_squircle(p, pill, RADIUS, mix(side, text, 0.10));
-        p.text(pill.center(), Align2::CENTER_CENTER, count, FontId::proportional(11.5), muted);
+        fill_squircle(p, pill, theme::RADIUS, mix(side, text, 0.10));
+        p.text(pill.center(), Align2::CENTER_CENTER, count, FontId::proportional(theme::size::TINY), muted);
         // chevron turns as the group opens
         let turn = ctx.animate_bool_with_time(Id::unique(("chev", key)), !collapsed, motion::NORMAL.secs());
         let c = pos2(r.right() - 10.0, r.center().y);
@@ -717,7 +712,7 @@ impl App {
             if glow > 0.0 {
                 let pr = Rect::from_center_size(pos2(r.right() - 66.0, r.center().y), vec2(22.0, 22.0));
                 let over = ui.rect_contains_pointer(pr);
-                ui.painter().text(pr.center(), Align2::CENTER_CENTER, "+", FontId::proportional(18.0), if over { text } else { muted.gamma_multiply(glow) });
+                ui.painter().text(pr.center(), Align2::CENTER_CENTER, "+", FontId::proportional(theme::size::HEADING), if over { text } else { muted.gamma_multiply(glow) });
                 if over && resp.clicked() {
                     add_clicked = true;
                 }
@@ -745,10 +740,10 @@ impl App {
             let open = menu.is_open();
             if glow > 0.0 || open {
                 if dots.hovered() || open {
-                    fill_squircle(ui.painter(), dr, RADIUS, mix(side, text, 0.10));
+                    fill_squircle(ui.painter(), dr, theme::RADIUS, mix(side, text, 0.10));
                 }
                 let dc = if dots.hovered() || open { text } else { muted.gamma_multiply(glow) };
-                ui.painter().text(dr.center(), Align2::CENTER_CENTER, icons::ELLIPSIS, FontId::proportional(16.0), dc);
+                ui.painter().text(dr.center(), Align2::CENTER_CENTER, icons::ELLIPSIS, FontId::proportional(theme::size::LARGE), dc);
             }
             menu.show(|ui| self.list_menu(ui, lid, at));
             resp.context_menu(|ui| self.list_menu(ui, lid, at));
@@ -780,7 +775,7 @@ impl App {
                         self.say(ctx, if d { "Task completed" } else { "Task reopened" }, true);
                     }
                     // tasks left without a name by an older version still show one
-                    let mut title = RichText::new(if t.title.trim().is_empty() { "New task" } else { &t.title }).size(14.5);
+                    let mut title = RichText::new(if t.title.trim().is_empty() { "New task" } else { &t.title }).size(theme::size::BODY);
                     if t.done {
                         title = title.color(muted).strikethrough();
                     }
@@ -812,7 +807,7 @@ impl App {
                                 }
                             }
                         });
-                        if ui.button(RichText::new("Delete task").color(RED)).clicked() {
+                        if ui.button(RichText::new("Delete task").color(theme::DANGER)).clicked() {
                             self.delete_task(ctx, id);
                             ui.close();
                         }
@@ -824,7 +819,7 @@ impl App {
                     chips.push(("scheduled".into(), muted));
                 }
                 if let Some(d) = t.due {
-                    let c = if d < today && !t.done { RED } else { muted };
+                    let c = if d < today && !t.done { theme::DANGER } else { muted };
                     let rep = if t.repeat != Repeat::None { format!("  {}", icons::REPEAT) } else { String::new() };
                     chips.push((format!("{} {}{rep}", icons::FLAG, due_label(d, today)), c));
                 }
@@ -832,7 +827,7 @@ impl App {
                     chips.push((fmt_duration(m), muted));
                 }
                 if t.priority != 0 {
-                    chips.push((format!("! {}", priority_name(t.priority)), if t.priority <= 3 { RED } else { muted }));
+                    chips.push((format!("! {}", priority_name(t.priority)), if t.priority <= 3 { theme::DANGER } else { muted }));
                 }
                 for g in &t.tags {
                     chips.push((format!("#{g}"), muted));
@@ -842,8 +837,8 @@ impl App {
                         ui.spacing_mut().item_spacing = vec2(5.0, 3.0);
                         ui.add_space(27.0);
                         for (label, c) in chips {
-                            egui::Frame::new().stroke(Stroke::new(1.0, border)).corner_radius(5).inner_margin(Margin::symmetric(5, 1)).show(ui, |ui| {
-                                ui.label(RichText::new(label).size(11.5).color(c));
+                            egui::Frame::new().stroke(Stroke::new(1.0, border)).corner_radius(theme::CHIP_RADIUS).inner_margin(Margin::symmetric(5, 1)).show(ui, |ui| {
+                                ui.label(RichText::new(label).size(theme::size::TINY).color(c));
                             });
                         }
                     });
@@ -852,7 +847,7 @@ impl App {
             let hovered = ui.rect_contains_pointer(inner.response.rect);
             let glow = ctx.animate_bool_with_time(Id::unique(("row", salt, id)), hovered, motion::HOVER.secs());
             if glow > 0.0 {
-                fill_squircle(ui.painter(), inner.response.rect.expand2(vec2(6.0, 0.0)), RADIUS, mix(side, text, 0.06).gamma_multiply(glow * 0.6));
+                fill_squircle(ui.painter(), inner.response.rect.expand2(vec2(6.0, 0.0)), theme::RADIUS, mix(side, text, 0.06).gamma_multiply(glow * 0.6));
             }
         });
     }

@@ -1,6 +1,7 @@
 //! What is drawn in the main window: toolbar, task list and calendar views.
 
 use crate::motion;
+use crate::theme;
 use crate::icons;
 use crate::model::*;
 use crate::{fill_squircle, mix, rgb, stroke_squircle, App, Cmd, CreateEdit, CreateKind, Drag, Palette};
@@ -51,12 +52,12 @@ fn draw_item(p: &egui::Painter, pal: &Palette, it: &Item, selected: bool, hover:
     } else {
         let base = if selected { it.color } else { soft };
         let base = if it.draft || it.past { mix(pal.bg, base, 0.45) } else { base };
-        let ink = Color32::from_rgb(0x10, 0x20, 0x26);
+        let ink = theme::INK;
         (mix(base, it.color, 0.5 * hover), ink, mix(ink, base, 0.25))
     };
-    fill_squircle(p, r, RADIUS, fill);
+    fill_squircle(p, r, theme::RADIUS, fill);
     let edge = if selected { pal.text } else if is_task { mix(pal.bg, it.color, 0.75) } else { fill };
-    stroke_squircle(p, r.shrink(0.5), RADIUS, Stroke::new(if selected { 1.5 } else { 1.0 }, edge));
+    stroke_squircle(p, r.shrink(0.5), theme::RADIUS, Stroke::new(if selected { 1.5 } else { 1.0 }, edge));
     let mut x = r.left() + 6.0;
     let tall = r.height() >= 36.0;
     if is_task {
@@ -68,10 +69,10 @@ fn draw_item(p: &egui::Painter, pal: &Palette, it: &Item, selected: bool, hover:
     }
     let clip = p.with_clip_rect(r.shrink(2.0).intersect(p.clip_rect()));
     let title = if it.title.is_empty() { "New Event" } else { &it.title };
-    let title_font = FontId::new(13.0, egui::FontFamily::Name("bold".into()));
+    let title_font = theme::bold(theme::size::CAPTION);
     let mut ty = r.top() + 2.5;
     if tall {
-        clip.text(pos2(x, r.top() + 3.0), Align2::LEFT_TOP, &it.sub, FontId::proportional(11.5), sub);
+        clip.text(pos2(x, r.top() + 3.0), Align2::LEFT_TOP, &it.sub, FontId::proportional(theme::size::TINY), sub);
         ty = r.top() + 18.0;
     }
     let mut tx = x;
@@ -87,7 +88,7 @@ fn draw_item(p: &egui::Painter, pal: &Palette, it: &Item, selected: bool, hover:
         }
         tx = c.right() + 7.0;
     }
-    let font = if !tall && r.height() < 20.0 { FontId::new(11.0, egui::FontFamily::Name("bold".into())) } else { title_font };
+    let font = if !tall && r.height() < 20.0 { theme::bold(theme::size::MICRO) } else { title_font };
     clip.text(pos2(tx, ty), Align2::LEFT_TOP, title, font, text);
 }
 
@@ -232,17 +233,17 @@ impl App {
         let p = ctx.layer_painter(egui::LayerId::new(egui::Order::Tooltip, Id::unique("ghost")));
         let h = if misfit { 50.0 } else { 34.0 };
         let r = Rect::from_min_size(pos + vec2(10.0, 8.0), vec2(230.0, h));
-        fill_squircle(&p, r, RADIUS, mix(self.pal.side, self.pal.text, 0.12));
-        stroke_squircle(&p, r.shrink(0.5), RADIUS, Stroke::new(1.0, self.pal.accent));
+        fill_squircle(&p, r, theme::RADIUS, mix(self.pal.side, self.pal.text, 0.12));
+        stroke_squircle(&p, r.shrink(0.5), theme::RADIUS, Stroke::new(1.0, self.pal.accent));
         let clip = p.with_clip_rect(r.shrink(4.0));
         let title_y = if misfit { r.top() + 17.0 } else { r.center().y };
-        clip.text(pos2(r.left() + 10.0, title_y), Align2::LEFT_CENTER, &t.title, FontId::proportional(13.0), self.pal.text);
+        clip.text(pos2(r.left() + 10.0, title_y), Align2::LEFT_CENTER, &t.title, FontId::proportional(theme::size::CAPTION), self.pal.text);
         if misfit {
             clip.text(
                 pos2(r.left() + 10.0, r.bottom() - 14.0),
                 Align2::LEFT_CENTER,
                 if refused == Some(true) { "This frame keeps other tasks out" } else { "Not in this frame's filter" },
-                FontId::proportional(11.0),
+                FontId::proportional(theme::size::MICRO),
                 self.pal.muted,
             );
         }
@@ -303,12 +304,12 @@ impl App {
         let (hrect, hresp) = ui.allocate_exact_size(vec2(full_w, head_h), Sense::click());
         let hp = ui.painter_at(hrect);
         let x0 = hrect.left() + GUTTER_W;
-        hp.text(pos2(x0 - 8.0, hrect.top() + 50.0), Align2::RIGHT_TOP, "all-day", FontId::proportional(10.0), self.pal.muted);
+        hp.text(pos2(x0 - 8.0, hrect.top() + 50.0), Align2::RIGHT_TOP, "all-day", FontId::proportional(theme::size::MINI), self.pal.muted);
         hp.text(
             pos2(x0 - 8.0, hrect.top() + 22.0),
             Align2::RIGHT_CENTER,
             format!("W{}", days[0].iso_week().week()),
-            FontId::proportional(10.0),
+            FontId::proportional(theme::size::MINI),
             self.pal.muted,
         );
         for (i, d) in days.iter().enumerate() {
@@ -317,8 +318,8 @@ impl App {
             let name = if col_w < 70.0 { d.format("%a").to_string()[..1].to_string() } else { d.format("%a").to_string() };
             let num = d.day().to_string();
             let is_today = *d == today;
-            let gn = hp.layout_no_wrap(name, FontId::proportional(15.0), if is_today { self.pal.text } else { self.pal.muted });
-            let gd = hp.layout_no_wrap(num, FontId::proportional(15.0), if is_today { Color32::WHITE } else { self.pal.muted });
+            let gn = hp.layout_no_wrap(name, FontId::proportional(theme::size::UI), if is_today { self.pal.text } else { self.pal.muted });
+            let gd = hp.layout_no_wrap(num, FontId::proportional(theme::size::UI), if is_today { Color32::WHITE } else { self.pal.muted });
             let disc = if is_today { 24.0 } else { gd.size().x };
             let total = gn.size().x + 6.0 + disc;
             let left = cx + (col_w - total) / 2.0;
@@ -326,7 +327,7 @@ impl App {
             hp.galley(pos2(left, cy - gn.size().y / 2.0), gn.clone(), self.pal.muted);
             let dc = pos2(left + gn.size().x + 6.0 + disc / 2.0, cy);
             if is_today {
-                hp.circle_filled(dc, 12.0, Color32::from_rgb(0xeb, 0x52, 0x52));
+                hp.circle_filled(dc, 12.0, theme::DANGER);
             }
             hp.galley(dc - gd.size() / 2.0, gd, self.pal.muted);
             hp.line_segment([pos2(cx, hrect.top() + 44.0), pos2(cx, hrect.bottom())], Stroke::new(1.0, self.pal.border_minor));
@@ -355,7 +356,7 @@ impl App {
                 r.left_center() + vec2(6.0, 0.0),
                 Align2::LEFT_CENTER,
                 title,
-                FontId::proportional(12.0),
+                FontId::proportional(theme::size::SMALL),
                 self.pal.text,
             );
             if !is_draft {
@@ -372,8 +373,8 @@ impl App {
                 hp.rect_filled(r, 4.0, mix(self.pal.bg, self.pal.text, 0.03 + 0.07 * glow));
                 hp.rect_stroke(r, 4.0, Stroke::new(1.0, mix(self.pal.border, self.pal.text, 0.25)), StrokeKind::Inside);
                 let c = hp.with_clip_rect(r.shrink(2.0));
-                c.text(r.left_center() + vec2(5.0, 0.0), Align2::LEFT_CENTER, icons::FLAG, FontId::proportional(12.0), self.pal.text);
-                c.text(r.left_center() + vec2(22.0, 0.0), Align2::LEFT_CENTER, title, FontId::new(12.5, egui::FontFamily::Name("bold".into())), self.pal.text);
+                c.text(r.left_center() + vec2(5.0, 0.0), Align2::LEFT_CENTER, icons::FLAG, FontId::proportional(theme::size::SMALL), self.pal.text);
+                c.text(r.left_center() + vec2(22.0, 0.0), Align2::LEFT_CENTER, title, theme::bold(theme::size::SMALL), self.pal.text);
                 due_chips.push((*tid, r));
             }
         }
@@ -473,7 +474,7 @@ impl App {
                 painter.line_segment([pos2(x0, y), pos2(rect.right(), y)], Stroke::new(1.0, self.pal.border));
                 if m > gs && m < ge {
                     let t = chrono::NaiveTime::from_hms_opt((m / 60) as u32 % 24, 0, 0).unwrap();
-                    painter.text(pos2(x0 - 8.0, y), Align2::RIGHT_CENTER, p.fmt_hour(t), FontId::proportional(11.0), self.pal.muted);
+                    painter.text(pos2(x0 - 8.0, y), Align2::RIGHT_CENTER, p.fmt_hour(t), FontId::proportional(theme::size::MICRO), self.pal.muted);
                 }
             } else if slot_px >= 12.0 {
                 painter.line_segment([pos2(x0, y), pos2(rect.right(), y)], Stroke::new(1.0, self.pal.border_minor));
@@ -511,7 +512,7 @@ impl App {
                 // see-through, so the grid lines stay visible: lightened on a
                 // dark theme, a plain tint on a light one
                 let wash = if self.pal.dark { mix(color, Color32::WHITE, 0.25).gamma_multiply(0.14) } else { color.gamma_multiply(0.09) };
-                fill_squircle(&painter, r, RADIUS, wash);
+                fill_squircle(&painter, r, theme::RADIUS, wash);
                 // a line of its colour along the top and the bottom
                 if r.height() > 8.0 {
                     for y in [r.top() + 1.0, r.bottom() - 3.0] {
@@ -522,7 +523,7 @@ impl App {
                     r.left_top() + vec2(6.0, 5.0),
                     Align2::LEFT_TOP,
                     if skipped { format!("{} (skipped)", f.name) } else { f.name.clone() },
-                    FontId::proportional(11.0),
+                    FontId::proportional(theme::size::MICRO),
                     if skipped { mix(self.pal.muted, self.pal.bg, 0.3) } else { self.pal.muted },
                 );
                 frame_boxes.push(FrameBox { id: f.id, day: *day, rect: r, label, color, skipped });
@@ -891,7 +892,7 @@ impl App {
                 let ctx = ui.ctx().clone();
                 if let Some((fid, day, name, skipped)) = &in_frame {
                     ui.separator();
-                    ui.label(RichText::new(format!("Frame: {name}")).size(11.5).color(self.pal.muted));
+                    ui.label(RichText::new(format!("Frame: {name}")).size(theme::size::TINY).color(self.pal.muted));
                     if ui.button(format!("{}  Edit frame…", icons::PEN)).clicked() {
                         self.edit_frame(*fid);
                         ui.close();
@@ -905,7 +906,7 @@ impl App {
                         self.skip_frame_day(&ctx, *fid, *day);
                         ui.close();
                     }
-                    if ui.button(RichText::new(format!("{}  Delete frame", icons::TRASH)).color(Color32::from_rgb(0xeb, 0x62, 0x62))).clicked() {
+                    if ui.button(RichText::new(format!("{}  Delete frame", icons::TRASH)).color(theme::DANGER)).clicked() {
                         self.delete_frame(&ctx, *fid);
                         ui.close();
                     }
@@ -956,9 +957,9 @@ impl App {
                         Some(b) => (mix(bg, b.color, 0.10), mix(bg, b.color, 0.40), self.pal.muted),
                         None => (mix(bg, self.pal.accent, 0.25), self.pal.accent, self.pal.text),
                     };
-                    fill_squircle(&painter, r, RADIUS, fill);
-                    stroke_squircle(&painter, r.shrink(0.5), RADIUS, Stroke::new(1.0, line));
-                    painter.text(r.left_top() + vec2(8.0, 4.0), Align2::LEFT_TOP, p.fmt_time(start.time()), FontId::proportional(11.0), text);
+                    fill_squircle(&painter, r, theme::RADIUS, fill);
+                    stroke_squircle(&painter, r.shrink(0.5), theme::RADIUS, Stroke::new(1.0, line));
+                    painter.text(r.left_top() + vec2(8.0, 4.0), Align2::LEFT_TOP, p.fmt_time(start.time()), FontId::proportional(theme::size::MICRO), text);
                     if !fits || kept_out.is_some() {
                         // shown under the title by ui_drag_ghost, which runs after the grid
                         ctx.data_mut(|d| d.insert_temp(Id::unique("drag_misfit"), kept_out.is_some()));
@@ -983,7 +984,7 @@ impl App {
             ui.close();
             return;
         };
-        let red = Color32::from_rgb(0xeb, 0x62, 0x62);
+        let red = theme::DANGER;
         let muted = self.pal.muted;
         if self.data.locked(&ev).is_some() {
             // a subscribed event can only be copied
@@ -1045,7 +1046,7 @@ impl App {
             ui.close();
         }
         seps.push(menu_gap(ui));
-        let big = |t: &str| RichText::new(t).size(15.0);
+        let big = |t: &str| RichText::new(t).size(theme::size::UI);
         if let Some(tid) = ev.task_id {
             if ui.button(big(&format!("{}   Copy task session", icons::COPY))).clicked() {
                 self.selected = Some(id);
@@ -1055,7 +1056,7 @@ impl App {
             seps.push(menu_gap(ui));
             ui.horizontal(|ui| {
                 ui.add_space(10.0);
-                ui.label(RichText::new("Planner").size(14.0).color(muted));
+                ui.label(RichText::new("Planner").size(theme::size::BODY).color(muted));
             });
             ui.menu_button(big(&format!("{}   Replan session", icons::REFRESH)), |ui| {
                 ui.set_min_width(300.0);
@@ -1064,7 +1065,7 @@ impl App {
                     ui.horizontal(|ui| {
                         hit = ui.add_enabled(enabled, egui::Button::new(label).frame(false)).clicked();
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            ui.label(RichText::new(keys).monospace().size(11.0).color(muted));
+                            ui.label(RichText::new(keys).monospace().size(theme::size::MICRO).color(muted));
                         });
                     });
                     hit
@@ -1093,7 +1094,7 @@ impl App {
             ui.horizontal(|ui| {
                 ui.add_space(10.0);
                 ui.label(big(&format!("{}   Flexible task", icons::SHUFFLE)));
-                ui.label(RichText::new("(i)").size(11.0).color(muted)).on_hover_text(
+                ui.label(RichText::new("(i)").size(theme::size::MICRO).color(muted)).on_hover_text(
                     "The planner may move flexible tasks to make room for more important ones.",
                 );
                 ui.add_space(6.0);
@@ -1154,7 +1155,7 @@ impl App {
                 pos2(rect.left() + c as f32 * cw + 8.0, rect.top() + head_h / 2.0),
                 Align2::LEFT_CENTER,
                 days[c].format("%a").to_string(),
-                FontId::proportional(12.0),
+                FontId::proportional(theme::size::SMALL),
                 self.pal.muted,
             );
         }
@@ -1182,10 +1183,10 @@ impl App {
             let num_rect = Rect::from_min_size(cell.left_top() + vec2(4.0, 3.0), vec2(if d.day() == 1 { 48.0 } else { 24.0 }, 20.0));
             if *d == today {
                 painter.rect_filled(num_rect, 6.0, self.pal.accent);
-                painter.text(num_rect.center(), Align2::CENTER_CENTER, num, FontId::proportional(12.5), Color32::WHITE);
+                painter.text(num_rect.center(), Align2::CENTER_CENTER, num, FontId::proportional(theme::size::SMALL), Color32::WHITE);
             } else {
                 let c = if other { self.pal.muted } else { self.pal.text };
-                painter.text(num_rect.center(), Align2::CENTER_CENTER, num, FontId::proportional(12.5), c);
+                painter.text(num_rect.center(), Align2::CENTER_CENTER, num, FontId::proportional(theme::size::SMALL), c);
             }
             hits.push((num_rect, Hit::Day(*d)));
             let mut evs: Vec<Event> = self.data.all_day_on(*d).into_iter().cloned().collect();
@@ -1204,13 +1205,13 @@ impl App {
                 let tclip = painter.with_clip_rect(er.intersect(cell));
                 if e.all_day {
                     clip.rect_filled(er, 4.0, mix(self.pal.bg, color, 0.55));
-                    tclip.text(er.left_center() + vec2(6.0, 0.0), Align2::LEFT_CENTER, title, FontId::proportional(11.5), self.pal.text);
+                    tclip.text(er.left_center() + vec2(6.0, 0.0), Align2::LEFT_CENTER, title, FontId::proportional(theme::size::TINY), self.pal.text);
                 } else {
                     clip.circle_filled(er.left_center() + vec2(6.0, 0.0), 3.5, color);
                     let label = format!("{}  {}", p.fmt_time(e.start.time()), title);
                     let done = e.task_id.and_then(|t| self.data.task(t)).map(|t| t.done).unwrap_or(false);
                     let c = if done { self.pal.muted } else { self.pal.text };
-                    tclip.text(er.left_center() + vec2(14.0, 0.0), Align2::LEFT_CENTER, label, FontId::proportional(11.5), c);
+                    tclip.text(er.left_center() + vec2(14.0, 0.0), Align2::LEFT_CENTER, label, FontId::proportional(theme::size::TINY), c);
                 }
                 if self.selected == Some(e.id) {
                     clip.rect_stroke(er, 4.0, Stroke::new(1.0, self.pal.text), StrokeKind::Inside);
@@ -1223,7 +1224,7 @@ impl App {
                     er.left_center() + vec2(6.0, 0.0),
                     Align2::LEFT_CENTER,
                     format!("+{} more", evs.len() - show),
-                    FontId::proportional(11.5),
+                    FontId::proportional(theme::size::TINY),
                     self.pal.muted,
                 );
                 hits.push((er, Hit::Day(*d)));
@@ -1288,10 +1289,10 @@ impl App {
                 for d in &days {
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(d.format("%A, %B %-d").to_string()).size(15.0).strong());
+                        ui.label(RichText::new(d.format("%A, %B %-d").to_string()).size(theme::size::UI).strong());
                         if *d == today {
-                            egui::Frame::new().fill(accent).corner_radius(8).inner_margin(Margin::symmetric(8, 1)).show(ui, |ui| {
-                                ui.label(RichText::new("Today").size(11.0).color(Color32::WHITE));
+                            egui::Frame::new().fill(accent).corner_radius(theme::RADIUS).inner_margin(Margin::symmetric(8, 1)).show(ui, |ui| {
+                                ui.label(RichText::new("Today").size(theme::size::MICRO).color(Color32::WHITE));
                             });
                         }
                         if ui.small_button("+").on_hover_text("New event").clicked() {
