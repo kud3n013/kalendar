@@ -62,7 +62,6 @@ pub const WORK_END_MIN: i64 = 18 * 60; // to 18:00, Monday to Friday
 pub const DUE_SOON_DAYS: i64 = 7; // "Due soon" looks this many days ahead
 /// below this window width: one day, no task panel
 pub const COMPACT_W: f32 = 700.0;
-pub const ZOOM_STEP: f32 = 1.1; // one wheel notch while zooming
 pub const SYNC_EVERY_S: f64 = 900.0; // subscribed and synced calendars refresh every 15 minutes
 pub const PUSH_AFTER_S: f64 = 2.0; // a change made here is sent to its server this much later
 pub const NEXTCLOUD_WAIT_S: u64 = 300; // how long a browser sign-in is waited for
