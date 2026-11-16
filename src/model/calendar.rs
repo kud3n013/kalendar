@@ -148,6 +148,17 @@ pub struct Event {
 impl Event {
     /// Forgets where the event lives on a server: it becomes a new event
     /// of one's own.
+    /// Takes what the event window edits from `n`. What came in from the
+    /// server while the window was open (its version) and what is set
+    /// elsewhere (a colour) stay.
+    pub fn take_edits(&mut self, n: Event) {
+        self.title = n.title;
+        self.start = n.start;
+        self.end = n.end;
+        self.all_day = n.all_day;
+        self.calendar = n.calendar;
+        self.notes = n.notes;
+    }
     pub fn detach(&mut self) {
         self.remote = false;
         self.dirty = false;

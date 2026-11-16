@@ -167,6 +167,7 @@ impl Data {
                 self.events.push(Event {
                     id,
                     title: t.title.clone(),
+                    notes: t.notes.clone(),
                     start: s,
                     end: e,
                     calendar: cal,

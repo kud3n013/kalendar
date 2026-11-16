@@ -219,3 +219,17 @@ fn push_results_are_taken_in() {
     app.take_push_results(&ctx, 901, vec![sync::PushResult::Failed { error: sync::SyncError::RateLimited }]);
     assert!(app.data.calendar(901).unwrap().error.is_some() && app.data.event(500).unwrap().dirty);
 }
+
+#[test]
+fn a_task_dragged_onto_the_calendar_keeps_its_note() {
+    let ctx = egui::Context::default();
+    let mut app = App::new(Some(PathBuf::from("unused.png")));
+    app.data.tasks.push(Task { id: 7000, title: "Call".into(), notes: "Ask about the invoice".into(), ..Default::default() });
+    app.schedule_task(&ctx, 7000, App::now());
+    let block = app.data.events.iter().find(|e| e.task_id == Some(7000)).unwrap().clone();
+    assert_eq!(block.notes, "Ask about the invoice");
+
+    // the block window edits the task's note, and every block shows it
+    app.edit_event(block.id);
+    assert_eq!(app.editor.as_ref().unwrap().ev.notes, "Ask about the invoice");
+}

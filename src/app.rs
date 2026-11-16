@@ -598,7 +598,12 @@ impl App {
     /// Subscribed events open to be read; saving them is refused.
     pub fn edit_event_at(&mut self, id: u64, anchor_rect: Option<egui::Rect>) {
         if let Some(e) = self.data.event(id) {
-            self.editor = Some(EventEdit { ev: e.clone(), is_new: false, focus: false, anchor_rect });
+            let mut ev = e.clone();
+            // a block shows its task's name and note
+            if let Some(t) = ev.task_id.and_then(|t| self.data.task(t)) {
+                (ev.title, ev.notes) = (t.title.clone(), t.notes.clone());
+            }
+            self.editor = Some(EventEdit { ev, is_new: false, focus: false, anchor_rect });
             self.create = None;
             self.selected = Some(id);
         }
@@ -679,7 +684,7 @@ impl App {
             end: start + Duration::minutes(mins),
             all_day: false,
             calendar: cal,
-            notes: String::new(),
+            notes: t.notes.clone(),
             task_id: Some(task_id),
         color: None,
         ..Default::default()

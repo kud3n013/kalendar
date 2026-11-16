@@ -147,6 +147,21 @@ impl TaskList {
 
 impl Task {
     /// Forgets where the task lives on a server: it becomes a new one.
+    /// Takes what the task window edits from `n`. What came in from the
+    /// server while the window was open (its version) stays.
+    pub fn take_edits(&mut self, n: Task) {
+        self.title = n.title;
+        self.notes = n.notes;
+        self.due = n.due;
+        self.priority = n.priority;
+        self.duration_min = n.duration_min;
+        self.done = n.done;
+        self.flexible = n.flexible;
+        self.list = n.list;
+        self.tags = n.tags;
+        self.earliest = n.earliest;
+        self.repeat = n.repeat;
+    }
     pub fn detach(&mut self) {
         self.dirty = false;
         (self.uid, self.href, self.etag, self.raw) = (None, None, None, None);

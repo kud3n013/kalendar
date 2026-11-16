@@ -477,3 +477,56 @@ fn a_task_block_takes_its_list_colour() {
     let plain = Event::default();
     assert_eq!(d.event_color(&plain), d.calendar_color(plain.calendar));
 }
+
+#[test]
+fn a_planned_block_carries_its_task_note() {
+    let mut d = empty();
+    let id = add_task(&mut d, "Write", 60, &[]);
+    d.task_mut(id).unwrap().notes = "Chapter two".into();
+    d.plan_tasks(monday_8());
+    let block = d.events.iter().find(|e| e.task_id == Some(id)).unwrap();
+    assert_eq!(block.notes, "Chapter two");
+}
+
+#[test]
+fn an_older_block_note_is_kept_in_its_task() {
+    let mut d = empty();
+    d.tasks.push(Task { id: 70, title: "Write".into(), notes: "Outline".into(), ..Default::default() });
+    d.events.push(Event { id: 71, task_id: Some(70), notes: "Bring the draft".into(), ..Default::default() });
+    d.events.push(Event { id: 72, task_id: Some(70), ..Default::default() });
+    d.tasks.push(Task { id: 80, title: "Read".into(), ..Default::default() });
+    d.events.push(Event { id: 81, task_id: Some(80), notes: "Page 40".into(), ..Default::default() });
+    d.events.push(Event { id: 82, task_id: Some(80), notes: "Page 40".into(), ..Default::default() });
+    let d = Data::from_json(&serde_json::to_string(&d).unwrap()).unwrap();
+    assert_eq!(d.task(70).unwrap().notes, "Outline\n\nBring the draft");
+    assert_eq!(d.task(80).unwrap().notes, "Page 40", "the same note is not added twice");
+    for e in &d.events {
+        let t = d.task(e.task_id.unwrap()).unwrap();
+        assert_eq!((&e.title, &e.notes), (&t.title, &t.notes), "every block shows its task");
+    }
+}
+
+#[test]
+fn a_task_changed_on_the_server_updates_its_blocks() {
+    let mut d = empty();
+    d.lists.push(TaskList { id: 60, ..Default::default() });
+    d.tasks.push(Task { id: 61, list: 60, title: "Old".into(), uid: Some("t".into()), href: Some("/t.ics".into()), ..Default::default() });
+    d.events.push(Event { id: 62, task_id: Some(61), title: "Old".into(), ..Default::default() });
+    let task = crate::ics::FeedTask { uid: "t".into(), title: "New".into(), notes: "Server note".into(), due: None, priority: 0, done: false, href: Some("/t.ics".into()), etag: None };
+    d.apply_tasks(60, crate::sync::Delta { tasks: vec![task], ..Default::default() });
+    let e = d.event(62).unwrap();
+    assert_eq!((e.title.as_str(), e.notes.as_str()), ("New", "Server note"));
+}
+
+#[test]
+fn a_window_save_keeps_what_sync_brought_in() {
+    let open = Event { id: 1, title: "Old".into(), etag: Some("1".into()), href: Some("/a.ics".into()), ..Default::default() };
+    let mut live = Event { etag: Some("2".into()), color: Some([1, 2, 3]), ..open.clone() };
+    live.take_edits(Event { title: "New".into(), notes: "n".into(), ..open });
+    assert_eq!((live.title.as_str(), live.notes.as_str(), live.etag.as_deref(), live.color), ("New", "n", Some("2"), Some([1, 2, 3])));
+
+    let open = Task { id: 1, title: "Old".into(), etag: Some("1".into()), ..Default::default() };
+    let mut live = Task { etag: Some("2".into()), uid: Some("u".into()), ..open.clone() };
+    live.take_edits(Task { title: "New".into(), tags: vec!["x".into()], ..open });
+    assert_eq!((live.title.as_str(), live.tags.len(), live.etag.as_deref(), live.uid.as_deref()), ("New", 1, Some("2"), Some("u")));
+}

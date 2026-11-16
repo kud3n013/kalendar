@@ -488,7 +488,7 @@ impl App {
                     Task {
                         id: task_id,
                         title: ev.title.clone(),
-                        notes: std::mem::take(&mut ev.notes),
+                        notes: ev.notes.clone(),
                         duration_min: Some(ev.minutes()),
                         // a repeat counts from the due date: without one, the block's day
                         due: due.or((c.repeat != Repeat::None).then_some(day)),
@@ -1054,10 +1054,20 @@ impl App {
             self.snapshot();
             let id = ev.id;
             let sched = ev.task_id.map(|t| (t, ev.start.date()));
+            // a block's name and note are its task's, and so its other blocks'
+            if let Some(t) = ev.task_id.and_then(|t| self.data.task_mut(t)) {
+                if !ev.title.trim().is_empty() {
+                    t.title = ev.title.clone();
+                }
+                t.notes = ev.notes.clone();
+            }
             if let Some(slot) = self.data.event_mut(id) {
-                *slot = ev;
+                slot.take_edits(ev);
             } else {
                 self.data.events.push(ev);
+            }
+            if let Some((t, _)) = sched {
+                self.data.sync_blocks(t);
             }
             if let Some((t, day)) = sched {
                 self.after_task_scheduled(ctx, t, day);
@@ -1190,13 +1200,18 @@ impl App {
             ed.task.tags = ed.tags_text.split_whitespace().map(|t| t.trim_start_matches('#').to_string()).filter(|t| !t.is_empty()).collect();
             ed.task.earliest = NaiveDate::parse_from_str(ed.earliest_text.trim(), "%Y-%m-%d").ok();
             self.snapshot();
-            let (id, title) = (ed.task.id, ed.task.title.clone());
-            if let Some(t) = self.data.task_mut(id) {
-                *t = ed.task;
+            let id = ed.task.id;
+            let n = ed.task;
+            match self.data.task_mut(id) {
+                Some(t) => t.take_edits(n),
+                // gone while the window was open: the edit brings it back
+                None => {
+                    let mut n = n;
+                    n.detach();
+                    self.data.tasks.insert(0, n);
+                }
             }
-            for e in self.data.events.iter_mut().filter(|e| e.task_id == Some(id)) {
-                e.title = title.clone();
-            }
+            self.data.sync_blocks(id);
             self.commit();
         } else if delete {
             self.snapshot();

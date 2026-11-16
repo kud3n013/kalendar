@@ -127,7 +127,43 @@ impl Data {
     pub fn from_json(text: &str) -> Option<Data> {
         let mut d: Data = serde_json::from_str(text).ok()?;
         d.migrate();
+        d.fold_block_notes();
         Some(d)
+    }
+    /// A block shows its task's name and note. Older blocks could hold a
+    /// note of their own: it is added to the task's, so nothing is lost
+    /// when the blocks are brought in line.
+    pub fn fold_block_notes(&mut self) {
+        let mut extra: Vec<(u64, String)> = vec![];
+        for e in &self.events {
+            let (Some(tid), own) = (e.task_id, e.notes.trim()) else { continue };
+            let Some(t) = self.task(tid) else { continue };
+            let have = extra.iter().filter(|(id, _)| *id == tid).any(|(_, n)| n.contains(own));
+            if !own.is_empty() && !t.notes.contains(own) && !have {
+                extra.push((tid, own.to_string()));
+            }
+        }
+        for (tid, own) in extra {
+            if let Some(t) = self.task_mut(tid) {
+                t.notes = if t.notes.trim().is_empty() { own } else { format!("{}\n\n{}", t.notes.trim_end(), own) };
+            }
+        }
+        let ids: Vec<u64> = self.tasks.iter().map(|t| t.id).collect();
+        for id in ids {
+            self.sync_blocks(id);
+        }
+    }
+    /// Gives every block of a task the task's name and note.
+    pub fn sync_blocks(&mut self, task: u64) {
+        let Some((title, notes)) = self.task(task).map(|t| (t.title.clone(), t.notes.clone())) else { return };
+        for e in self.events.iter_mut().filter(|e| e.task_id == Some(task)) {
+            if e.title != title {
+                e.title = title.clone();
+            }
+            if e.notes != notes {
+                e.notes = notes.clone();
+            }
+        }
     }
     /// Older data files had no calendar ids: events and frames held the
     /// calendar's place in the list. Gives every calendar an id, in list
@@ -243,6 +279,17 @@ impl Data {
             e.recurrence_id = f.recurrence_id;
             e.href = f.href;
             e.etag = f.etag;
+            // a block's name and note are its task's
+            if let Some(tid) = e.task_id {
+                let (title, notes) = (e.title.clone(), e.notes.clone());
+                if let Some(t) = self.task_mut(tid) {
+                    if !title.trim().is_empty() {
+                        t.title = title;
+                    }
+                    t.notes = notes;
+                }
+                self.sync_blocks(tid);
+            }
         }
     }
     /// Takes in what a pull brought back and remembers where it stopped.
@@ -308,6 +355,8 @@ impl Data {
             t.uid = Some(f.uid);
             t.href = f.href;
             t.etag = f.etag;
+            let id = t.id;
+            self.sync_blocks(id);
         }
         if let Some(l) = self.lists.iter_mut().find(|l| l.id == list) {
             l.sync_state = d.state;
