@@ -98,13 +98,31 @@ fn pick_many(ui: &mut egui::Ui, salt: &str, none: &str, items: &[(String, egui::
             ui.label(RichText::new(tr("Nothing yet; add one with +")).weak());
         }
         for (i, (name, col, ticked)) in items.iter().enumerate() {
-            let mut t = *ticked;
-            if ui.checkbox(&mut t, RichText::new(name).color(*col)).changed() {
+            if pick_row(ui, *ticked, name, *col).clicked() {
                 hit = Some(i);
             }
         }
     });
     hit
+}
+
+/// One row of a dropdown, the same in every dropdown: the text in its
+/// colour, lit while it is picked.
+pub(crate) fn pick_row(ui: &mut egui::Ui, on: bool, text: &str, col: egui::Color32) -> egui::Response {
+    ui.selectable_label(on, RichText::new(text).color(col))
+}
+
+/// A dropdown where one thing is picked, drawn as `pick_many` draws its
+/// rows. `items` are (value, text, colour).
+fn pick_one(ui: &mut egui::Ui, salt: &str, items: &[(u64, String, egui::Color32)], current: &mut u64) {
+    let shown = items.iter().find(|i| i.0 == *current).map(|i| i.1.clone()).unwrap_or_default();
+    egui::ComboBox::from_id_salt(salt).selected_text(shown).height(320.0).show_ui(ui, |ui| {
+        for (v, text, col) in items {
+            if pick_row(ui, *v == *current, text, *col).clicked() {
+                *current = *v;
+            }
+        }
+    });
 }
 
 /// Starts the part of a window that changes with what is being made. It
@@ -168,6 +186,19 @@ fn time_of(min: i64) -> chrono::NaiveTime {
 }
 
 impl App {
+    /// The task lists as dropdown rows: (id, icon and name, colour), the
+    /// Inbox first. `writable` leaves out lists that cannot take a task.
+    pub(crate) fn list_items(&self, writable: bool) -> Vec<(u64, String, egui::Color32)> {
+        let ids = std::iter::once(0).chain(self.data.lists.iter().filter(|l| !writable || !l.read_only).map(|l| l.id));
+        ids.map(|id| {
+            let (_, col, icon) = self.data.list_look(id);
+            let name = if id == 0 { self.data.prefs.inbox_name() } else { self.data.list_look(id).0 };
+            let icon = if icon.is_empty() { icons::CIRCLE.to_string() } else { icon };
+            (id, format!("{icon} {name}"), rgb(col))
+        })
+        .collect()
+    }
+
     pub fn ui_dialogs(&mut self, ctx: &egui::Context) {
         let had_frame = self.frame_editor.is_some();
         self.dlg_create(ctx);
@@ -324,14 +355,9 @@ impl App {
 
                     if is_task {
                         label(ui, tr("List"));
-                        let lname = |id: u64| self.data.lists.iter().find(|l| l.id == id).map(|l| l.name.clone()).unwrap_or_else(|| self.data.prefs.inbox_name());
+                        let items = self.list_items(true);
                         ui.horizontal(|ui| {
-                            egui::ComboBox::from_id_salt("clist").selected_text(lname(c.task.list)).height(320.0).show_ui(ui, |ui| {
-                                ui.selectable_value(&mut c.task.list, 0, self.data.prefs.inbox_name());
-                                for l in self.data.lists.iter().filter(|l| !l.read_only) {
-                                    ui.selectable_value(&mut c.task.list, l.id, &l.name);
-                                }
-                            });
+                            pick_one(ui, "clist", &items, &mut c.task.list);
                             if let Some(name) = add_button(ui, "clist", tr("New list")) {
                                 new_list = Some(name);
                             }
@@ -524,8 +550,7 @@ impl App {
         all_tags.extend(ed.frame.filter.tags.iter().cloned());
         all_tags.sort_by_key(|t| t.to_lowercase());
         all_tags.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
-        let mut lists: Vec<(u64, String, [u8; 3])> = vec![(0, self.data.prefs.inbox_name(), [128, 128, 128])];
-        lists.extend(self.data.lists.iter().map(|l| (l.id, l.name.clone(), l.color)));
+        let lists = self.list_items(false);
         let hour12 = self.data.prefs.hour12;
         // begun from a drawn block, it is the very window the task and the
         // event are set up in: same place, same width, only the fields change
@@ -684,7 +709,7 @@ impl App {
                 egui::Grid::new("framefilter").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
                     label(ui, tr("Lists"));
                     ui.horizontal(|ui| {
-                        let items: Vec<(String, egui::Color32, bool)> = lists.iter().map(|(id, name, col)| (format!("{} {name}", icons::CIRCLE), rgb(*col), ed.frame.filter.lists.contains(id))).collect();
+                        let items: Vec<(String, egui::Color32, bool)> = lists.iter().map(|(id, text, col)| (text.clone(), *col, ed.frame.filter.lists.contains(id))).collect();
                         if let Some(i) = pick_many(ui, "flists", tr("No list"), &items) {
                             if i == CLEAR {
                                 ed.frame.filter.lists.clear();
@@ -1113,13 +1138,8 @@ impl App {
                     ui.add(egui::TextEdit::singleline(&mut ed.earliest_text).hint_text("YYYY-MM-DD").desired_width(100.0));
                     ui.end_row();
                     ui.label(RichText::new(tr("List")).color(muted));
-                    let lname = |id: u64| self.data.lists.iter().find(|l| l.id == id).map(|l| l.name.clone()).unwrap_or_else(|| self.data.prefs.inbox_name());
-                    egui::ComboBox::from_id_salt("tlist").selected_text(lname(ed.task.list)).show_ui(ui, |ui| {
-                        ui.selectable_value(&mut ed.task.list, 0, self.data.prefs.inbox_name());
-                        for l in &self.data.lists {
-                            ui.selectable_value(&mut ed.task.list, l.id, &l.name);
-                        }
-                    });
+                    let items = self.list_items(false);
+                    pick_one(ui, "tlist", &items, &mut ed.task.list);
                     ui.end_row();
                     ui.label(RichText::new(tr("Tags")).color(muted));
                     ui.add(egui::TextEdit::singleline(&mut ed.tags_text).hint_text("admin deep-work").desired_width(200.0));

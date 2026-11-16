@@ -796,10 +796,8 @@ impl App {
                             ui.close();
                         }
                         ui.menu_button(tr("Move to list"), |ui| {
-                            let mut options = vec![(0u64, self.data.prefs.inbox_name())];
-                            options.extend(self.data.lists.iter().map(|l| (l.id, l.name.clone())));
-                            for (lid, name) in options {
-                                if ui.selectable_label(t.list == lid, name).clicked() {
+                            for (lid, name, col) in self.list_items(true) {
+                                if crate::dialogs::pick_row(ui, t.list == lid, &name, col).clicked() {
                                     self.snapshot();
                                     if let Some(x) = self.data.task_mut(id) {
                                         x.list = lid;
