@@ -515,6 +515,8 @@ impl App {
                 let done_ids: Vec<u64> = self.data.tasks.iter().filter(|t| t.done).map(|t| t.id).collect();
 
                 egui::ScrollArea::vertical().id_salt("tasklist").auto_shrink([false, false]).show(ui, |ui| {
+                    // room for the first list's border, which reaches above its heading
+                    ui.add_space(6.0);
                     let mut any_pinned = false;
                     for (key, name, icon, color, items, show) in [
                         ("overdue", tr("Overdue"), icons::ALARM, theme::DANGER, &overdue, true),
