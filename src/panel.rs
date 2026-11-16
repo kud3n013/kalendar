@@ -6,6 +6,7 @@ use crate::motion;
 use crate::theme;
 use crate::icons;
 use crate::model::*;
+use crate::views::Menu;
 use crate::{fill_squircle, mix, rgb, App, Cmd};
 use chrono::{Datelike, Duration, Local, NaiveDate};
 use eframe::egui::{
@@ -587,23 +588,24 @@ impl App {
 
     /// What a list's menu offers: change how it looks, or remove it.
     fn list_menu(&mut self, ui: &mut egui::Ui, lid: u64, at: egui::Pos2) {
-        ui.set_min_width(130.0);
-        if ui.button(format!("{}  Edit", icons::PEN)).clicked() {
+        let mut m = Menu::start(ui);
+        if m.item(ui, icons::PEN, tr("Edit"), false).clicked() {
             self.list_edit = Some(crate::ListEdit { id: lid, at, fresh: true, snapped: false });
             ui.close();
         }
-        if lid == 0 {
-            return;
+        if lid != 0 {
+            let synced = self.data.lists.iter().any(|l| l.id == lid && l.account.is_some());
+            m.line(ui);
+            let b = m.item_if(ui, !synced, icons::TRASH, tr("Remove"), true);
+            let b = b.on_hover_text(tr("Its tasks go to the Inbox")).on_disabled_hover_text(tr("This list comes from an account. It goes when it is switched off under Settings, Calendars."));
+            if b.clicked() {
+                self.snapshot();
+                self.data.remove_own_list(lid);
+                self.commit();
+                ui.close();
+            }
         }
-        let synced = self.data.lists.iter().any(|l| l.id == lid && l.account.is_some());
-        let b = ui.add_enabled(!synced, egui::Button::new(RichText::new(format!("{}  Remove", icons::TRASH)).color(theme::DANGER)));
-        let b = b.on_hover_text(tr("Its tasks go to the Inbox")).on_disabled_hover_text(tr("This list comes from an account. It goes when it is switched off under Settings, Calendars."));
-        if b.clicked() {
-            self.snapshot();
-            self.data.remove_own_list(lid);
-            self.commit();
-            ui.close();
-        }
+        m.end(ui);
     }
 
     /// The little window where a list's name, colour and icon are changed.
@@ -852,11 +854,12 @@ impl App {
                                 self.edit_task(id);
                             }
                             r.context_menu(|ui| {
-                                if ui.button(tr("Edit")).clicked() {
+                                let mut m = Menu::start(ui);
+                                if m.item(ui, icons::PEN, tr("Edit"), false).clicked() {
                                     self.edit_task(id);
                                     ui.close();
                                 }
-                                ui.menu_button(tr("Move to list"), |ui| {
+                                m.sub(ui, icons::ARROW_RIGHT, tr("Move to list"), |ui| {
                                     for (lid, name, col) in self.list_items(true) {
                                         if crate::dialogs::pick_row(ui, t.list == lid, &name, col).clicked() {
                                             self.move_to_list(id, lid);
@@ -864,10 +867,12 @@ impl App {
                                         }
                                     }
                                 });
-                                if ui.button(RichText::new(tr("Delete task")).color(theme::DANGER)).clicked() {
+                                m.line(ui);
+                                if m.item(ui, icons::TRASH, tr("Delete task"), true).clicked() {
                                     self.delete_task(ctx, id);
                                     ui.close();
                                 }
+                                m.end(ui);
                             });
                         });
                         [(dr, dots, icons::ELLIPSIS, theme::size::LARGE, text), (br, bin, icons::TRASH, theme::size::SMALL, theme::DANGER)]

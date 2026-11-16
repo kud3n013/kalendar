@@ -399,6 +399,17 @@ impl App {
                 }
             }
         }
+        // all-day blocks get the same right-click menu as timed ones
+        if hresp.secondary_clicked() {
+            let pos = hresp.interact_pointer_pos();
+            self.ctx_target = pos.and_then(|q| chips.iter().find(|(_, r)| r.contains(q))).map(|(id, _)| *id);
+            if self.ctx_target.is_some() {
+                self.selected = self.ctx_target;
+            }
+        }
+        if let Some(id) = self.ctx_target {
+            hresp.context_menu(|ui| self.block_menu(ui, id));
+        }
 
         let mut sa = egui::ScrollArea::vertical().id_salt("grid").auto_shrink([false, false]).scroll_source(egui::scroll_area::ScrollSource { drag: egui::scroll_area::DragScroll::Never, ..Default::default() });
         if let Some(o) = self.scroll_to.take() {
@@ -882,41 +893,43 @@ impl App {
             if let Some(id) = target {
                 self.block_menu(ui, id);
             } else if let Some(t) = at {
-                ui.set_min_width(190.0);
-                if self.clipboard.is_some() && ui.button(format!("{}  Paste here", icons::PASTE)).clicked() {
+                let mut m = Menu::start(ui);
+                if self.clipboard.is_some() && m.item(ui, icons::PASTE, tr("Paste here"), false).clicked() {
                     self.paste_at(t, Some(false));
                     ui.close();
                 }
-                if ui.button(format!("{}  Create new event", icons::CALENDAR_PLUS)).clicked() {
+                if m.item(ui, icons::CALENDAR_PLUS, tr("Create new event"), false).clicked() {
                     self.open_new_event(t, NEW_EVENT_MIN, false);
                     ui.close();
                 }
                 let ctx = ui.ctx().clone();
                 if let Some((fid, day, name, skipped)) = &in_frame {
-                    ui.separator();
-                    ui.label(RichText::new(trf("Frame: {}", &[&name])).size(theme::size::TINY).color(self.pal.muted));
-                    if ui.button(format!("{}  Edit frame…", icons::PEN)).clicked() {
+                    m.line(ui);
+                    m.heading(ui, &trf("Frame: {}", &[&name]));
+                    if m.item(ui, icons::PEN, tr("Edit frame…"), false).clicked() {
                         self.edit_frame(*fid);
                         ui.close();
                     }
                     if *skipped {
-                        if ui.button(format!("{}  Use it this day again", icons::UNDO)).clicked() {
+                        if m.item(ui, icons::UNDO, tr("Use it this day again"), false).clicked() {
                             self.restore_frame_day(*fid, *day);
                             ui.close();
                         }
-                    } else if ui.button(format!("{}  Skip this day", icons::BAN)).clicked() {
+                    } else if m.item(ui, icons::BAN, tr("Skip this day"), false).clicked() {
                         self.skip_frame_day(&ctx, *fid, *day);
                         ui.close();
                     }
-                    if ui.button(RichText::new(format!("{}  Delete frame", icons::TRASH)).color(theme::DANGER)).clicked() {
+                    m.line(ui);
+                    if m.item(ui, icons::TRASH, tr("Delete frame"), true).clicked() {
                         self.delete_frame(&ctx, *fid);
                         ui.close();
                     }
-                } else if ui.button(format!("{}  New frame here", icons::CALENDAR_DAYS)).clicked() {
+                } else if m.item(ui, icons::CALENDAR_DAYS, tr("New frame here"), false).clicked() {
                     let s = (t - midnight(t.date())).num_minutes();
                     self.open_new_frame(t.date(), s, (s + 60).min(24 * 60), self.data.first_own_calendar(), String::new());
                     ui.close();
                 }
+                m.end(ui);
             }
         });
 
@@ -987,32 +1000,24 @@ impl App {
             ui.close();
             return;
         };
-        let red = theme::DANGER;
         let muted = self.pal.muted;
+        let mut m = Menu::start(ui);
         if self.data.locked(&ev).is_some() {
             // a subscribed event can only be copied
-            ui.set_min_width(260.0);
             let cal = self.data.calendar(ev.calendar).map(|c| c.name.clone()).unwrap_or_default();
-            ui.label(RichText::new(trf("From {} (read-only)", &[&cal])).color(muted));
-            ui.separator();
-            if ui.button(tr("Copy event")).clicked() {
+            m.heading(ui, &trf("From {} (read-only)", &[&cal]));
+            if m.item(ui, icons::COPY, tr("Copy event"), false).clicked() {
                 self.selected = Some(id);
                 self.run(&ctx, Cmd::Copy);
                 ui.close();
             }
+            m.end(ui);
             return;
         }
-        // as wide as its longest line; the colours come in two rows of seven
-        ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
-        ui.spacing_mut().button_padding = vec2(10.0, 7.0);
-        // the lines between parts are drawn last, across the width the
-        // content took: a separator would take all the room it is offered
-        let mut seps: Vec<f32> = vec![];
-        // colour dots: "no colour" first, then the palette
-        ui.add_space(4.0);
+        // colour dots: "no colour" first, then the palette, in two rows of
+        // seven, each only as wide as its dots, so the menu is as wide as
+        // its longest line and no wider
         let mut pick: Option<Option<[u8; 3]>> = None;
-        // two rows of seven, each only as wide as its dots, so the menu is as
-        // wide as its longest line and no wider
         for row in 0..2 {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
@@ -1048,55 +1053,59 @@ impl App {
             self.commit();
             ui.close();
         }
-        seps.push(menu_gap(ui));
-        let big = |t: &str| RichText::new(t).size(theme::size::UI);
+        m.line(ui);
+        if m.item(ui, icons::PEN, tr("Edit"), false).clicked() {
+            self.edit_event_at(id, None);
+            ui.close();
+        }
         if let Some(tid) = ev.task_id {
-            if ui.button(big(&format!("{}   Copy task session", icons::COPY))).clicked() {
+            if m.item(ui, icons::COPY, tr("Copy task session"), false).clicked() {
                 self.selected = Some(id);
                 self.run(&ctx, Cmd::Copy);
                 ui.close();
             }
-            seps.push(menu_gap(ui));
-            ui.horizontal(|ui| {
-                ui.add_space(10.0);
-                ui.label(RichText::new(tr("Planner")).size(theme::size::BODY).color(muted));
-            });
-            ui.menu_button(big(&format!("{}   Replan session", icons::REFRESH)), |ui| {
-                ui.set_min_width(300.0);
-                let row = |ui: &mut egui::Ui, label: &str, keys: &str, enabled: bool| -> bool {
-                    let mut hit = false;
+            m.line(ui);
+            m.heading(ui, tr("Planner"));
+            m.sub(ui, icons::REFRESH, tr("Replan session"), |ui| {
+                let mut s = Menu::start(ui);
+                // each row keeps its keys at the far end
+                let row = |ui: &mut egui::Ui, s: &Menu, icon: &str, label: &str, keys: &str, enabled: bool| -> bool {
                     ui.horizontal(|ui| {
-                        hit = ui.add_enabled(enabled, egui::Button::new(label).frame(false)).clicked();
+                        let hit = s.item_if(ui, enabled, icon, label, false).clicked();
+                        ui.add_space(16.0);
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            ui.add_space(10.0);
                             ui.label(RichText::new(keys).monospace().size(theme::size::MICRO).color(muted));
                         });
-                    });
-                    hit
+                        hit
+                    })
+                    .inner
                 };
-                if row(ui, tr("Reschedule this session"), tr("Shift+R"), true) {
+                if row(ui, &s, icons::CALENDAR_DAYS, tr("Reschedule this session"), tr("Shift+R"), true) {
                     self.reschedule_session(&ctx, id);
                     ui.close();
                 }
-                if row(ui, tr("Complete & schedule more time"), tr("Shift+F"), true) {
+                if row(ui, &s, icons::CHECK, tr("Complete & schedule more time"), tr("Shift+F"), true) {
                     self.follow_up(&ctx, id);
                     ui.close();
                 }
-                if row(ui, tr("Split & reschedule remaining time"), tr("Shift+S"), self.split_time(id).is_some()) {
+                if row(ui, &s, icons::SHUFFLE, tr("Split & reschedule remaining time"), tr("Shift+S"), self.split_time(id).is_some()) {
                     self.split_session(&ctx, id);
                     ui.close();
                 }
-                ui.separator();
-                if row(ui, tr("Unschedule session"), tr("Del"), true) {
+                s.line(ui);
+                if row(ui, &s, icons::X, tr("Unschedule session"), tr("Del"), true) {
                     self.delete_event(&ctx, id);
                     ui.close();
                 }
+                s.end(ui);
             });
             let mut flexible = self.data.task(tid).map(|t| t.flexible).unwrap_or(false);
             // the tick sits right after the words: a right-aligned one would
             // stretch the menu to its widest
             ui.horizontal(|ui| {
                 ui.add_space(10.0);
-                ui.label(big(&format!("{}   Flexible task", icons::SHUFFLE)));
+                ui.label(RichText::new(format!("{}   {}", icons::SHUFFLE, tr("Flexible task"))).size(theme::size::UI));
                 ui.label(RichText::new("(i)").size(theme::size::MICRO).color(muted)).on_hover_text(
                     tr("The planner may move flexible tasks to make room for more important ones."),
                 );
@@ -1109,33 +1118,28 @@ impl App {
                     self.commit();
                 }
             });
-            seps.push(menu_gap(ui));
-            if ui.button(big(&format!("{}   Unschedule session", icons::X)).color(red)).clicked() {
+            m.line(ui);
+            if m.item(ui, icons::X, tr("Unschedule session"), true).clicked() {
                 self.delete_event(&ctx, id);
                 ui.close();
             }
-            if ui.button(big(&format!("{}   Unschedule and delete task", icons::TRASH)).color(red)).clicked() {
+            if m.item(ui, icons::TRASH, tr("Unschedule and delete task"), true).clicked() {
                 self.delete_task(&ctx, tid);
                 ui.close();
             }
         } else {
-            if ui.button(big(&format!("{}   Copy event", icons::COPY))).clicked() {
+            if m.item(ui, icons::COPY, tr("Copy event"), false).clicked() {
                 self.selected = Some(id);
                 self.run(&ctx, Cmd::Copy);
                 ui.close();
             }
-            seps.push(menu_gap(ui));
-            if ui.button(big(&format!("{}   Delete event", icons::TRASH)).color(red)).clicked() {
+            m.line(ui);
+            if m.item(ui, icons::TRASH, tr("Delete event"), true).clicked() {
                 self.delete_event(&ctx, id);
                 ui.close();
             }
         }
-        ui.add_space(2.0);
-        let x = ui.min_rect().x_range();
-        let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
-        for y in seps {
-            ui.painter().hline(x, y, stroke);
-        }
+        m.end(ui);
     }
 
     // ---------------------------------------------------------------- month
@@ -1261,6 +1265,19 @@ impl App {
                 self.edit_event_at(id, Some(r));
             }
         }
+        // a right click on a block opens the same menu as in the week
+        if resp.secondary_clicked() {
+            self.ctx_target = match resp.interact_pointer_pos().and_then(hit_at) {
+                Some(Hit::Ev(id)) => Some(id),
+                _ => None,
+            };
+            if self.ctx_target.is_some() {
+                self.selected = self.ctx_target;
+            }
+        }
+        if let Some(id) = self.ctx_target {
+            resp.context_menu(|ui| self.block_menu(ui, id));
+        }
         if let Some(tid) = self.drag_task {
             if let Some(d) = ctx.input(|i| i.pointer.latest_pos()).and_then(cell_at) {
                 if let Some((r, _)) = cells.iter().find(|(_, x)| *x == d) {
@@ -1332,6 +1349,7 @@ impl App {
                             if r.double_clicked() {
                                 self.edit_event_at(e.id, Some(r.rect));
                             }
+                            r.context_menu(|ui| self.block_menu(ui, e.id));
                         });
                     }
                     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 6.0), Sense::hover());
@@ -1342,9 +1360,71 @@ impl App {
     }
 }
 
-/// Leaves a gap where a line goes between parts of a menu, and gives the
-/// height to draw it at once the menu's width is known.
-fn menu_gap(ui: &mut egui::Ui) -> f32 {
-    let (r, _) = ui.allocate_exact_size(vec2(0.0, 7.0), Sense::hover());
-    r.center().y
+
+/// Every right-click menu is drawn the same way: this sets it up, adds its
+/// rows and draws the lines between its parts.
+pub struct Menu {
+    /// heights of the lines between parts, drawn once the width is known:
+    /// a separator would take all the room it is offered
+    seps: Vec<f32>,
+}
+
+impl Menu {
+    /// Sets the spacing and padding the menu's rows use.
+    pub fn start(ui: &mut egui::Ui) -> Self {
+        ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
+        ui.spacing_mut().button_padding = vec2(10.0, 7.0);
+        ui.add_space(2.0);
+        Menu { seps: vec![] }
+    }
+
+    /// A row: an icon, then its words. A red one removes something.
+    pub fn item(&self, ui: &mut egui::Ui, icon: &str, label: &str, red: bool) -> egui::Response {
+        self.item_if(ui, true, icon, label, red)
+    }
+
+    /// A row that can be greyed out.
+    pub fn item_if(&self, ui: &mut egui::Ui, enabled: bool, icon: &str, label: &str, red: bool) -> egui::Response {
+        let w = words(icon, label, red);
+        ui.add_enabled(enabled, egui::Button::new(w))
+    }
+
+    /// A row that opens a smaller menu beside it.
+    pub fn sub(&self, ui: &mut egui::Ui, icon: &str, label: &str, add: impl FnOnce(&mut egui::Ui)) {
+        ui.menu_button(words(icon, label, false), add);
+    }
+
+    /// A small grey heading over the next part.
+    pub fn heading(&self, ui: &mut egui::Ui, text: &str) {
+        ui.horizontal(|ui| {
+            ui.add_space(10.0);
+            let c = ui.visuals().weak_text_color();
+            ui.label(RichText::new(text).size(theme::size::BODY).color(c));
+        });
+    }
+
+    /// Leaves a gap where a line goes between two parts.
+    pub fn line(&mut self, ui: &mut egui::Ui) {
+        let (r, _) = ui.allocate_exact_size(vec2(0.0, 7.0), Sense::hover());
+        self.seps.push(r.center().y);
+    }
+
+    /// Draws the lines across the width the menu took.
+    pub fn end(self, ui: &mut egui::Ui) {
+        ui.add_space(2.0);
+        let x = ui.min_rect().x_range();
+        let stroke = ui.visuals().widgets.noninteractive.bg_stroke;
+        for y in self.seps {
+            ui.painter().hline(x, y, stroke);
+        }
+    }
+}
+
+fn words(icon: &str, label: &str, red: bool) -> RichText {
+    let t = RichText::new(format!("{icon}   {label}")).size(theme::size::UI);
+    if red {
+        t.color(theme::DANGER)
+    } else {
+        t
+    }
 }
