@@ -408,7 +408,7 @@ impl App {
             }
         }
         if let Some(id) = self.ctx_target {
-            hresp.context_menu(|ui| self.block_menu(ui, id));
+            context_menu(&hresp, |ui| self.block_menu(ui, id));
         }
 
         let mut sa = egui::ScrollArea::vertical().id_salt("grid").auto_shrink([false, false]).scroll_source(egui::scroll_area::ScrollSource { drag: egui::scroll_area::DragScroll::Never, ..Default::default() });
@@ -889,7 +889,7 @@ impl App {
         let target = self.ctx_target;
         let at = self.ctx_time;
         let in_frame = self.ctx_frame.and_then(|(id, day)| self.data.frame(id).map(|f| (id, day, f.name.clone(), f.skip.contains(&day))));
-        resp.context_menu(|ui| {
+        context_menu(&resp, |ui| {
             if let Some(id) = target {
                 self.block_menu(ui, id);
             } else if let Some(t) = at {
@@ -1285,7 +1285,7 @@ impl App {
             }
         }
         if let Some(id) = self.ctx_target {
-            resp.context_menu(|ui| self.block_menu(ui, id));
+            context_menu(&resp, |ui| self.block_menu(ui, id));
         }
         if let Some(tid) = self.drag_task {
             if let Some(d) = ctx.input(|i| i.pointer.latest_pos()).and_then(cell_at) {
@@ -1358,7 +1358,7 @@ impl App {
                             if r.double_clicked() {
                                 self.edit_event_at(e.id, Some(r.rect));
                             }
-                            r.context_menu(|ui| self.block_menu(ui, e.id));
+                            context_menu(&r, |ui| self.block_menu(ui, e.id));
                         });
                     }
                     let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 6.0), Sense::hover());
@@ -1369,6 +1369,25 @@ impl App {
     }
 }
 
+
+/// A right-click menu on `resp`. Unlike egui's own, a second right-click on
+/// the same widget while its menu is open moves the menu there instead of
+/// just closing it: egui closes it this frame, and we open it again next.
+pub fn context_menu(resp: &egui::Response, add: impl FnOnce(&mut egui::Ui)) {
+    let ctx = &resp.ctx;
+    let id = egui::Popup::default_response_id(resp);
+    let again = id.with("again");
+    let reopen = ctx.data_mut(|d| d.remove_temp::<bool>(again)).unwrap_or(false);
+    if resp.secondary_clicked() && egui::Popup::is_id_open(ctx, id) {
+        ctx.data_mut(|d| d.insert_temp(again, true));
+        ctx.request_repaint();
+    }
+    let mut popup = egui::Popup::context_menu(resp);
+    if reopen {
+        popup = popup.open_memory(egui::SetOpenCommand::Bool(true));
+    }
+    popup.show(add);
+}
 
 /// Every right-click menu is drawn the same way: this sets it up, adds its
 /// rows and draws the lines between its parts.

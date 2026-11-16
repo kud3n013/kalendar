@@ -6,7 +6,7 @@ use crate::motion;
 use crate::theme;
 use crate::icons;
 use crate::model::*;
-use crate::views::Menu;
+use crate::views::{context_menu, Menu};
 use crate::{fill_squircle, mix, rgb, App, Cmd};
 use chrono::{Datelike, Duration, Local, NaiveDate};
 use eframe::egui::{
@@ -771,7 +771,7 @@ impl App {
             let open = menu.is_open();
             row_btn(ui, dr, &dots, icons::ELLIPSIS, theme::size::LARGE, glow, open, text, (muted, text));
             menu.show(|ui| self.list_menu(ui, lid, at));
-            resp.context_menu(|ui| self.list_menu(ui, lid, at));
+            context_menu(&resp, |ui| self.list_menu(ui, lid, at));
         }
         let a = ctx.animate_bool_with_time(ids::section_open(key), !collapsed, motion::NORMAL.secs());
         if a > 0.0 {
@@ -853,7 +853,7 @@ impl App {
                             if r.clicked() {
                                 self.edit_task(id);
                             }
-                            r.context_menu(|ui| {
+                            context_menu(&r, |ui| {
                                 let mut m = Menu::start(ui);
                                 if m.item(ui, icons::PEN, tr("Edit"), false).clicked() {
                                     self.edit_task(id);
