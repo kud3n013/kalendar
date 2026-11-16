@@ -345,9 +345,9 @@ impl App {
     /// The mouse's back and forward buttons (4 and 5) move the view: a week
     /// or a month at a time, and a single day in the day views.
     pub fn mouse_nav(&mut self, ctx: &egui::Context) {
+        let inline = !self.own_windows;
         let open = self.show_prefs
-            || self.editor.is_some()
-            || self.task_editor.is_some()
+            || (inline && (self.editor.is_some() || self.task_editor.is_some()))
             || self.command_bar.is_some()
             || self.create.is_some()
             || self.frame_editor.is_some();
@@ -369,8 +369,9 @@ impl App {
     }
 
     pub fn keys(&mut self, ctx: &egui::Context) {
-        let dialogs = self.editor.is_some()
-            || self.task_editor.is_some()
+        // editors in windows of their own take their own keys
+        let inline = !self.own_windows;
+        let dialogs = (inline && (self.editor.is_some() || self.task_editor.is_some()))
             || self.command_bar.is_some()
             || self.create.is_some()
             || self.frame_editor.is_some()
@@ -403,7 +404,7 @@ impl App {
                 self.new_task_open = false;
             } else if self.create.take().is_some() {
             } else if self.frame_editor.take().is_some() {
-            } else if self.editor.take().is_some() || self.task_editor.take().is_some() {
+            } else if inline && (self.editor.take().is_some() || self.task_editor.take().is_some()) {
             } else if self.show_prefs {
                 self.show_prefs = false;
             } else {

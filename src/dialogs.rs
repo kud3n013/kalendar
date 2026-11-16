@@ -7,7 +7,7 @@ use crate::theme;
 use crate::icons;
 use crate::model::*;
 use crate::views::midnight;
-use crate::{mix, rgb, App, Cmd, CreateKind, COMMANDS};
+use crate::{mix, rgb, App, Cmd, CreateKind, EventEdit, TaskEdit, COMMANDS};
 use chrono::{Duration, Local, NaiveDate, Timelike};
 use eframe::egui::{self, pos2, Align, Align2, FontId, Id, Layout, Margin, RichText, Stroke};
 
@@ -917,10 +917,8 @@ impl App {
 
     fn dlg_event(&mut self, ctx: &egui::Context) {
         let Some(mut ed) = self.editor.take() else { return };
-        let (mut save, mut cancel, mut delete) = (false, false, false);
+        self.sync_event_edit(&mut ed);
         let is_task = ed.ev.task_id.is_some();
-        let hour12 = self.data.prefs.hour12;
-        let muted = self.pal.muted;
         let title = if ed.is_new {
             tr("New event")
         } else if is_task {
@@ -928,14 +926,95 @@ impl App {
         } else {
             tr("Event")
         };
-        let id = ids::event_editor();
-        let mut win = egui::Window::new(title).id(id).collapsible(false).resizable(false);
-        win = match ed.anchor_rect {
-            // the width includes the window's frame around the 330 of content
-            Some(r) => win.fixed_pos(place_beside(ctx, id, r, egui::vec2(346.0, 400.0))),
-            None => win.anchor(Align2::RIGHT_TOP, [-16.0, 64.0]),
+        let at = self.editor_spot(ctx, ids::event_editor().with(ed.ev.id), ed.anchor_rect);
+        let (save, cancel, delete) = self.edit_window(ctx, "event_editor", title, at, [366.0, 440.0], |app, ui| app.event_form(ui, &mut ed));
+        self.finish_event_edit(ctx, ed, save, cancel, delete);
+    }
+
+    /// Where an editor window opens: beside the block it came from, else at
+    /// the main window's top right. Kept for as long as it edits that item.
+    fn editor_spot(&self, ctx: &egui::Context, key: egui::Id, anchor: Option<egui::Rect>) -> egui::Pos2 {
+        if let Some(p) = ctx.data(|d| d.get_temp::<egui::Pos2>(key)) {
+            return p;
+        }
+        let main = ctx.input(|i| i.viewport().inner_rect).unwrap_or(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 800.0)));
+        let p = match anchor {
+            Some(r) => main.min + egui::vec2(r.right() + 12.0, r.top().max(40.0)),
+            None => egui::pos2(main.right() - 400.0, main.top() + 64.0),
         };
-        win.show(ctx, |ui| {
+        ctx.data_mut(|d| d.insert_temp(key, p));
+        p
+    }
+
+    /// Shows an editor in a window of its own, so the person can work in the
+    /// main window and come back to it; where the system can't open one it
+    /// sits inside the main window. Closing it or Esc cancels.
+    fn edit_window(
+        &mut self,
+        ctx: &egui::Context,
+        name: &str,
+        title: &str,
+        at: egui::Pos2,
+        size: [f32; 2],
+        mut form: impl FnMut(&mut App, &mut egui::Ui) -> (bool, bool, bool),
+    ) -> (bool, bool, bool) {
+        let builder = egui::ViewportBuilder::default()
+            .with_title(title)
+            .with_app_id("kalendar")
+            .with_position(at)
+            .with_inner_size(size)
+            .with_min_inner_size([300.0, 240.0])
+            .with_window_level(egui::WindowLevel::AlwaysOnTop);
+        let mut out = (false, false, false);
+        ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(name), builder, |ui, class| {
+            if class == egui::ViewportClass::EmbeddedWindow {
+                self.own_windows = false;
+                out = form(self, ui);
+                return;
+            }
+            self.own_windows = true;
+            let ctx = ui.ctx().clone();
+            egui::CentralPanel::default().frame(egui::Frame::new().fill(self.pal.bg).inner_margin(14)).show(ui, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| out = form(self, ui));
+            });
+            let (close, esc) = ctx.input(|i| (i.viewport().close_requested(), i.key_pressed(egui::Key::Escape)));
+            if close || esc {
+                out.1 = true;
+            }
+        });
+        out
+    }
+
+    /// Takes into the editor what changed in the stored event since it last
+    /// looked (a drag, a resize, undo), keeping the person's other edits.
+    fn sync_event_edit(&self, ed: &mut EventEdit) {
+        let Some(base) = ed.base.as_ref() else { return };
+        let Some(now) = self.shown_event(ed.ev.id) else { return };
+        if (now.start, now.end, now.all_day) != (base.start, base.end, base.all_day) {
+            (ed.ev.start, ed.ev.end, ed.ev.all_day) = (now.start, now.end, now.all_day);
+        }
+        if now.title != base.title {
+            ed.ev.title = now.title.clone();
+        }
+        if now.notes != base.notes {
+            ed.ev.notes = now.notes.clone();
+        }
+        if now.calendar != base.calendar {
+            ed.ev.calendar = now.calendar;
+        }
+        if now.color != base.color {
+            ed.ev.color = now.color;
+        }
+        ed.base = Some(now);
+    }
+
+    /// The event editor's fields; returns save, cancel, delete.
+    fn event_form(&mut self, ui: &mut egui::Ui, ed: &mut EventEdit) -> (bool, bool, bool) {
+        let (mut save, mut cancel, mut delete) = (false, false, false);
+        let is_task = ed.ev.task_id.is_some();
+        let hour12 = self.data.prefs.hour12;
+        let muted = self.pal.muted;
+        {
                 ui.set_width(330.0);
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut ed.ev.title)
@@ -1054,7 +1133,11 @@ impl App {
                 if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter)) {
                     save = true;
                 }
-            });
+        }
+        (save, cancel, delete)
+    }
+
+    fn finish_event_edit(&mut self, ctx: &egui::Context, ed: EventEdit, save: bool, cancel: bool, delete: bool) {
         if let Some(why) = self.data.locked(&ed.ev).filter(|_| save) {
             self.say(ctx, why, false);
         } else if save {
@@ -1091,21 +1174,46 @@ impl App {
         } else if delete {
             self.delete_event(ctx, ed.ev.id);
         } else if !cancel {
-            self.editor = Some(ed);
+            return self.editor = Some(ed);
         }
+        ctx.data_mut(|d| d.remove_temp::<egui::Pos2>(ids::event_editor().with(ed.ev.id)));
     }
 
     fn dlg_task(&mut self, ctx: &egui::Context) {
         let Some(mut ed) = self.task_editor.take() else { return };
+        self.sync_task_edit(&mut ed);
+        let at = self.editor_spot(ctx, ids::task_editor().with(ed.task.id), None);
+        let (save, cancel, delete) = self.edit_window(ctx, "task_editor", tr("Task"), at, [396.0, 600.0], |app, ui| app.task_form(ui, &mut ed));
+        self.finish_task_edit(ctx, ed, save, cancel, delete);
+    }
+
+    /// As [`Self::sync_event_edit`], for a task: what changed elsewhere
+    /// (ticked off, moved to a list, a due date from scheduling) comes in.
+    fn sync_task_edit(&self, ed: &mut TaskEdit) {
+        let Some(now) = self.data.task(ed.task.id).cloned() else { return };
+        let (b, t) = (&ed.base, &mut ed.task);
+        macro_rules! take {
+            ($($f:ident),*) => { $( if now.$f != b.$f { t.$f = now.$f.clone(); } )* };
+        }
+        take!(title, notes, done, priority, duration_min, list, repeat, flexible);
+        if now.due != b.due {
+            ed.due_text = now.due.map(|d| d.to_string()).unwrap_or_default();
+        }
+        if now.tags != b.tags {
+            ed.tags_text = now.tags.join(" ");
+        }
+        if now.earliest != b.earliest {
+            ed.earliest_text = now.earliest.map(|d| d.to_string()).unwrap_or_default();
+        }
+        ed.base = now;
+    }
+
+    /// The task editor's fields; returns save, cancel, delete.
+    fn task_form(&mut self, ui: &mut egui::Ui, ed: &mut TaskEdit) -> (bool, bool, bool) {
         let (mut save, mut cancel, mut delete) = (false, false, false);
         let today = Local::now().date_naive();
         let muted = self.pal.muted;
-        egui::Window::new(tr("Task"))
-            .id(ids::task_editor())
-            .collapsible(false)
-            .resizable(false)
-            .anchor(Align2::CENTER_CENTER, [0.0, -40.0])
-            .show(ctx, |ui| {
+        {
                 ui.set_width(360.0);
                 let r = ui.add(
                     egui::TextEdit::singleline(&mut ed.task.title)
@@ -1199,7 +1307,12 @@ impl App {
                 if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter)) {
                     save = true;
                 }
-            });
+        }
+        (save, cancel, delete)
+    }
+
+    fn finish_task_edit(&mut self, ctx: &egui::Context, mut ed: TaskEdit, save: bool, cancel: bool, delete: bool) {
+        let key = ids::task_editor().with(ed.task.id);
         if save {
             let text = ed.due_text.trim().to_string();
             if text.is_empty() {
@@ -1235,8 +1348,9 @@ impl App {
             self.commit();
             self.say(ctx, tr("Task deleted"), true);
         } else if !cancel {
-            self.task_editor = Some(ed);
+            return self.task_editor = Some(ed);
         }
+        ctx.data_mut(|d| d.remove_temp::<egui::Pos2>(key));
     }
 
     fn dlg_command(&mut self, ctx: &egui::Context) {
@@ -1383,5 +1497,56 @@ impl App {
         } else if dismiss {
             self.toast = None;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn app_with_event() -> App {
+        let mut app = App::new(Some(PathBuf::from("unused.png")));
+        app.data.events.clear();
+        let start = App::now();
+        let calendar = app.data.first_own_calendar();
+        app.data.events.push(Event { id: 700, title: "Talk".into(), start, end: start + Duration::hours(1), calendar, ..Default::default() });
+        app
+    }
+
+    #[test]
+    fn a_drag_reaches_an_open_event_editor_and_keeps_typed_text() {
+        let mut app = app_with_event();
+        app.edit_event(700);
+        let mut ed = app.editor.take().unwrap();
+        ed.ev.notes = "typed, not saved".into();
+        // the block is dragged an hour later in the main window
+        let moved = app.data.event(700).unwrap().start + Duration::hours(1);
+        let e = app.data.event_mut(700).unwrap();
+        (e.start, e.end) = (moved, moved + Duration::hours(1));
+        app.sync_event_edit(&mut ed);
+        assert_eq!(ed.ev.start, moved);
+        assert_eq!(ed.ev.notes, "typed, not saved");
+        // a later frame with nothing new changes nothing
+        ed.ev.title = "Talk prep".into();
+        app.sync_event_edit(&mut ed);
+        assert_eq!(ed.ev.title, "Talk prep");
+    }
+
+    #[test]
+    fn a_change_elsewhere_reaches_an_open_task_editor() {
+        let mut app = app_with_event();
+        let id = app.data.new_id();
+        app.data.tasks.push(Task { id, title: "Write".into(), ..Default::default() });
+        app.edit_task(id);
+        let mut ed = app.task_editor.take().unwrap();
+        ed.task.notes = "draft".into();
+        let day = App::now().date();
+        let t = app.data.task_mut(id).unwrap();
+        (t.done, t.due) = (true, Some(day));
+        app.sync_task_edit(&mut ed);
+        assert!(ed.task.done);
+        assert_eq!(ed.due_text, day.to_string());
+        assert_eq!(ed.task.notes, "draft");
     }
 }

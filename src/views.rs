@@ -695,7 +695,7 @@ impl App {
                     }
                 } else if o.x >= x0 {
                     let anchor = snap_dt(pos_to(o), snap, -1);
-                    self.editor = None;
+                    self.close_inline_editor();
                     self.close_block_window();
                     self.selected = None;
                     self.drag = Some(Drag::Create {
@@ -849,8 +849,8 @@ impl App {
                         }
                         _ => self.selected = Some(id),
                     }
-                } else if self.editor.is_some() || self.block_window_open() {
-                    self.editor = None;
+                } else if (self.editor.is_some() && !self.own_windows) || self.block_window_open() {
+                    self.close_inline_editor();
                     self.close_block_window();
                 } else if self.selected.is_some() {
                     self.selected = None;
@@ -1258,7 +1258,7 @@ impl App {
                         self.view = View::Days(1);
                     }
                     None => {
-                        if self.editor.is_some() {
+                        if self.editor.is_some() && !self.own_windows {
                             self.editor = None;
                         } else if self.selected.is_some() {
                             self.selected = None;

@@ -20,6 +20,10 @@ pub struct EventEdit {
     /// the block the editor was opened from, in screen points; the window
     /// sits beside it, and without one it keeps its usual corner
     pub anchor_rect: Option<egui::Rect>,
+    /// the event as stored when the editor last looked; a change made
+    /// elsewhere (a drag, undo) is told apart from the person's own edits
+    /// and taken into the editor
+    pub base: Option<Event>,
 }
 
 /// What a block drawn on the calendar becomes.
@@ -79,6 +83,8 @@ pub struct TaskEdit {
     pub tags_text: String,
     pub earliest_text: String,
     pub focus: bool,
+    /// the task as stored when the editor last looked, as for [`EventEdit::base`]
+    pub base: Task,
 }
 
 pub struct Toast {
@@ -97,6 +103,9 @@ pub struct App {
     pub selected: Option<u64>,
     pub editor: Option<EventEdit>,
     pub task_editor: Option<TaskEdit>,
+    /// whether this system shows the editors in windows of their own, as
+    /// last seen; without that they sit inside the main window
+    pub own_windows: bool,
     pub create: Option<CreateEdit>,
     pub frame_editor: Option<FrameEdit>,
     pub drag: Option<Drag>,
@@ -245,6 +254,7 @@ impl App {
             selected: None,
             editor: None,
             task_editor: None,
+            own_windows: true,
             create: None,
             frame_editor: None,
             drag: None,
@@ -498,7 +508,7 @@ impl App {
             CreateKind::Task,
             anchor_rect,
         ));
-        self.editor = None;
+        self.close_inline_editor();
         self.selected = None;
     }
 
@@ -521,7 +531,7 @@ impl App {
             focus: true,
         });
         self.create = None;
-        self.editor = None;
+        self.close_inline_editor();
         self.selected = None;
     }
 
@@ -535,7 +545,7 @@ impl App {
                 focus: false,
             });
             self.create = None;
-            self.editor = None;
+            self.close_inline_editor();
         }
     }
 
@@ -586,6 +596,7 @@ impl App {
             is_new: true,
             focus: true,
             anchor_rect: None,
+            base: None,
         });
         self.selected = None;
     }
@@ -597,15 +608,27 @@ impl App {
     /// Opens the editor for an event; with a block rect it sits beside it.
     /// Subscribed events open to be read; saving them is refused.
     pub fn edit_event_at(&mut self, id: u64, anchor_rect: Option<egui::Rect>) {
-        if let Some(e) = self.data.event(id) {
-            let mut ev = e.clone();
-            // a block shows its task's name and note
-            if let Some(t) = ev.task_id.and_then(|t| self.data.task(t)) {
-                (ev.title, ev.notes) = (t.title.clone(), t.notes.clone());
-            }
-            self.editor = Some(EventEdit { ev, is_new: false, focus: false, anchor_rect });
+        if let Some(ev) = self.shown_event(id) {
+            self.editor = Some(EventEdit { base: Some(ev.clone()), ev, is_new: false, focus: false, anchor_rect });
             self.create = None;
             self.selected = Some(id);
+        }
+    }
+
+    /// An event as its editor shows it: a block carries its task's name and note.
+    pub fn shown_event(&self, id: u64) -> Option<Event> {
+        let mut ev = self.data.event(id)?.clone();
+        if let Some(t) = ev.task_id.and_then(|t| self.data.task(t)) {
+            (ev.title, ev.notes) = (t.title.clone(), t.notes.clone());
+        }
+        Some(ev)
+    }
+
+    /// Closes the event editor only when it sits inside the main window;
+    /// in a window of its own it stays open while the person does other things.
+    pub fn close_inline_editor(&mut self) {
+        if !self.own_windows {
+            self.editor = None;
         }
     }
 
@@ -617,6 +640,7 @@ impl App {
                 tags_text: t.tags.join(" "),
                 earliest_text: t.earliest.map(|d| d.to_string()).unwrap_or_default(),
                 focus: false,
+                base: t.clone(),
             });
         }
     }
@@ -740,7 +764,7 @@ impl App {
         let keep_clock = src.all_day || onto_all_day == Some(true);
         e.start = if keep_clock { src.start + day_shift } else { at };
         e.end = e.start + len;
-        self.editor = None;
+        self.close_inline_editor();
         self.selected = Some(e.id);
         self.data.events.push(e);
         self.commit();
