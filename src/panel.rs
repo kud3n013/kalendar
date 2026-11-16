@@ -765,15 +765,19 @@ impl App {
             });
             ui.add_space(6.0 * a);
         }
-        if let (Some(tid), Some(lid)) = (drop_task, list) {
-            let area = Rect::from_min_max(r.min, pos2(r.max.x, ui.cursor().min.y.max(r.max.y))).expand2(vec2(6.0, 0.0));
-            let over = ui.rect_contains_pointer(area);
+        // every list sits on a faint wash of its own colour, lit up while
+        // a task from another list is held over it
+        if let Some(lid) = list {
+            let area = Rect::from_min_max(r.min, pos2(r.max.x, ui.cursor().min.y.max(r.max.y))).expand2(vec2(6.0, 2.0));
+            let over = drop_task.is_some() && ui.rect_contains_pointer(area);
             let lit = ctx.animate_bool_with_time(ids::section_drop(key), over, motion::HOVER.secs());
-            if lit > 0.0 {
-                let pts = crate::squircle_points(area, theme::RADIUS);
-                ui.painter().set(drop_mark, egui::Shape::convex_polygon(pts, color.gamma_multiply(0.14 * lit), Stroke::new(1.5, color.gamma_multiply(lit))));
-            }
-            if over && ctx.input(|i| i.pointer.any_released()) {
+            let soft = mix(color, text, 0.25);
+            let fill = soft.gamma_multiply(0.05 + 0.09 * lit);
+            let line = Stroke::new(1.0 + 0.5 * lit, mix(soft, color, lit).gamma_multiply(0.30 + 0.70 * lit));
+            ui.painter().set(drop_mark, egui::Shape::convex_polygon(crate::squircle_points(area, theme::RADIUS), fill, line));
+            ui.add_space(8.0);
+            let Some(tid) = drop_task.filter(|_| over) else { return };
+            if ctx.input(|i| i.pointer.any_released()) {
                 self.move_to_list(tid, lid);
                 self.drag_task = None;
                 self.say(ctx, trf("Moved to {}", &[&name]), true);

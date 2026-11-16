@@ -118,8 +118,10 @@ impl Data {
     pub fn task_is_scheduled(&self, id: u64) -> bool {
         self.events.iter().any(|e| e.task_id == Some(id))
     }
+    /// An event's own colour, else for a task's block its list's colour,
+    /// else its calendar's.
     pub fn event_color(&self, e: &Event) -> [u8; 3] {
-        e.color.unwrap_or_else(|| self.calendar_color(e.calendar))
+        e.color.or_else(|| self.task(e.task_id?).map(|t| self.list_look(t.list).1)).unwrap_or_else(|| self.calendar_color(e.calendar))
     }
     /// Reads a data file, bringing an older one up to date.
     pub fn from_json(text: &str) -> Option<Data> {

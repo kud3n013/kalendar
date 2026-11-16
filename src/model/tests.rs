@@ -464,3 +464,16 @@ fn refreshing_a_feed_keeps_event_ids() {
     d.apply_full(1, vec![]);
     assert_eq!(d.events.len(), 2);
 }
+
+#[test]
+fn a_task_block_takes_its_list_colour() {
+    let mut d = Data::sample(ymd(11, 18));
+    d.lists.push(TaskList { id: 9005, color: [1, 2, 3], ..Default::default() });
+    d.tasks.push(Task { id: 9007, list: 9005, ..Default::default() });
+    let block = Event { task_id: Some(9007), ..Default::default() };
+    assert_eq!(d.event_color(&block), [1, 2, 3]);
+    let painted = Event { color: Some([9, 9, 9]), ..block.clone() };
+    assert_eq!(d.event_color(&painted), [9, 9, 9], "a colour picked for the block wins");
+    let plain = Event::default();
+    assert_eq!(d.event_color(&plain), d.calendar_color(plain.calendar));
+}

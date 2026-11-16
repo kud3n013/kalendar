@@ -236,7 +236,7 @@ impl App {
         let h = if misfit { 50.0 } else { 34.0 };
         let r = Rect::from_min_size(pos + vec2(10.0, 8.0), vec2(230.0, h));
         fill_squircle(&p, r, theme::RADIUS, mix(self.pal.side, self.pal.text, 0.12));
-        stroke_squircle(&p, r.shrink(0.5), theme::RADIUS, Stroke::new(1.0, self.pal.accent));
+        stroke_squircle(&p, r.shrink(0.5), theme::RADIUS, Stroke::new(1.0, rgb(self.data.list_look(t.list).1)));
         let clip = p.with_clip_rect(r.shrink(4.0));
         let title_y = if misfit { r.top() + 17.0 } else { r.center().y };
         clip.text(pos2(r.left() + 10.0, title_y), Align2::LEFT_CENTER, &t.title, FontId::proportional(theme::size::CAPTION), self.pal.text);
@@ -954,10 +954,11 @@ impl App {
                         f.zip(t).is_none_or(|(f, t)| f.matches(t, p.default_task_min))
                     });
                     let bg = self.pal.bg;
+                    let own = self.data.task(tid).map_or(self.pal.accent, |t| rgb(self.data.list_look(t.list).1));
                     let (fill, line, text) = match over {
-                        Some(b) if fits => (mix(bg, b.color, 0.35), b.color, self.pal.text),
+                        Some(b) if fits => (mix(bg, own, 0.35), b.color, self.pal.text),
                         Some(b) => (mix(bg, b.color, 0.10), mix(bg, b.color, 0.40), self.pal.muted),
-                        None => (mix(bg, self.pal.accent, 0.25), self.pal.accent, self.pal.text),
+                        None => (mix(bg, own, 0.25), own, self.pal.text),
                     };
                     fill_squircle(&painter, r, theme::RADIUS, fill);
                     stroke_squircle(&painter, r.shrink(0.5), theme::RADIUS, Stroke::new(1.0, line));
