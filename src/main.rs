@@ -4,6 +4,7 @@ mod ics;
 mod icons;
 mod ids;
 mod model;
+mod testaid;
 mod theme;
 pub use theme::{mix, rgb, Palette};
 mod motion;
@@ -543,7 +544,7 @@ impl App {
         let data = if shot.is_some() { Data::sample(today) } else { Data::load_or_sample(today) };
         let mut data = data;
         // for screenshots of the settings: a signed-in account to look at
-        if shot.is_some() && std::env::var_os("KALENDAR_DEMO_ACCOUNT").is_some() {
+        if shot.is_some() && testaid::get().demo_account {
             data.accounts.push(Account {
                 id: 900,
                 server: "https://cloud.example.org".into(),
@@ -567,7 +568,7 @@ impl App {
                 });
             }
         }
-        if shot.is_some() && std::env::var_os("KALENDAR_DEMO_ACCOUNT").is_some() {
+        if shot.is_some() && testaid::get().demo_account {
             data.lists.push(TaskList { id: 910, name: "Shopping".into(), color: EVENT_COLORS[4].0, account: Some(900), remote_id: Some("https://cloud.example.org/dav/calendars/sam/shopping/".into()), ..Default::default() });
             data.lists.push(TaskList { id: 911, name: "Home".into(), color: EVENT_COLORS[6].0, account: Some(900), remote_id: Some("https://cloud.example.org/dav/calendars/sam/0/".into()), ..Default::default() });
         }
@@ -589,7 +590,7 @@ impl App {
             slide: motion::Slide::default(),
             page_shot: vec![],
             last_shown: None,
-            demo_menu: std::env::var("KALENDAR_SHOW_MENU").ok(),
+            demo_menu: testaid::get().show_menu.clone(),
             ctx_time: None,
             undo: vec![],
             toast: None,
@@ -656,30 +657,29 @@ impl App {
             pal: Palette::new(true),
         };
         // test aids for pictures of the new windows and layouts
-        if std::env::var("KALENDAR_PANEL_RIGHT").is_ok() {
+        let aid = testaid::get();
+        if aid.panel_right {
             app.data.prefs.sidebar_side = PanelSide::Right;
         }
         if app.shot.is_some() {
-            match std::env::var("KALENDAR_THEME").as_deref() {
-                Ok("light") => app.data.prefs.theme = Theme::Light,
-                Ok("dark") => app.data.prefs.theme = Theme::Dark,
+            match aid.theme.as_deref() {
+                Some("light") => app.data.prefs.theme = Theme::Light,
+                Some("dark") => app.data.prefs.theme = Theme::Dark,
                 _ => {}
             }
-            if let Some(m) = std::env::var("KALENDAR_SLOT").ok().and_then(|v| v.parse().ok()) {
+            if let Some(m) = aid.slot {
                 app.data.prefs.slot_min = m;
             }
         }
-        // KALENDAR_SHOW_NEWTASK=<list name> opens it as that list's + button does
-        // for screenshots: a font family other than the system's
-        if let Ok(f) = std::env::var("KALENDAR_FONT") {
-            app.data.prefs.font = f;
+        if let Some(f) = &aid.font {
+            app.data.prefs.font = f.clone();
         }
-        if let Ok(v) = std::env::var("KALENDAR_SHOW_NEWTASK") {
-            let list = app.data.lists.iter().find(|l| l.name.eq_ignore_ascii_case(&v)).map_or(0, |l| l.id);
+        if let Some(v) = &aid.show_newtask {
+            let list = app.data.lists.iter().find(|l| l.name.eq_ignore_ascii_case(v)).map_or(0, |l| l.id);
             app.open_new_task(list);
         }
-        if std::env::var("KALENDAR_GREY").is_ok() {
-            // test aid: scheduled tasks are done and every frame skips the day after today
+        if aid.grey {
+            // scheduled tasks are done and every frame skips the day after today
             let ids: Vec<u64> = app.data.events.iter().filter_map(|e| e.task_id).collect();
             for t in app.data.tasks.iter_mut().filter(|t| ids.contains(&t.id)) {
                 t.done = true;
@@ -688,21 +688,18 @@ impl App {
                 f.skip.push(today + Duration::days(1));
             }
         }
-        if let Ok(v) = std::env::var("KALENDAR_LIST_EDIT") {
-            // test aid: the named list gets an icon and its little editor is open
-            let id = app.data.lists.iter().find(|l| l.name.eq_ignore_ascii_case(&v)).map_or(0, |l| l.id);
+        if let Some(v) = &aid.list_edit {
+            let id = app.data.lists.iter().find(|l| l.name.eq_ignore_ascii_case(v)).map_or(0, |l| l.id);
             if let Some(l) = app.data.lists.iter_mut().find(|l| l.id == id) {
                 l.icon = icons::LIST_ICONS[1].to_string();
             }
             app.list_edit = Some(ListEdit { id, at: egui::pos2(400.0, 330.0), fresh: true, snapped: true });
         }
-        if std::env::var("KALENDAR_SHOW_CREATE").is_ok() {
-            // KALENDAR_CREATE_AT=15 puts the block at another hour than ten
-            let hour = std::env::var("KALENDAR_CREATE_AT").ok().and_then(|h| h.parse::<u32>().ok()).filter(|h| *h < 23).unwrap_or(10);
+        if let Some(kind) = aid.show_create {
+            let hour = aid.create_at;
             let start = today.and_hms_opt(hour, 0, 0).unwrap();
             app.open_create(start, 60, egui::Rect::from_min_size(egui::pos2(700.0, 300.0), egui::vec2(150.0, 100.0)));
-            // KALENDAR_SHOW_CREATE=frame: as after choosing Frame in that window
-            if std::env::var("KALENDAR_SHOW_CREATE").is_ok_and(|v| v == "frame") {
+            if kind == testaid::Create::Frame {
                 if let Some(c) = app.create.take() {
                     app.open_new_frame(today, hour as i64 * 60, hour as i64 * 60 + 60, c.ev.calendar, String::new());
                     if let Some(fe) = &mut app.frame_editor {
@@ -711,12 +708,10 @@ impl App {
                 }
             }
         }
-        // KALENDAR_DRAG="title@x,y": hold the task with that title as if it
-        // were being dragged, with the pointer at x,y
-        if let Some(title) = app.shot.as_ref().and(drag_aid()).map(|d| d.0) {
-            app.drag_task = app.data.tasks.iter().find(|t| t.title.contains(&title)).map(|t| t.id);
+        if let Some((title, _)) = app.shot.as_ref().and(aid.drag.as_ref()) {
+            app.drag_task = app.data.tasks.iter().find(|t| t.title.contains(title.as_str())).map(|t| t.id);
         }
-        if app.shot.is_some() && std::env::var("KALENDAR_SHOW_FRAME").is_ok() {
+        if app.shot.is_some() && aid.show_frame {
             if let Some(id) = app.data.frames.first().map(|f| f.id) {
                 app.edit_frame(id);
             }
@@ -726,7 +721,7 @@ impl App {
 
     /// The current time; KALENDAR_NOW=2026-11-11T10:30 overrides it for testing.
     pub fn now() -> NaiveDateTime {
-        if let Some(t) = std::env::var("KALENDAR_NOW").ok().and_then(|v| NaiveDateTime::parse_from_str(&v, "%Y-%m-%dT%H:%M").ok()) {
+        if let Some(t) = testaid::get().now {
             return t;
         }
         Local::now().naive_local()
@@ -2326,17 +2321,15 @@ impl App {
         // for screenshots: step this many periods just before the picture,
         // to catch the slide half way
         if self.frames == 104 {
-            if let Some(n) = std::env::var("KALENDAR_NAV").ok().and_then(|n| n.parse::<i64>().ok()) {
+            if let Some(n) = testaid::get().nav {
                 self.step(n);
             }
-            // KALENDAR_NAV_DAYS=1 moves by single days, as the day keys do
-            if let Some(n) = std::env::var("KALENDAR_NAV_DAYS").ok().and_then(|n| n.parse::<i64>().ok()) {
+            if let Some(n) = testaid::get().nav_days {
                 self.anchor += Duration::days(n);
             }
         }
         if self.shot.is_some() && self.frames == 20 {
-            // KALENDAR_DAYS=3 shows that many days
-            if let Some(n) = std::env::var("KALENDAR_DAYS").ok().and_then(|n| n.parse::<u8>().ok()) {
+            if let Some(n) = testaid::get().days {
                 self.view = View::Days(n as _);
             }
         }
@@ -2378,18 +2371,10 @@ impl App {
     }
 }
 
-/// The picture-mode drag aid, KALENDAR_DRAG="title@x,y".
-fn drag_aid() -> Option<(String, egui::Pos2)> {
-    let v = std::env::var("KALENDAR_DRAG").ok()?;
-    let (title, at) = v.rsplit_once('@')?;
-    let (x, y) = at.split_once(',')?;
-    Some((title.to_string(), egui::pos2(x.trim().parse().ok()?, y.trim().parse().ok()?)))
-}
-
 impl eframe::App for App {
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        if let Some((_, pos)) = self.shot.as_ref().and(drag_aid()) {
-            raw_input.events.push(egui::Event::PointerMoved(pos));
+        if let Some((_, pos)) = self.shot.as_ref().and(testaid::get().drag.as_ref()) {
+            raw_input.events.push(egui::Event::PointerMoved(*pos));
         }
     }
 
@@ -2437,9 +2422,10 @@ impl eframe::App for App {
         });
 
         self.poll_sync(ctx);
-        if let Ok(page) = std::env::var("KALENDAR_SHOW_SETTINGS") {
-            // test aid: the settings fill the main window, so a picture can be taken
+        if let Some(page) = &testaid::get().show_settings {
+            // the settings fill the main window, so a picture can be taken
             use settings::Page;
+            let aid = testaid::get();
             self.settings_page = match page.as_str() {
                 "calendars" => Page::Calendars,
                 "active" => Page::ActiveCalendars,
@@ -2450,19 +2436,18 @@ impl eframe::App for App {
                 "info" => Page::Info,
                 _ => Page::General,
             };
-            if let Ok(q) = std::env::var("KALENDAR_SETTINGS_QUERY") {
-                self.settings_query = q;
+            if let Some(q) = &aid.settings_query {
+                self.settings_query = q.clone();
             }
-            if let Ok(q) = std::env::var("KALENDAR_SHORTCUT_QUERY") {
-                self.shortcut_query = q;
+            if let Some(q) = &aid.shortcut_query {
+                self.shortcut_query = q.clone();
             }
-            // for screenshots: which kind of integration is being set up
-            if let Some(k) = std::env::var("KALENDAR_SUB_KIND").ok().and_then(|k| k.parse().ok()) {
+            if let Some(k) = aid.sub_kind {
                 self.sub_kind = k;
             }
-            if let Ok(u) = std::env::var("KALENDAR_SUB_URL") {
+            if let Some(u) = &aid.sub_url {
                 self.sub_kind = 1;
-                self.sub_url = u;
+                self.sub_url = u.clone();
             }
             egui::CentralPanel::default().frame(egui::Frame::new().fill(self.pal.bg)).show(ui, |ui| self.settings_body(ui));
             self.dlg_toast_public(ctx);
@@ -2472,8 +2457,7 @@ impl eframe::App for App {
         self.mouse_nav(ctx);
         // a narrow window shows one day and no task panel; widening it
         // brings back what was there
-        // (for screenshots, KALENDAR_NARROW stands in for a narrow window)
-        let narrow = ctx.content_rect().width() < COMPACT_W || (self.shot.is_some() && std::env::var("KALENDAR_NARROW").is_ok());
+        let narrow = ctx.content_rect().width() < COMPACT_W || (self.shot.is_some() && testaid::get().narrow);
         match (narrow, self.compact) {
             (true, None) => {
                 self.compact = Some((self.data.prefs.sidebar_open, self.view));
@@ -2596,7 +2580,7 @@ impl eframe::App for App {
             }
         }
         self.ui_drag_ghost(ctx);
-        let drag_aid_on = self.shot.is_some() && drag_aid().is_some();
+        let drag_aid_on = self.shot.is_some() && testaid::get().drag.is_some();
         if !ctx.input(|i| i.pointer.any_down()) && !drag_aid_on {
             self.drag_task = None;
         }
@@ -2682,9 +2666,8 @@ fn main() {
         .with_min_inner_size([360.0, 480.0]);
     if shot.is_some() {
         vb = vb.with_active(false);
-        // test aid: KALENDAR_WINDOW=760x480 takes the picture at that size
-        if let Some((w, h)) = std::env::var("KALENDAR_WINDOW").ok().and_then(|s| s.split_once('x').and_then(|(w, h)| Some((w.parse::<f32>().ok()?, h.parse::<f32>().ok()?)))) {
-            vb = vb.with_inner_size([w, h]);
+        if let Some(size) = testaid::get().window {
+            vb = vb.with_inner_size(size);
         }
         #[cfg(target_os = "windows")]
         {

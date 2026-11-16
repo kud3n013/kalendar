@@ -820,7 +820,7 @@ impl App {
         // test aid for pictures: open the editor on the Nth visible block, as
         // a double-click would (KALENDAR_SHOW_EDIT=N; only in picture mode)
         if self.shot.is_some() && self.frames == 30 {
-            if let Some(n) = std::env::var("KALENDAR_SHOW_EDIT").ok().and_then(|v| v.parse::<usize>().ok()) {
+            if let Some(n) = crate::testaid::get().show_edit {
                 let mut real: Vec<_> = items.iter().filter(|it| !it.draft).map(|it| (it.id, it.rect)).collect();
                 real.sort_by(|a, b| a.1.left().total_cmp(&b.1.left()).then(a.1.top().total_cmp(&b.1.top())));
                 if let Some((id, r)) = real.get(n.min(real.len().saturating_sub(1))).copied() {
