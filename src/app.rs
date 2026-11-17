@@ -24,6 +24,8 @@ pub struct EventEdit {
     /// elsewhere (a drag, undo) is told apart from the person's own edits
     /// and taken into the editor
     pub base: Option<Event>,
+    /// for a task's block, its task, edited in the same window
+    pub task: Option<TaskEdit>,
 }
 
 /// What a block drawn on the calendar becomes.
@@ -85,6 +87,34 @@ pub struct TaskEdit {
     pub focus: bool,
     /// the task as stored when the editor last looked, as for [`EventEdit::base`]
     pub base: Task,
+}
+
+impl TaskEdit {
+    /// An editor for a task as it is stored.
+    pub fn of(t: &Task) -> Self {
+        TaskEdit {
+            task: t.clone(),
+            due_text: t.due.map(|d| d.to_string()).unwrap_or_default(),
+            tags_text: t.tags.join(" "),
+            earliest_text: t.earliest.map(|d| d.to_string()).unwrap_or_default(),
+            focus: false,
+            base: t.clone(),
+        }
+    }
+
+    /// Reads the typed dates and tags into the task; a due date that
+    /// can't be read is refused.
+    pub fn read_text(&mut self) -> Result<(), ()> {
+        let text = self.due_text.trim();
+        if text.is_empty() {
+            self.task.due = None;
+        } else {
+            self.task.due = Some(NaiveDate::parse_from_str(text, "%Y-%m-%d").map_err(|_| ())?);
+        }
+        self.task.tags = self.tags_text.split_whitespace().map(|t| t.trim_start_matches('#').to_string()).filter(|t| !t.is_empty()).collect();
+        self.task.earliest = NaiveDate::parse_from_str(self.earliest_text.trim(), "%Y-%m-%d").ok();
+        Ok(())
+    }
 }
 
 pub struct Toast {
@@ -597,6 +627,7 @@ impl App {
             focus: true,
             anchor_rect: None,
             base: None,
+            task: None,
         });
         self.selected = None;
     }
@@ -609,7 +640,8 @@ impl App {
     /// Subscribed events open to be read; saving them is refused.
     pub fn edit_event_at(&mut self, id: u64, anchor_rect: Option<egui::Rect>) {
         if let Some(ev) = self.shown_event(id) {
-            self.editor = Some(EventEdit { base: Some(ev.clone()), ev, is_new: false, focus: false, anchor_rect });
+            let task = ev.task_id.and_then(|t| self.data.task(t)).map(TaskEdit::of);
+            self.editor = Some(EventEdit { base: Some(ev.clone()), ev, is_new: false, focus: false, anchor_rect, task });
             self.create = None;
             self.selected = Some(id);
         }
@@ -634,14 +666,7 @@ impl App {
 
     pub fn edit_task(&mut self, id: u64) {
         if let Some(t) = self.data.task(id) {
-            self.task_editor = Some(TaskEdit {
-                task: t.clone(),
-                due_text: t.due.map(|d| d.to_string()).unwrap_or_default(),
-                tags_text: t.tags.join(" "),
-                earliest_text: t.earliest.map(|d| d.to_string()).unwrap_or_default(),
-                focus: false,
-                base: t.clone(),
-            });
+            self.task_editor = Some(TaskEdit::of(t));
         }
     }
 

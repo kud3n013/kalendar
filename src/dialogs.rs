@@ -1061,6 +1061,9 @@ impl App {
     /// Takes into the editor what changed in the stored event since it last
     /// looked (a drag, a resize, undo), keeping the person's other edits.
     fn sync_event_edit(&self, ed: &mut EventEdit) {
+        if let Some(t) = ed.task.as_mut() {
+            self.sync_task_edit(t);
+        }
         let Some(base) = ed.base.as_ref() else { return };
         let Some(now) = self.shown_event(ed.ev.id) else { return };
         if (now.start, now.end, now.all_day) != (base.start, base.end, base.all_day) {
@@ -1172,11 +1175,22 @@ impl App {
             });
             ui.end_row();
         });
+        // a task's block shows the whole task, as its own editor does
+        if let Some(t) = ed.task.as_mut() {
+            ui.add_space(6.0);
+            ui.separator();
+            ui.add_space(2.0);
+            self.task_fields(ui, t);
+        }
         save |= editor_notes(ui, &mut ed.ev.notes);
         save
     }
 
-    fn finish_event_edit(&mut self, ctx: &egui::Context, ed: EventEdit, save: bool, cancel: bool, delete: bool) {
+    fn finish_event_edit(&mut self, ctx: &egui::Context, mut ed: EventEdit, save: bool, cancel: bool, delete: bool) {
+        if save && ed.task.as_mut().is_some_and(|t| t.read_text().is_err()) {
+            self.say(ctx, tr("The due date should look like 2026-11-30"), false);
+            return self.editor = Some(ed);
+        }
         if let Some(why) = self.data.locked(&ed.ev).filter(|_| save) {
             self.say(ctx, why, false);
         } else if save {
@@ -1191,7 +1205,12 @@ impl App {
             let id = ev.id;
             let sched = ev.task_id.map(|t| (t, ev.start.date()));
             // a block's name and note are its task's, and so its other blocks'
+            let edited = ed.task.as_ref().map(|t| t.task.clone());
             if let Some(t) = ev.task_id.and_then(|t| self.data.task_mut(t)) {
+                if let Some(mut n) = edited {
+                    (n.title, n.notes) = (t.title.clone(), t.notes.clone());
+                    t.take_edits(n);
+                }
                 if !ev.title.trim().is_empty() {
                     t.title = ev.title.clone();
                 }
@@ -1249,9 +1268,16 @@ impl App {
 
     /// The task editor's fields; returns whether to save.
     fn task_form(&mut self, ui: &mut egui::Ui, ed: &mut TaskEdit) -> bool {
+        let save = editor_title(ui, &mut ed.task.title, tr("New Task"), &mut ed.focus);
+        self.task_fields(ui, ed);
+        save | editor_notes(ui, &mut ed.task.notes)
+    }
+
+    /// A task's own fields, below its name: in the task editor and in the
+    /// editor of each of its blocks.
+    fn task_fields(&mut self, ui: &mut egui::Ui, ed: &mut TaskEdit) {
         let today = Local::now().date_naive();
         let muted = self.pal.muted;
-        let mut save = editor_title(ui, &mut ed.task.title, tr("New Task"), &mut ed.focus);
         ui.checkbox(&mut ed.task.done, tr("Completed"));
         editor_grid(ui, "taskgrid", |ui| {
             editor_label(ui, tr("Due"), muted);
@@ -1314,25 +1340,16 @@ impl App {
             }
             ui.label(RichText::new(line).size(theme::size::TINY).color(muted));
         }
-        save |= editor_notes(ui, &mut ed.task.notes);
-        save
     }
 
     fn finish_task_edit(&mut self, ctx: &egui::Context, mut ed: TaskEdit, save: bool, cancel: bool, delete: bool) {
         let key = ids::task_editor().with(ed.task.id);
         if save {
-            let text = ed.due_text.trim().to_string();
-            if text.is_empty() {
-                ed.task.due = None;
-            } else if let Ok(d) = NaiveDate::parse_from_str(&text, "%Y-%m-%d") {
-                ed.task.due = Some(d);
-            } else {
+            if ed.read_text().is_err() {
                 self.say(ctx, tr("The due date should look like 2026-11-30"), false);
                 self.task_editor = Some(ed);
                 return;
             }
-            ed.task.tags = ed.tags_text.split_whitespace().map(|t| t.trim_start_matches('#').to_string()).filter(|t| !t.is_empty()).collect();
-            ed.task.earliest = NaiveDate::parse_from_str(ed.earliest_text.trim(), "%Y-%m-%d").ok();
             self.snapshot();
             let id = ed.task.id;
             let n = ed.task;
@@ -1538,6 +1555,25 @@ mod tests {
         ed.ev.title = "Talk prep".into();
         app.sync_event_edit(&mut ed);
         assert_eq!(ed.ev.title, "Talk prep");
+    }
+
+    #[test]
+    fn a_task_block_edits_its_whole_task() {
+        let mut app = app_with_event();
+        let id = app.data.new_id();
+        app.data.tasks.push(Task { id, title: "Write".into(), ..Default::default() });
+        app.data.events[0].task_id = Some(id);
+        app.edit_event(700);
+        let mut ed = app.editor.take().unwrap();
+        let t = ed.task.as_mut().expect("a task block opens with its task");
+        (t.task.priority, t.tags_text, t.due_text) = (1, "deep #admin".into(), "2026-12-01".into());
+        ed.ev.title = "Write more".into();
+        let ctx = egui::Context::default();
+        app.finish_event_edit(&ctx, ed, true, false, false);
+        let t = app.data.task(id).unwrap();
+        assert_eq!((t.priority, t.title.as_str()), (1, "Write more"));
+        assert_eq!(t.tags, ["deep", "admin"]);
+        assert_eq!(t.due, NaiveDate::from_ymd_opt(2026, 12, 1));
     }
 
     #[test]
