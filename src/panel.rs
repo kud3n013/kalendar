@@ -348,6 +348,7 @@ impl App {
         let c = (self.pal.side, self.pal.muted, self.pal.text);
         let open = self.data.prefs.sidebar_open;
         let right = self.data.prefs.sidebar_side == PanelSide::Right;
+        self.ui_new_list(ctx);
         // closed, it folds to a strip of list icons; in between, the panel
         // grows out of the strip or shrinks back into it
         let t = motion::ease_in_out(ctx.animate_bool_with_time(ids::morph(), open, motion::LONG.secs()));
@@ -520,8 +521,11 @@ impl App {
                 }
             };
             let new_list = |ui: &mut egui::Ui, app: &mut App| {
-                if icon_btn(ui, icons::PLUS, 17.0, tr("New task list"), c).clicked() {
-                    app.new_list_text = Some((String::new(), true));
+                let b = icon_btn(ui, icons::PLUS, 17.0, tr("New task list"), c);
+                if b.clicked() || std::mem::take(&mut app.click_new_list) {
+                    // opens upward, from the button's outer corner
+                    let (at, pivot) = if right { (b.rect.right_top(), Align2::RIGHT_BOTTOM) } else { (b.rect.left_top(), Align2::LEFT_BOTTOM) };
+                    app.start_new_list(at - vec2(0.0, 4.0), pivot);
                 }
             };
             if right {
@@ -665,22 +669,6 @@ impl App {
                         self.section(ui, ctx, "done", tr("Completed"), Some((icons::CHECK, muted)), muted, &done_ids, None);
                     }
                     ui.add_space(10.0);
-                    if let Some((mut name, fresh)) = self.new_list_text.take() {
-                        let r = ui.add(egui::TextEdit::singleline(&mut name).hint_text(tr("List name")).desired_width(f32::INFINITY));
-                        if fresh {
-                            r.request_focus();
-                            ui.scroll_to_rect(r.rect, None);
-                        }
-                        let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        if r.lost_focus() && enter && !name.trim().is_empty() {
-                            self.snapshot();
-                            self.new_list(name.trim());
-                            self.commit();
-                        } else if fresh || r.has_focus() {
-                            // a click anywhere else, or Escape, drops it
-                            self.new_list_text = Some((name, false));
-                        }
-                    }
                     ui.add_space(20.0);
                 });
         if !self.morph.moving {
@@ -747,11 +735,71 @@ impl App {
     /// The fields that change how a list looks. True when one changed;
     /// the first change is kept for undo unless `snapped` says it was.
     pub fn list_fields(&mut self, ui: &mut egui::Ui, lid: u64, with_name: bool, focus: bool, snapped: &mut bool) -> bool {
-        let (side, text, muted) = (self.pal.side, self.pal.text, self.pal.muted);
         let before = self.data.list_look(lid);
         let mut look = before.clone();
-        if with_name {
-            let r = ui.add(egui::TextEdit::singleline(&mut look.0).hint_text(if lid == 0 { tr("Inbox") } else { tr("List name") }).desired_width(f32::INFINITY));
+        let hint = if lid == 0 { tr("Inbox") } else { tr("List name") };
+        self.look_fields(ui, &mut look, with_name.then_some(hint), focus);
+        if look == before {
+            return false;
+        }
+        if !*snapped {
+            self.snapshot();
+            *snapped = true;
+        }
+        self.data.set_list_look(lid, look);
+        true
+    }
+
+    /// Start making a new list in a little window hung from `at`.
+    fn start_new_list(&mut self, at: egui::Pos2, pivot: Align2) {
+        let color = EVENT_COLORS[self.data.lists.len() % EVENT_COLORS.len()].0;
+        self.new_list_draft = Some(crate::NewList { look: (String::new(), color, String::new()), at, pivot, fresh: true });
+    }
+
+    /// The little window where a new list gets its name, colour and icon.
+    /// Enter or Add makes it; Escape or a click elsewhere drops it.
+    fn ui_new_list(&mut self, ctx: &egui::Context) {
+        let Some(mut d) = self.new_list_draft.take() else { return };
+        let muted = self.pal.muted;
+        let out = egui::Area::new(ids::new_list()).order(egui::Order::Foreground).pivot(d.pivot).fixed_pos(d.at).show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_width(236.0);
+                self.look_fields(ui, &mut d.look, Some(tr("List name")), d.fresh);
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(tr("Enter to add")).size(theme::size::TINY).color(muted));
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        let named = !d.look.0.trim().is_empty();
+                        ui.add_enabled(named, egui::Button::new(tr("Add list"))).clicked()
+                    })
+                    .inner
+                })
+                .inner
+            })
+            .inner
+        });
+        let named = !d.look.0.trim().is_empty();
+        let (enter, escape) = ctx.input(|i| (i.key_pressed(egui::Key::Enter), i.key_pressed(egui::Key::Escape)));
+        if named && (out.inner || enter) {
+            self.snapshot();
+            let id = self.new_list(d.look.0.trim());
+            let look = (d.look.0.trim().to_string(), d.look.1, d.look.2);
+            self.data.set_list_look(id, look);
+            self.commit();
+            return;
+        }
+        if !escape && (d.fresh || !out.response.clicked_elsewhere()) {
+            d.fresh = false;
+            self.new_list_draft = Some(d);
+        }
+    }
+
+    /// A list's name (when `name_hint` is given), colour and icon, changed
+    /// in place.
+    fn look_fields(&self, ui: &mut egui::Ui, look: &mut (String, [u8; 3], String), name_hint: Option<&str>, focus: bool) {
+        let (side, text, muted) = (self.pal.side, self.pal.text, self.pal.muted);
+        if let Some(hint) = name_hint {
+            let r = ui.add(egui::TextEdit::singleline(&mut look.0).hint_text(hint).desired_width(f32::INFINITY));
             if focus {
                 r.request_focus();
             }
@@ -790,15 +838,6 @@ impl App {
                 }
             }
         });
-        if look == before {
-            return false;
-        }
-        if !*snapped {
-            self.snapshot();
-            *snapped = true;
-        }
-        self.data.set_list_look(lid, look);
-        true
     }
 
     /// One collapsible group of tasks with its heading.
@@ -1091,10 +1130,12 @@ impl App {
                                 hot = Some((*shelf, r));
                             }
                         }
-                        // a new list is named in the full panel
-                        if icon_btn(ui, icons::PLUS, 17.0, tr("New task list"), c).clicked() {
-                            self.new_list_text = Some((String::new(), true));
-                            self.run(ctx, Cmd::ToggleTasks);
+                        // a new list is made in a little window beside the rail
+                        let b = icon_btn(ui, icons::PLUS, 17.0, tr("New task list"), c);
+                        if b.clicked() || std::mem::take(&mut self.click_new_list) {
+                            let right = self.data.prefs.sidebar_side == PanelSide::Right;
+                            let (x, pivot) = if right { (b.rect.left() - 16.0, Align2::RIGHT_TOP) } else { (b.rect.right() + 16.0, Align2::LEFT_TOP) };
+                            self.start_new_list(pos2(x, b.rect.top() - 6.0), pivot);
                         }
                     });
                 });
@@ -1236,7 +1277,7 @@ impl App {
         let now = ctx.input(|i| i.time);
         let inside = hot.is_some() || ctx.input(|i| i.pointer.latest_pos()).is_some_and(|p| rect.expand(6.0).contains(p));
         // its menus and the list editor hang outside it
-        let held = egui::Popup::is_any_open(ctx) || self.list_edit.is_some();
+        let held = egui::Popup::is_any_open(ctx) || self.list_edit.is_some() || self.new_list_draft.is_some();
         let carried = self.drag_task.is_some();
         let Some(f) = &mut self.flyer else { return };
         f.rect = rect;

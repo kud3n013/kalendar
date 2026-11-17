@@ -63,6 +63,7 @@ fixed! {
     /// a list hanging beside the rail
     flyer = "flyer";
     list_edit = "list_edit";
+    new_list = "new_list";
     /// the layer the dragged block's ghost is painted on
     ghost = "ghost";
 

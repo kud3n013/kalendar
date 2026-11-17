@@ -71,6 +71,8 @@ pub struct Aids {
     pub show_newtask: Option<String>,
     /// `KALENDAR_LIST_EDIT=<list>`: that list has an icon and its editor is open
     pub list_edit: Option<String>,
+    /// `KALENDAR_NEW_LIST`: the new-list window open, as the + button opens it *(picture)*
+    pub new_list: bool,
     /// `KALENDAR_DRAG="title@x,y"`: that task held as if dragged, pointer at x,y *(picture)*
     pub drag: Option<(String, egui::Pos2)>,
 }
@@ -113,6 +115,7 @@ fn read(var: impl Fn(&str) -> Option<String>) -> Aids {
         show_edit: set("SHOW_EDIT").and_then(|v| v.parse().ok()),
         show_newtask: set("SHOW_NEWTASK"),
         list_edit: set("LIST_EDIT"),
+        new_list: on("NEW_LIST"),
         drag: set("DRAG").and_then(|v| {
             let (title, at) = v.rsplit_once('@')?;
             let (x, y) = at.split_once(',')?;

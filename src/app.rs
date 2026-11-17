@@ -68,6 +68,15 @@ pub struct ListEdit {
     pub snapped: bool,
 }
 
+/// A task list being made: its look so far and where its little window
+/// hangs from.
+pub struct NewList {
+    pub look: (String, [u8; 3], String),
+    pub at: egui::Pos2,
+    pub pivot: egui::Align2,
+    pub fresh: bool,
+}
+
 /// What a button on the compact task rail stands for.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum Shelf {
@@ -272,7 +281,9 @@ pub struct App {
     pub sort_by: usize,
     pub filter_tag: Option<String>,
     /// the name of a list being added, and whether its field just appeared
-    pub new_list_text: Option<(String, bool)>,
+    pub new_list_draft: Option<NewList>,
+    /// the + button acts as if clicked once, for a picture
+    pub click_new_list: bool,
     pub list_edit: Option<ListEdit>,
     pub flyer: Option<Flyer>,
     pub morph: Morph,
@@ -397,7 +408,8 @@ impl App {
             font_names: None,
             sort_by: 0,
             filter_tag: None,
-            new_list_text: None,
+            new_list_draft: None,
+            click_new_list: false,
             list_edit: None,
             flyer: None,
             morph: Morph::default(),
@@ -442,6 +454,7 @@ impl App {
                 f.skip.push(today + Duration::days(1));
             }
         }
+        app.click_new_list = app.shot.is_some() && aid.new_list;
         if let Some(v) = &aid.list_edit {
             let id = app.data.lists.iter().find(|l| l.name.eq_ignore_ascii_case(v)).map_or(0, |l| l.id);
             if let Some(l) = app.data.lists.iter_mut().find(|l| l.id == id) {
