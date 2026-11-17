@@ -238,6 +238,19 @@ impl App {
         self.data.frame_keeping_out(t, e.start, e.end).map(|f| f.name.clone())
     }
 
+    /// Moves a task's deadline to `d`, undoably; the same day changes nothing.
+    fn set_due(&mut self, ctx: &egui::Context, tid: u64, d: NaiveDate) {
+        if self.data.task(tid).is_none_or(|t| t.due == Some(d)) {
+            return;
+        }
+        self.snapshot();
+        if let Some(t) = self.data.task_mut(tid) {
+            t.due = Some(d);
+        }
+        self.commit();
+        self.say(ctx, trf("Due date set to {}", &[&d.format("%b %-d")]), true);
+    }
+
     pub fn ui_drag_ghost(&mut self, ctx: &egui::Context) {
         let Some(id) = self.drag_task else { return };
         let Some(pos) = ctx.input(|i| i.pointer.latest_pos()) else { return };
@@ -316,7 +329,7 @@ impl App {
         let ev_rows = row_end.len();
         let rows = (ev_rows + due_rows).max(1) as f32;
         let head_h = 44.0 + rows * 22.0 + 6.0;
-        let (hrect, hresp) = ui.allocate_exact_size(vec2(full_w, head_h), Sense::click());
+        let (hrect, hresp) = ui.allocate_exact_size(vec2(full_w, head_h), Sense::click_and_drag());
         let hp = ui.painter_at(hrect);
         let x0 = hrect.left() + GUTTER_W;
         hp.text(pos2(x0 - 8.0, hrect.top() + 50.0), Align2::RIGHT_TOP, "all-day", FontId::proportional(theme::size::MINI), self.pal.muted);
@@ -391,6 +404,30 @@ impl App {
                 c.text(r.left_center() + vec2(5.0, 0.0), Align2::LEFT_CENTER, icons::FLAG, FontId::proportional(theme::size::SMALL), self.pal.text);
                 c.text(r.left_center() + vec2(22.0, 0.0), Align2::LEFT_CENTER, title, theme::bold(theme::size::SMALL), self.pal.text);
                 due_chips.push((*tid, r));
+            }
+        }
+        // a deadline is dragged like a task from the list: onto another day's
+        // all-day row it moves the due date, into the hours it plans a session
+        if hresp.drag_started() {
+            let from = ui.ctx().input(|i| i.pointer.press_origin());
+            if let Some((tid, _)) = from.and_then(|q| due_chips.iter().find(|(_, r)| r.contains(q))) {
+                self.drag_task = Some(*tid);
+            }
+        }
+        if self.drag_task.is_none() && hresp.hover_pos().is_some_and(|q| due_chips.iter().any(|(_, r)| r.contains(q))) {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
+        if let Some(tid) = self.drag_task {
+            let pos = ui.ctx().input(|i| i.pointer.latest_pos());
+            if let Some(q) = pos.filter(|q| hrect.contains(*q) && q.x >= x0 && q.y > hrect.top() + 44.0) {
+                let di = (((q.x - x0) / col_w) as usize).min(n - 1);
+                let col = Rect::from_min_max(pos2(x0 + di as f32 * col_w, hrect.top() + 44.0), pos2(x0 + (di + 1) as f32 * col_w, hrect.bottom()));
+                hp.rect_stroke(col.shrink(1.0), 4.0, Stroke::new(2.0, self.pal.accent), StrokeKind::Inside);
+                if ui.ctx().input(|i| i.pointer.any_released()) {
+                    let ctx = ui.ctx().clone();
+                    self.set_due(&ctx, tid, days[di]);
+                    self.drag_task = None;
+                }
             }
         }
         if hresp.clicked() {
@@ -1335,12 +1372,7 @@ impl App {
                     painter.rect_stroke(*r, 0.0, Stroke::new(2.0, self.pal.accent), StrokeKind::Inside);
                 }
                 if ctx.input(|i| i.pointer.any_released()) {
-                    self.snapshot();
-                    if let Some(t) = self.data.task_mut(tid) {
-                        t.due = Some(d);
-                    }
-                    self.commit();
-                    self.say(&ctx, trf("Due date set to {}", &[&d.format("%b %-d")]), true);
+                    self.set_due(&ctx, tid, d);
                     self.drag_task = None;
                 }
             }
