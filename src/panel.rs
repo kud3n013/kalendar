@@ -551,9 +551,12 @@ impl App {
                     }
                 });
             } else {
-                // centred over the rail's own, so it stays put as the panel folds
-                ui.add_space(-2.5);
-                if icon_btn(ui, icons::MENU, 17.0, &self.tip(tr("Hide the task panel"), Cmd::ToggleTasks), c).clicked() {
+                // centred over the rail's own, so it stays put as the panel
+                // folds; drawn in a child, as sticking out past the panel's
+                // margin would make the panel widen itself every frame
+                let (slot, _) = ui.allocate_exact_size(vec2(29.0, 29.0), Sense::hover());
+                let mut b = ui.new_child(egui::UiBuilder::new().max_rect(slot.translate(vec2(-2.5, 0.0))).id_salt("panel_menu"));
+                if icon_btn(&mut b, icons::MENU, 17.0, &self.tip(tr("Hide the task panel"), Cmd::ToggleTasks), c).clicked() {
                     self.run(ctx, Cmd::ToggleTasks);
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| nav(ui, self, true));
