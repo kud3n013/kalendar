@@ -88,6 +88,8 @@ pub enum Shelf {
     Done,
     /// the calendar's navigation, under the menu button
     Nav,
+    /// one of the panel's tools, by its icon; never opens a flyer
+    Tool(&'static str),
 }
 
 /// Where each list's icon sits on the rail and in the panel, kept so the

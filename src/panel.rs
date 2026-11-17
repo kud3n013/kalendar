@@ -89,6 +89,9 @@ type DueGroup = (&'static str, &'static str, &'static str, Color32, Vec<u64>);
 
 const RAIL_W: f32 = 52.0;
 const RAIL_ICON: f32 = 34.0;
+/// The panel's tools and their sizes, from the outer corner of its bottom
+/// row inward; the rail stacks them the other way, settings at the bottom.
+const TOOLS: [(&str, f32); 5] = [(icons::SETTINGS, 16.0), (icons::HELP, 16.0), (icons::TERMINAL, 15.0), (icons::SEARCH, 15.0), (icons::SHUFFLE, 15.0)];
 /// How wide a list hanging beside the rail is.
 const FLYER_W: f32 = 300.0;
 /// How long a flyer stays after the pointer leaves it.
@@ -351,7 +354,10 @@ impl App {
         self.ui_new_list(ctx);
         // closed, it folds to a strip of list icons; in between, the panel
         // grows out of the strip or shrinks back into it
-        let t = motion::ease_in_out(ctx.animate_bool_with_time(ids::morph(), open, motion::LONG.secs()));
+        let mut t = motion::ease_in_out(ctx.animate_bool_with_time(ids::morph(), open, motion::LONG.secs()));
+        if let Some(m) = self.shot.as_ref().and(crate::testaid::get().morph) {
+            t = m;
+        }
         if t <= 0.0 {
             self.ui_rail(ui, ctx, right, c);
             return;
@@ -439,12 +445,13 @@ impl App {
             self.panel_body(&mut full, ctx, right, today, c);
             self.morph.moving = false;
             self.measure(outer, right, false);
-            // the rail's tools fading the other way, and an unseen copy of
-            // its buttons, to learn where they sit
+            // the rail's tools and an unseen copy of its buttons, to learn
+            // where they sit
             let mut col = ui.new_child(egui::UiBuilder::new().max_rect(strip(RAIL_W, 10.0)).id_salt("morph_rail"));
             col.set_clip_rect(clip);
-            col.set_opacity(1.0 - t);
+            self.morph.moving = true;
             self.rail_tools_panel(&mut col, ctx, c, None);
+            self.morph.moving = false;
             let shelves = self.shelves(today);
             col.scope_builder(egui::UiBuilder::new().invisible(), |ui| {
                 egui::CentralPanel::default().frame(egui::Frame::new()).show(ui, |ui| {
@@ -484,6 +491,15 @@ impl App {
                     p.text(at, Align2::CENTER_CENTER, glyph, FontId::proportional(size), color);
                 }
             }
+            // the tools glide between the rail's column and the panel's row
+            let muted = self.pal.muted;
+            let undo = motion::ease_in_out(ctx.animate_bool_with_time(ids::undo_button(), !self.undo.is_empty(), motion::NORMAL.secs()));
+            for (g, size) in std::iter::once((icons::UNDO, 16.0)).chain(TOOLS) {
+                let key = Shelf::Tool(g);
+                let (Some(a), Some(b)) = (self.morph.rail.get(&key).copied(), self.morph.panel.get(&key).copied()) else { continue };
+                let alpha = if g == icons::UNDO { undo } else { 1.0 };
+                p.text(abs(a + (b - a) * t), Align2::CENTER_CENTER, g, FontId::proportional(size), muted.gamma_multiply(alpha));
+            }
         });
         ctx.request_repaint();
     }
@@ -493,32 +509,12 @@ impl App {
     fn panel_bottom(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, right: bool, c: (Color32, Color32, Color32)) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
+            // from the outer corner inward, undo last
             let tools = |ui: &mut egui::Ui, app: &mut App| {
-                if icon_btn(ui, icons::SETTINGS, 16.0, &app.tip(tr("Settings"), Cmd::Prefs), c).clicked() {
-                    app.open_settings(crate::settings::Page::General);
+                for (g, size) in TOOLS {
+                    app.tool(ui, ctx, g, size, c);
                 }
-                if icon_btn(ui, icons::HELP, 16.0, &app.tip(tr("Shortcuts"), Cmd::Shortcuts), c).clicked() {
-                    app.open_settings(crate::settings::Page::Shortcuts);
-                }
-                if icon_btn(ui, icons::TERMINAL, 15.0, &app.tip(tr("Command bar"), Cmd::CommandBar), c).clicked() {
-                    app.run(ctx, Cmd::CommandBar);
-                }
-                if icon_btn(ui, icons::SEARCH, 15.0, &app.tip(tr("Search"), Cmd::Search), c).clicked() {
-                    app.run(ctx, Cmd::Search);
-                }
-                if icon_btn(ui, icons::SHUFFLE, 15.0, tr("Plan my tasks: fit open tasks into free working time"), c).clicked() {
-                    app.run(ctx, Cmd::Plan);
-                }
-                // undo appears while there is something to take back
-                let a = ctx.animate_bool_with_time(ids::undo_button(), !app.undo.is_empty(), motion::NORMAL.secs());
-                if a > 0.0 {
-                    ui.scope(|ui| {
-                        ui.set_opacity(a);
-                        if icon_btn(ui, icons::UNDO, 16.0, &app.tip(tr("Undo"), Cmd::Undo), c).clicked() {
-                            app.do_undo(ctx);
-                        }
-                    });
-                }
+                app.undo_tool(ui, ctx, c, true);
             };
             let new_list = |ui: &mut egui::Ui, app: &mut App| {
                 let b = icon_btn(ui, icons::PLUS, 17.0, tr("New task list"), c);
@@ -1145,30 +1141,58 @@ impl App {
 
     /// The panel's tools, one above the other, settings at the bottom.
     fn rail_tools(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, c: (Color32, Color32, Color32)) {
-        // undo appears while there is something to take back
-        let a = ctx.animate_bool_with_time(ids::undo_button(), !self.undo.is_empty(), motion::NORMAL.secs());
-        if a > 0.0 {
-            ui.scope(|ui| {
-                ui.set_opacity(a);
-                if icon_btn(ui, icons::UNDO, 16.0, &self.tip(tr("Undo"), Cmd::Undo), c).clicked() {
-                    self.do_undo(ctx);
+        self.undo_tool(ui, ctx, c, false);
+        for (g, size) in TOOLS.into_iter().rev() {
+            self.tool(ui, ctx, g, size, c);
+        }
+    }
+
+    /// One of the panel's tools. Its place is noted for the morph, which
+    /// draws it gliding instead while the panel moves.
+    fn tool(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, glyph: &'static str, size: f32, c: (Color32, Color32, Color32)) {
+        let r = if self.morph.moving {
+            ui.allocate_exact_size(vec2(size + 12.0, size + 12.0), Sense::hover()).0
+        } else {
+            let tip = match glyph {
+                icons::SETTINGS => self.tip(tr("Settings"), Cmd::Prefs),
+                icons::HELP => self.tip(tr("Shortcuts"), Cmd::Shortcuts),
+                icons::TERMINAL => self.tip(tr("Command bar"), Cmd::CommandBar),
+                icons::SEARCH => self.tip(tr("Search"), Cmd::Search),
+                _ => tr("Plan my tasks: fit open tasks into free working time").to_string(),
+            };
+            let b = icon_btn(ui, glyph, size, &tip, c);
+            if b.clicked() {
+                match glyph {
+                    icons::SETTINGS => self.open_settings(crate::settings::Page::General),
+                    icons::HELP => self.open_settings(crate::settings::Page::Shortcuts),
+                    icons::TERMINAL => self.run(ctx, Cmd::CommandBar),
+                    icons::SEARCH => self.run(ctx, Cmd::Search),
+                    _ => self.run(ctx, Cmd::Plan),
                 }
-            });
+            }
+            b.rect
+        };
+        self.morph.seen.push((Shelf::Tool(glyph), r.center()));
+    }
+
+    /// The undo button, there while something can be taken back. It grows
+    /// into its place, along the row or up the column, as it fades in.
+    fn undo_tool(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, c: (Color32, Color32, Color32), row: bool) {
+        let a = motion::ease_in_out(ctx.animate_bool_with_time(ids::undo_button(), !self.undo.is_empty(), motion::NORMAL.secs()));
+        if a <= 0.0 {
+            return;
         }
-        if icon_btn(ui, icons::SHUFFLE, 15.0, tr("Plan my tasks: fit open tasks into free working time"), c).clicked() {
-            self.run(ctx, Cmd::Plan);
+        let full = vec2(28.0, 28.0);
+        let (slot, _) = ui.allocate_exact_size(if row { vec2(full.x * a, full.y) } else { vec2(full.x, full.y * a) }, Sense::hover());
+        self.morph.seen.push((Shelf::Tool(icons::UNDO), slot.center()));
+        if self.morph.moving {
+            return;
         }
-        if icon_btn(ui, icons::SEARCH, 15.0, &self.tip(tr("Search"), Cmd::Search), c).clicked() {
-            self.run(ctx, Cmd::Search);
-        }
-        if icon_btn(ui, icons::TERMINAL, 15.0, &self.tip(tr("Command bar"), Cmd::CommandBar), c).clicked() {
-            self.run(ctx, Cmd::CommandBar);
-        }
-        if icon_btn(ui, icons::HELP, 16.0, &self.tip(tr("Shortcuts"), Cmd::Shortcuts), c).clicked() {
-            self.open_settings(crate::settings::Page::Shortcuts);
-        }
-        if icon_btn(ui, icons::SETTINGS, 16.0, &self.tip(tr("Settings"), Cmd::Prefs), c).clicked() {
-            self.open_settings(crate::settings::Page::General);
+        let mut b = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_center_size(slot.center(), full)).id_salt("undo_tool"));
+        b.set_clip_rect(slot.intersect(ui.clip_rect()));
+        b.set_opacity(a);
+        if icon_btn(&mut b, icons::UNDO, 16.0, &self.tip(tr("Undo"), Cmd::Undo), c).clicked() {
+            self.do_undo(ctx);
         }
     }
 
@@ -1223,6 +1247,7 @@ impl App {
             Shelf::Due(key) => !groups.iter().any(|g| g.0 == key),
             Shelf::Done => self.done_ids().is_empty(),
             Shelf::Nav => false,
+            Shelf::Tool(_) => true,
         };
         if gone {
             self.flyer = None;
@@ -1268,7 +1293,7 @@ impl App {
                                 self.section(ui, ctx, "flydone", tr("Completed"), Some((icons::CHECK, muted)), muted, &items, None);
                                 self.collapsed.remove("flydone");
                             }
-                            Shelf::Nav => {}
+                            Shelf::Nav | Shelf::Tool(_) => {}
                         }
                     });
                 });

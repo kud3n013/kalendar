@@ -75,6 +75,8 @@ pub struct Aids {
     pub new_list: bool,
     /// `KALENDAR_DRAG="title@x,y"`: that task held as if dragged, pointer at x,y *(picture)*
     pub drag: Option<(String, egui::Pos2)>,
+    /// `KALENDAR_MORPH=<0..1>`: the task panel held that far between the rail and open *(picture)*
+    pub morph: Option<f32>,
 }
 
 /// The aids, read once.
@@ -116,6 +118,7 @@ fn read(var: impl Fn(&str) -> Option<String>) -> Aids {
         show_newtask: set("SHOW_NEWTASK"),
         list_edit: set("LIST_EDIT"),
         new_list: on("NEW_LIST"),
+        morph: set("MORPH").and_then(|v| v.trim().parse::<f32>().ok()).map(|t| t.clamp(0.0, 1.0)),
         drag: set("DRAG").and_then(|v| {
             let (title, at) = v.rsplit_once('@')?;
             let (x, y) = at.split_once(',')?;
