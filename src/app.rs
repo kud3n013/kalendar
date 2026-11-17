@@ -68,9 +68,18 @@ pub struct ListEdit {
     pub snapped: bool,
 }
 
+/// What a button on the compact task rail stands for.
+#[derive(Clone, Copy, PartialEq, Debug, Hash)]
+pub enum Shelf {
+    /// a task list, 0 being the Inbox
+    List(u64),
+    /// a group pinned above the lists, by its key: "overdue", "today"…
+    Due(&'static str),
+}
+
 /// A list shown beside the compact task rail while its icon is hovered.
 pub struct Flyer {
-    pub list: u64,
+    pub shelf: Shelf,
     /// how far down the rail the list's icon sits
     pub top: f32,
     /// when the pointer left both the icon and the flyer

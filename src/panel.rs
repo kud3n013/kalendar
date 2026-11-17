@@ -7,7 +7,7 @@ use crate::theme;
 use crate::icons;
 use crate::model::*;
 use crate::views::{context_menu, Menu};
-use crate::{fill_squircle, mix, rgb, App, Cmd};
+use crate::{fill_squircle, mix, rgb, App, Cmd, Shelf};
 use chrono::{Datelike, Duration, Local, NaiveDate};
 use eframe::egui::{
     self, pos2, vec2, Align, Align2, Color32, FontId, Layout, Margin, Rect, RichText, Sense, Stroke,
@@ -73,6 +73,9 @@ fn row_btn(ui: &egui::Ui, r: Rect, resp: &egui::Response, glyph: &str, size: f32
 }
 
 /// How wide the folded task panel is, and its list buttons.
+/// A group pinned above the task lists: key, name, icon, colour, tasks.
+type DueGroup = (&'static str, &'static str, &'static str, Color32, Vec<u64>);
+
 const RAIL_W: f32 = 52.0;
 const RAIL_ICON: f32 = 34.0;
 /// How wide a list hanging beside the rail is.
@@ -502,28 +505,11 @@ impl App {
         ui.add_space(8.0);
 
                 // which tasks go where
-                let tomorrow = today + Duration::days(1);
                 let p = self.data.prefs.clone();
                 let tag = self.filter_tag.clone();
-                let mut open_tasks: Vec<Task> = self
-                    .data
-                    .tasks
-                    .iter()
-                    .filter(|t| !t.done)
-                    .filter(|t| tag.as_ref().map(|g| t.tags.contains(g)).unwrap_or(true))
-                    .cloned()
-                    .collect();
-                match self.sort_by {
-                    1 => open_tasks.sort_by_key(|t| t.due.unwrap_or(NaiveDate::MAX)),
-                    2 => open_tasks.sort_by_key(|t| if t.priority == 0 { 10 } else { t.priority }),
-                    _ => {}
-                }
+                let groups = self.due_groups(today, tag.as_deref());
+                let open_tasks = self.open_tasks(tag.as_deref());
                 let ids = |f: &dyn Fn(&Task) -> bool| -> Vec<u64> { open_tasks.iter().filter(|t| f(t)).map(|t| t.id).collect() };
-                let overdue = ids(&|t| t.due.map(|d| d < today).unwrap_or(false));
-                let due_today = ids(&|t| t.due == Some(today));
-                let due_tomorrow = ids(&|t| t.due == Some(tomorrow));
-                let soon_from = if p.show_due_tomorrow { 2 } else if p.show_due_today { 1 } else { 0 };
-                let due_soon = ids(&|t| t.due.map(|d| (d - today).num_days() >= soon_from && (d - today).num_days() <= DUE_SOON_DAYS).unwrap_or(false));
                 let visible_in_list = |t: &Task| p.show_scheduled_tasks || !self.data.task_is_scheduled(t.id);
                 let mut lists: Vec<(u64, String, String, Color32, Vec<u64>)> = Vec::new();
                 for id in std::iter::once(0).chain(self.data.lists.iter().map(|l| l.id)) {
@@ -540,19 +526,10 @@ impl App {
                 egui::ScrollArea::vertical().id_salt("tasklist").auto_shrink([false, false]).show(ui, |ui| {
                     // room for the first list's border, which reaches above its heading
                     ui.add_space(6.0);
-                    let mut any_pinned = false;
-                    for (key, name, icon, color, items, show) in [
-                        ("overdue", tr("Overdue"), icons::ALARM, theme::DANGER, &overdue, true),
-                        ("today", tr("Due today"), icons::SUN, theme::WARNING, &due_today, p.show_due_today),
-                        ("tomorrow", tr("Due tomorrow"), icons::ARROW_RIGHT, theme::WARNING, &due_tomorrow, p.show_due_tomorrow),
-                        ("soon", tr("Due soon"), icons::CHEVRONS_RIGHT, theme::WARNING, &due_soon, p.show_due_soon),
-                    ] {
-                        if show && !items.is_empty() {
-                            any_pinned = true;
-                            self.section(ui, ctx, key, name, Some((icon, color)), color, items, None);
-                        }
+                    for (key, name, icon, color, items) in &groups {
+                        self.section(ui, ctx, key, name, Some((icon, *color)), *color, items, None);
                     }
-                    if any_pinned {
+                    if !groups.is_empty() {
                         ui.add_space(4.0);
                         let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
                         ui.painter().rect_filled(r, 0.0, border);
@@ -824,13 +801,48 @@ impl App {
         }
     }
 
+    /// The open tasks, only those tagged `tag` when given, in the chosen order.
+    fn open_tasks(&self, tag: Option<&str>) -> Vec<&Task> {
+        let mut open: Vec<&Task> = self.data.tasks.iter().filter(|t| !t.done && tag.is_none_or(|g| t.tags.iter().any(|x| x == g))).collect();
+        match self.sort_by {
+            1 => open.sort_by_key(|t| t.due.unwrap_or(NaiveDate::MAX)),
+            2 => open.sort_by_key(|t| if t.priority == 0 { 10 } else { t.priority }),
+            _ => {}
+        }
+        open
+    }
+
+    /// The groups pinned above the lists that have tasks: key, name, icon,
+    /// colour and tasks. Overdue always shows; the others as set.
+    fn due_groups(&self, today: NaiveDate, tag: Option<&str>) -> Vec<DueGroup> {
+        let p = &self.data.prefs;
+        let tomorrow = today + Duration::days(1);
+        let soon_from = if p.show_due_tomorrow { 2 } else if p.show_due_today { 1 } else { 0 };
+        let open = self.open_tasks(tag);
+        let groups: [(&'static str, &'static str, &'static str, Color32, bool, &dyn Fn(NaiveDate) -> bool); 4] = [
+            ("overdue", tr("Overdue"), icons::ALARM, theme::DANGER, true, &|d| d < today),
+            ("today", tr("Due today"), icons::SUN, theme::WARNING, p.show_due_today, &|d| d == today),
+            ("tomorrow", tr("Due tomorrow"), icons::ARROW_RIGHT, theme::WARNING, p.show_due_tomorrow, &|d| d == tomorrow),
+            ("soon", tr("Due soon"), icons::CHEVRONS_RIGHT, theme::WARNING, p.show_due_soon, &|d| {
+                (soon_from..=DUE_SOON_DAYS).contains(&(d - today).num_days())
+            }),
+        ];
+        groups
+            .into_iter()
+            .filter(|g| g.4)
+            .map(|(key, name, icon, color, _, f)| (key, name, icon, color, open.iter().filter(|t| t.due.is_some_and(f)).map(|t| t.id).collect::<Vec<u64>>()))
+            .filter(|g| !g.4.is_empty())
+            .collect()
+    }
+
     /// The task panel folded to a strip: a button for each list with the
     /// panel's tools stacked under them. Hovering a list's button shows
     /// the list beside the strip.
     fn ui_rail(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, right: bool, c: (Color32, Color32, Color32)) {
         let (side, border) = (self.pal.side, self.pal.border);
         let panel = if right { egui::Panel::right(ids::rail()) } else { egui::Panel::left(ids::rail()) };
-        let mut hot: Option<(u64, Rect)> = None;
+        let mut hot: Option<(Shelf, Rect)> = None;
+        let groups = self.due_groups(Local::now().date_naive(), None);
         let out = panel
             .resizable(false)
             .exact_size(RAIL_W)
@@ -861,10 +873,22 @@ impl App {
                             .show(ui, |ui| {
                                 ui.vertical_centered(|ui| {
                                     ui.spacing_mut().item_spacing.y = 4.0;
+                                    for (key, _, icon, color, _) in &groups {
+                                        if let Some(r) = self.rail_icon(ui, ctx, Shelf::Due(key), icon, *color) {
+                                            hot = Some((Shelf::Due(key), r));
+                                        }
+                                    }
+                                    if !groups.is_empty() {
+                                        ui.add_space(2.0);
+                                        let (r, _) = ui.allocate_exact_size(vec2(20.0, 1.0), Sense::hover());
+                                        ui.painter().rect_filled(r, 0.0, border);
+                                        ui.add_space(2.0);
+                                    }
                                     let lists: Vec<u64> = std::iter::once(0).chain(self.data.lists.iter().map(|l| l.id)).collect();
                                     for lid in lists {
-                                        if let Some(r) = self.rail_icon(ui, ctx, lid) {
-                                            hot = Some((lid, r));
+                                        let (_, color, glyph) = self.data.list_look(lid);
+                                        if let Some(r) = self.rail_icon(ui, ctx, Shelf::List(lid), &glyph, rgb(color)) {
+                                            hot = Some((Shelf::List(lid), r));
                                         }
                                     }
                                     // a new list is named in the full panel
@@ -877,7 +901,7 @@ impl App {
                     });
                 });
             });
-        self.ui_flyer(ctx, out.response.rect, right, hot);
+        self.ui_flyer(ctx, out.response.rect, right, hot, &groups);
     }
 
     /// The panel's tools, one above the other, settings at the bottom.
@@ -909,17 +933,16 @@ impl App {
         }
     }
 
-    /// One list's button on the rail. A task dropped on it moves to the
-    /// list. Returns where it is while the pointer is over it.
-    fn rail_icon(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, lid: u64) -> Option<Rect> {
+    /// One button on the rail, for a list or a pinned group. A task
+    /// dropped on a list's button moves to the list. Returns where it is
+    /// while the pointer is over it.
+    fn rail_icon(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, shelf: Shelf, glyph: &str, color: Color32) -> Option<Rect> {
         let (side, text) = (self.pal.side, self.pal.text);
-        let (name, color, glyph) = self.data.list_look(lid);
-        let color = rgb(color);
         let (r, _) = ui.allocate_exact_size(vec2(RAIL_ICON, RAIL_ICON), Sense::hover());
         // the pointer, not egui's hover, which a drag elsewhere turns off
         let over = ui.rect_contains_pointer(r);
-        let open = self.flyer.as_ref().is_some_and(|f| f.list == lid);
-        let glow = ctx.animate_bool_with_time(ids::rail_icon(lid), over || open, motion::HOVER.secs());
+        let open = self.flyer.as_ref().is_some_and(|f| f.shelf == shelf);
+        let glow = ctx.animate_bool_with_time(ids::rail_icon(shelf), over || open, motion::HOVER.secs());
         let p = ui.painter();
         let soft = mix(color, text, 0.25);
         fill_squircle(p, r, theme::RADIUS, mix(side, soft, 0.04 + 0.12 * glow));
@@ -928,12 +951,13 @@ impl App {
         } else {
             p.text(r.center(), Align2::CENTER_CENTER, glyph, FontId::proportional(theme::size::LARGE), color);
         }
+        let Shelf::List(lid) = shelf else { return over.then_some(r) };
         let drop = self.drag_task.filter(|t| self.data.task(*t).is_some_and(|t| t.list != lid && !t.done));
         let drop = drop.filter(|_| lid == 0 || self.data.lists.iter().any(|x| x.id == lid && !x.read_only));
         if let Some(tid) = drop.filter(|_| over) {
             crate::stroke_squircle(p, r, theme::RADIUS, Stroke::new(1.5, color));
             if ctx.input(|i| i.pointer.any_released()) {
-                let name = if lid == 0 { self.data.prefs.inbox_name() } else { name };
+                let name = if lid == 0 { self.data.prefs.inbox_name() } else { self.data.list_look(lid).0 };
                 self.move_to_list(tid, lid);
                 self.drag_task = None;
                 self.say(ctx, trf("Moved to {}", &[&name]), true);
@@ -945,16 +969,20 @@ impl App {
     /// The hovered list, hanging beside the rail. It goes once the pointer
     /// has been away from it and its button for a moment, or at once while
     /// a task is carried out of it, so the calendar under it is free.
-    fn ui_flyer(&mut self, ctx: &egui::Context, rail: Rect, right: bool, hot: Option<(u64, Rect)>) {
-        if let Some((lid, r)) = hot {
+    fn ui_flyer(&mut self, ctx: &egui::Context, rail: Rect, right: bool, hot: Option<(Shelf, Rect)>, groups: &[DueGroup]) {
+        if let Some((shelf, r)) = hot {
             match &mut self.flyer {
-                Some(f) if f.list == lid => f.top = r.top(),
-                _ => self.flyer = Some(crate::Flyer { list: lid, top: r.top(), away: None, rect: Rect::NOTHING }),
+                Some(f) if f.shelf == shelf => f.top = r.top(),
+                _ => self.flyer = Some(crate::Flyer { shelf, top: r.top(), away: None, rect: Rect::NOTHING }),
             }
         }
         let Some(f) = &self.flyer else { return };
-        let (lid, top) = (f.list, f.top);
-        if lid != 0 && !self.data.lists.iter().any(|l| l.id == lid) {
+        let (shelf, top) = (f.shelf, f.top);
+        let gone = match shelf {
+            Shelf::List(lid) => lid != 0 && !self.data.lists.iter().any(|l| l.id == lid),
+            Shelf::Due(key) => !groups.iter().any(|g| g.0 == key),
+        };
+        if gone {
             self.flyer = None;
             return;
         }
@@ -974,7 +1002,15 @@ impl App {
                     ui.spacing_mut().scroll = egui::style::ScrollStyle { bar_inner_margin: 9.0, ..egui::style::ScrollStyle::solid() };
                     egui::ScrollArea::vertical().id_salt("flyer").max_height(max_h).min_scrolled_height(max_h).show(ui, |ui| {
                         ui.add_space(6.0);
-                        self.flyer_list(ui, ctx, lid);
+                        match shelf {
+                            Shelf::List(lid) => self.flyer_list(ui, ctx, lid),
+                            Shelf::Due(key) => {
+                                if let Some((key, name, icon, color, items)) = groups.iter().find(|g| g.0 == key) {
+                                    self.section(ui, ctx, &format!("fly{key}"), name, Some((icon, *color)), *color, items, None);
+                                    self.collapsed.remove(&format!("fly{key}"));
+                                }
+                            }
+                        }
                     });
                 });
             });
@@ -1007,17 +1043,8 @@ impl App {
         let name = if lid == 0 { self.data.prefs.inbox_name() } else if name.trim().is_empty() { tr("Untitled list").to_string() } else { name };
         let color = rgb(color);
         let show_scheduled = self.data.prefs.show_scheduled_tasks;
-        let mut tasks: Vec<&Task> = self
-            .data
-            .tasks
-            .iter()
-            .filter(|t| t.list == lid && !t.done && (show_scheduled || !self.data.task_is_scheduled(t.id)))
-            .collect();
-        match self.sort_by {
-            1 => tasks.sort_by_key(|t| t.due.unwrap_or(NaiveDate::MAX)),
-            2 => tasks.sort_by_key(|t| if t.priority == 0 { 10 } else { t.priority }),
-            _ => {}
-        }
+        let mut tasks = self.open_tasks(None);
+        tasks.retain(|t| t.list == lid && (show_scheduled || !self.data.task_is_scheduled(t.id)));
         let items: Vec<u64> = tasks.iter().map(|t| t.id).collect();
         let key = format!("fly{lid}");
         let icon = Some((glyph.as_str(), color)).filter(|g| !g.0.is_empty());
