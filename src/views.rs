@@ -419,7 +419,7 @@ impl App {
         }
         if let Some(tid) = self.drag_task {
             let pos = ui.ctx().input(|i| i.pointer.latest_pos());
-            if let Some(q) = pos.filter(|q| hrect.contains(*q) && q.x >= x0 && q.y > hrect.top() + 44.0) {
+            if let Some(q) = pos.filter(|q| !self.over_flyer(*q) && hrect.contains(*q) && q.x >= x0 && q.y > hrect.top() + 44.0) {
                 let di = (((q.x - x0) / col_w) as usize).min(n - 1);
                 let col = Rect::from_min_max(pos2(x0 + di as f32 * col_w, hrect.top() + 44.0), pos2(x0 + (di + 1) as f32 * col_w, hrect.bottom()));
                 hp.rect_stroke(col.shrink(1.0), 4.0, Stroke::new(2.0, self.pal.accent), StrokeKind::Inside);
@@ -998,7 +998,7 @@ impl App {
         // a task dragged from the list
         if let Some(tid) = self.drag_task {
             if let Some(pos) = ctx.input(|i| i.pointer.latest_pos()) {
-                if rect.intersect(ui.clip_rect()).contains(pos) && pos.x >= x0 {
+                if rect.intersect(ui.clip_rect()).contains(pos) && pos.x >= x0 && !self.over_flyer(pos) {
                     let start = snap_dt(pos_to(pos), snap, 0);
                     let mins = self.data.task(tid).and_then(|t| t.duration_min).unwrap_or(p.default_task_min);
                     let di = days.iter().position(|d| *d == start.date()).unwrap_or(0);
@@ -1367,7 +1367,7 @@ impl App {
             context_menu(&resp, |ui| self.block_menu(ui, id));
         }
         if let Some(tid) = self.drag_task {
-            if let Some(d) = ctx.input(|i| i.pointer.latest_pos()).and_then(cell_at) {
+            if let Some(d) = ctx.input(|i| i.pointer.latest_pos()).filter(|p| !self.over_flyer(*p)).and_then(cell_at) {
                 if let Some((r, _)) = cells.iter().find(|(_, x)| *x == d) {
                     painter.rect_stroke(*r, 0.0, Stroke::new(2.0, self.pal.accent), StrokeKind::Inside);
                 }

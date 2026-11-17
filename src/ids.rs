@@ -54,7 +54,11 @@ fixed! {
     panel_bottom = "panel_bottom";
     /// the Save, Cancel and Delete row of an editor window
     editor_buttons = "editor_buttons";
-    panel_handle = "panel_handle";
+    /// the narrow strip of list icons shown while the task panel is closed
+    rail = "rail";
+    rail_bottom = "rail_bottom";
+    /// a list hanging beside the rail
+    flyer = "flyer";
     list_edit = "list_edit";
     /// the layer the dragged block's ghost is painted on
     ghost = "ghost";
@@ -88,6 +92,8 @@ keyed! {
     section_drop = "drop";
     list_dots = "listdots";
     list_add = "listadd";
+    /// a list's icon on the rail
+    rail_icon = "railicon";
     /// a task row of the panel
     task_row = "row";
     /// the small name field under a "+" beside a dropdown

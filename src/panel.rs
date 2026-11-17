@@ -72,6 +72,14 @@ fn row_btn(ui: &egui::Ui, r: Rect, resp: &egui::Response, glyph: &str, size: f32
     ui.painter().text(r.center(), Align2::CENTER_CENTER, glyph, FontId::proportional(size), c);
 }
 
+/// How wide the folded task panel is, and its list buttons.
+const RAIL_W: f32 = 52.0;
+const RAIL_ICON: f32 = 34.0;
+/// How wide a list hanging beside the rail is.
+const FLYER_W: f32 = 300.0;
+/// How long a flyer stays after the pointer leaves it.
+const FLYER_LINGER_S: f64 = 0.3;
+
 pub fn due_label(d: NaiveDate, today: NaiveDate) -> String {
     match (d - today).num_days() {
         -1 => tr("Yesterday").into(),
@@ -222,19 +230,12 @@ impl App {
 
     pub fn ui_toolbar(&mut self, ui: &mut egui::Ui) {
         let (muted, text) = (self.pal.muted, self.pal.text);
-        let closed = !self.data.prefs.sidebar_open;
-        let closed_left = closed && self.data.prefs.sidebar_side == PanelSide::Left;
-        let closed_right = closed && !closed_left;
         let mut go_at = egui::Pos2::ZERO;
         egui::Panel::top("bar")
             .show_separator_line(false)
             .frame(egui::Frame::new().fill(self.pal.bg).inner_margin(Margin { left: 24, right: 16, top: 12, bottom: 6 }))
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    // room for the floating panel handle while the panel is closed
-                    if closed_left {
-                        ui.add_space(36.0);
-                    }
                     let days = self.visible_days();
                     let (first, last) = match self.view {
                         View::Month => (self.anchor, self.anchor),
@@ -259,9 +260,6 @@ impl App {
                     }
                     // the view menu sits in the far corner
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        if closed_right {
-                            ui.add_space(36.0);
-                        }
                         self.view_menu(ui);
                         self.calendars_menu(ui);
                     });
@@ -338,7 +336,7 @@ impl App {
         let right = self.data.prefs.sidebar_side == PanelSide::Right;
         let panel = if right { egui::Panel::right("tasks") } else { egui::Panel::left("tasks") };
         let mut still_open = open;
-        panel
+        let shown = panel
             .resizable(true)
             .default_size(self.data.prefs.sidebar_w)
             .size_range(280.0..=560.0)
@@ -358,14 +356,11 @@ impl App {
         if still_open != open {
             self.run(ctx, Cmd::ToggleTasks);
         }
-        // while the panel is closed, a lone handle brings it back
-        if !open {
-            let (anchor, dx) = if right { (Align2::RIGHT_TOP, -10.0) } else { (Align2::LEFT_TOP, 10.0) };
-            egui::Area::new(ids::panel_handle()).anchor(anchor, [dx, 10.0]).order(egui::Order::Foreground).show(ctx, |ui| {
-                if icon_btn(ui, icons::MENU, 17.0, &self.tip(tr("Show the task panel"), Cmd::ToggleTasks), c).clicked() {
-                    self.run(ctx, Cmd::ToggleTasks);
-                }
-            });
+        // closed, it folds to a strip of list icons
+        if shown.is_none() {
+            self.ui_rail(ui, ctx, right, c);
+        } else {
+            self.flyer = None;
         }
     }
 
@@ -827,6 +822,217 @@ impl App {
                 self.say(ctx, trf("Moved to {}", &[&name]), true);
             }
         }
+    }
+
+    /// The task panel folded to a strip: a button for each list with the
+    /// panel's tools stacked under them. Hovering a list's button shows
+    /// the list beside the strip.
+    fn ui_rail(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, right: bool, c: (Color32, Color32, Color32)) {
+        let (side, border) = (self.pal.side, self.pal.border);
+        let panel = if right { egui::Panel::right(ids::rail()) } else { egui::Panel::left(ids::rail()) };
+        let mut hot: Option<(u64, Rect)> = None;
+        let out = panel
+            .resizable(false)
+            .exact_size(RAIL_W)
+            .show_separator_line(false)
+            .frame(egui::Frame::new().fill(side).inner_margin(Margin { left: 0, right: 0, top: 10, bottom: 0 }))
+            .show(ui, |ui| {
+                egui::Panel::bottom(ids::rail_bottom())
+                    .show_separator_line(false)
+                    .frame(egui::Frame::new().fill(side).inner_margin(Margin { left: 0, right: 0, top: 4, bottom: 8 }))
+                    .show(ui, |ui| {
+                        ui.vertical_centered(|ui| {
+                            ui.spacing_mut().item_spacing.y = 2.0;
+                            self.rail_tools(ui, ctx, c);
+                        });
+                    });
+                egui::CentralPanel::default().frame(egui::Frame::new().fill(side)).show(ui, |ui| {
+                    ui.vertical_centered(|ui| {
+                        if icon_btn(ui, icons::MENU, 17.0, &self.tip(tr("Show the task panel"), Cmd::ToggleTasks), c).clicked() {
+                            self.run(ctx, Cmd::ToggleTasks);
+                        }
+                        ui.add_space(6.0);
+                        let (r, _) = ui.allocate_exact_size(vec2(20.0, 1.0), Sense::hover());
+                        ui.painter().rect_filled(r, 0.0, border);
+                        ui.add_space(6.0);
+                        egui::ScrollArea::vertical()
+                            .id_salt("rail")
+                            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                            .show(ui, |ui| {
+                                ui.vertical_centered(|ui| {
+                                    ui.spacing_mut().item_spacing.y = 4.0;
+                                    let lists: Vec<u64> = std::iter::once(0).chain(self.data.lists.iter().map(|l| l.id)).collect();
+                                    for lid in lists {
+                                        if let Some(r) = self.rail_icon(ui, ctx, lid) {
+                                            hot = Some((lid, r));
+                                        }
+                                    }
+                                    // a new list is named in the full panel
+                                    if icon_btn(ui, icons::PLUS, 17.0, tr("New task list"), c).clicked() {
+                                        self.new_list_text = Some((String::new(), true));
+                                        self.run(ctx, Cmd::ToggleTasks);
+                                    }
+                                });
+                            });
+                    });
+                });
+            });
+        self.ui_flyer(ctx, out.response.rect, right, hot);
+    }
+
+    /// The panel's tools, one above the other, settings at the bottom.
+    fn rail_tools(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, c: (Color32, Color32, Color32)) {
+        // undo appears while there is something to take back
+        let a = ctx.animate_bool_with_time(ids::undo_button(), !self.undo.is_empty(), motion::NORMAL.secs());
+        if a > 0.0 {
+            ui.scope(|ui| {
+                ui.set_opacity(a);
+                if icon_btn(ui, icons::UNDO, 16.0, &self.tip(tr("Undo"), Cmd::Undo), c).clicked() {
+                    self.do_undo(ctx);
+                }
+            });
+        }
+        if icon_btn(ui, icons::SHUFFLE, 15.0, tr("Plan my tasks: fit open tasks into free working time"), c).clicked() {
+            self.run(ctx, Cmd::Plan);
+        }
+        if icon_btn(ui, icons::SEARCH, 15.0, &self.tip(tr("Search"), Cmd::Search), c).clicked() {
+            self.run(ctx, Cmd::Search);
+        }
+        if icon_btn(ui, icons::TERMINAL, 15.0, &self.tip(tr("Command bar"), Cmd::CommandBar), c).clicked() {
+            self.run(ctx, Cmd::CommandBar);
+        }
+        if icon_btn(ui, icons::HELP, 16.0, &self.tip(tr("Shortcuts"), Cmd::Shortcuts), c).clicked() {
+            self.open_settings(crate::settings::Page::Shortcuts);
+        }
+        if icon_btn(ui, icons::SETTINGS, 16.0, &self.tip(tr("Settings"), Cmd::Prefs), c).clicked() {
+            self.open_settings(crate::settings::Page::General);
+        }
+    }
+
+    /// One list's button on the rail. A task dropped on it moves to the
+    /// list. Returns where it is while the pointer is over it.
+    fn rail_icon(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, lid: u64) -> Option<Rect> {
+        let (side, text) = (self.pal.side, self.pal.text);
+        let (name, color, glyph) = self.data.list_look(lid);
+        let color = rgb(color);
+        let (r, _) = ui.allocate_exact_size(vec2(RAIL_ICON, RAIL_ICON), Sense::hover());
+        // the pointer, not egui's hover, which a drag elsewhere turns off
+        let over = ui.rect_contains_pointer(r);
+        let open = self.flyer.as_ref().is_some_and(|f| f.list == lid);
+        let glow = ctx.animate_bool_with_time(ids::rail_icon(lid), over || open, motion::HOVER.secs());
+        let p = ui.painter();
+        let soft = mix(color, text, 0.25);
+        fill_squircle(p, r, theme::RADIUS, mix(side, soft, 0.04 + 0.12 * glow));
+        if glyph.is_empty() {
+            p.circle_stroke(r.center(), 5.5, Stroke::new(2.0, color));
+        } else {
+            p.text(r.center(), Align2::CENTER_CENTER, glyph, FontId::proportional(theme::size::LARGE), color);
+        }
+        let drop = self.drag_task.filter(|t| self.data.task(*t).is_some_and(|t| t.list != lid && !t.done));
+        let drop = drop.filter(|_| lid == 0 || self.data.lists.iter().any(|x| x.id == lid && !x.read_only));
+        if let Some(tid) = drop.filter(|_| over) {
+            crate::stroke_squircle(p, r, theme::RADIUS, Stroke::new(1.5, color));
+            if ctx.input(|i| i.pointer.any_released()) {
+                let name = if lid == 0 { self.data.prefs.inbox_name() } else { name };
+                self.move_to_list(tid, lid);
+                self.drag_task = None;
+                self.say(ctx, trf("Moved to {}", &[&name]), true);
+            }
+        }
+        over.then_some(r)
+    }
+
+    /// The hovered list, hanging beside the rail. It goes once the pointer
+    /// has been away from it and its button for a moment, or at once while
+    /// a task is carried out of it, so the calendar under it is free.
+    fn ui_flyer(&mut self, ctx: &egui::Context, rail: Rect, right: bool, hot: Option<(u64, Rect)>) {
+        if let Some((lid, r)) = hot {
+            match &mut self.flyer {
+                Some(f) if f.list == lid => f.top = r.top(),
+                _ => self.flyer = Some(crate::Flyer { list: lid, top: r.top(), away: None, rect: Rect::NOTHING }),
+            }
+        }
+        let Some(f) = &self.flyer else { return };
+        let (lid, top) = (f.list, f.top);
+        if lid != 0 && !self.data.lists.iter().any(|l| l.id == lid) {
+            self.flyer = None;
+            return;
+        }
+        let side = self.pal.side;
+        let screen = ctx.content_rect();
+        let x = if right { rail.left() - 4.0 } else { rail.right() + 4.0 };
+        let y = (top - 10.0).max(screen.top() + 8.0);
+        let max_h = (screen.bottom() - y - 12.0).max(160.0);
+        let out = egui::Area::new(ids::flyer())
+            .order(egui::Order::Foreground)
+            .pivot(if right { Align2::RIGHT_TOP } else { Align2::LEFT_TOP })
+            .fixed_pos(pos2(x, y))
+            .constrain(true)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).fill(side).inner_margin(Margin { left: 14, right: 12, top: 6, bottom: 4 }).show(ui, |ui| {
+                    ui.set_width(FLYER_W);
+                    ui.spacing_mut().scroll = egui::style::ScrollStyle { bar_inner_margin: 9.0, ..egui::style::ScrollStyle::solid() };
+                    egui::ScrollArea::vertical().id_salt("flyer").max_height(max_h).min_scrolled_height(max_h).show(ui, |ui| {
+                        ui.add_space(6.0);
+                        self.flyer_list(ui, ctx, lid);
+                    });
+                });
+            });
+        let rect = out.response.rect;
+        let now = ctx.input(|i| i.time);
+        let inside = hot.is_some() || ctx.input(|i| i.pointer.latest_pos()).is_some_and(|p| rect.expand(6.0).contains(p));
+        // its menus and the list editor hang outside it
+        let held = egui::Popup::is_any_open(ctx) || self.list_edit.is_some();
+        let carried = self.drag_task.is_some();
+        let Some(f) = &mut self.flyer else { return };
+        f.rect = rect;
+        if inside || held {
+            f.away = None;
+        } else if carried {
+            self.flyer = None;
+        } else {
+            let since = *f.away.get_or_insert(now);
+            if now - since > FLYER_LINGER_S {
+                self.flyer = None;
+            } else {
+                ctx.request_repaint();
+            }
+        }
+    }
+
+    /// A list as the flyer shows it: the same heading and rows as the
+    /// panel, always open.
+    fn flyer_list(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, lid: u64) {
+        let (name, color, glyph) = self.data.list_look(lid);
+        let name = if lid == 0 { self.data.prefs.inbox_name() } else if name.trim().is_empty() { tr("Untitled list").to_string() } else { name };
+        let color = rgb(color);
+        let show_scheduled = self.data.prefs.show_scheduled_tasks;
+        let mut tasks: Vec<&Task> = self
+            .data
+            .tasks
+            .iter()
+            .filter(|t| t.list == lid && !t.done && (show_scheduled || !self.data.task_is_scheduled(t.id)))
+            .collect();
+        match self.sort_by {
+            1 => tasks.sort_by_key(|t| t.due.unwrap_or(NaiveDate::MAX)),
+            2 => tasks.sort_by_key(|t| if t.priority == 0 { 10 } else { t.priority }),
+            _ => {}
+        }
+        let items: Vec<u64> = tasks.iter().map(|t| t.id).collect();
+        let key = format!("fly{lid}");
+        let icon = Some((glyph.as_str(), color)).filter(|g| !g.0.is_empty());
+        self.section(ui, ctx, &key, &name, icon, color, &items, Some(lid));
+        // its heading folds the panel's lists, not this one
+        self.collapsed.remove(&key);
+        if items.is_empty() {
+            ui.label(RichText::new(tr("No open tasks")).size(theme::size::SMALL).color(self.pal.muted));
+            ui.add_space(8.0);
+        }
+    }
+
+    /// Whether `pos` is on the flyer, where the calendar under it takes no drop.
+    pub fn over_flyer(&self, pos: egui::Pos2) -> bool {
+        self.flyer.as_ref().is_some_and(|f| f.rect.contains(pos))
     }
 
     /// Archives every completed task, as one step that can be undone.

@@ -68,6 +68,17 @@ pub struct ListEdit {
     pub snapped: bool,
 }
 
+/// A list shown beside the compact task rail while its icon is hovered.
+pub struct Flyer {
+    pub list: u64,
+    /// how far down the rail the list's icon sits
+    pub top: f32,
+    /// when the pointer left both the icon and the flyer
+    pub away: Option<f64>,
+    /// where it was drawn this frame, so the calendar under it takes no drop
+    pub rect: egui::Rect,
+}
+
 /// The frame editor: a frame being made or changed.
 pub struct FrameEdit {
     pub frame: Frame,
@@ -228,6 +239,7 @@ pub struct App {
     /// the name of a list being added, and whether its field just appeared
     pub new_list_text: Option<(String, bool)>,
     pub list_edit: Option<ListEdit>,
+    pub flyer: Option<Flyer>,
     /// the name typed for a new list in the settings
     pub new_list_name: String,
     pub collapsed: std::collections::HashSet<String>,
@@ -351,6 +363,7 @@ impl App {
             filter_tag: None,
             new_list_text: None,
             list_edit: None,
+            flyer: None,
             new_list_name: String::new(),
             collapsed: ["done".to_string()].into_iter().collect(),
             scroll_to: Some(scroll.max(0.0)),
