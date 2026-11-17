@@ -601,6 +601,18 @@ impl App {
         self.commit();
     }
 
+    /// Sets an event aside, or takes it back. A skipped event stays on the
+    /// calendar, greyed, and other blocks may be put over it; for an event
+    /// that can't be deleted here it is the way to leave it out.
+    pub fn toggle_skip(&mut self, ctx: &egui::Context, id: u64) {
+        self.snapshot();
+        let Some(e) = self.data.event_mut(id) else { return };
+        e.skipped = !e.skipped;
+        let now = e.skipped;
+        self.commit();
+        self.say(ctx, if now { tr("Event skipped") } else { tr("Event no longer skipped") }, true);
+    }
+
     pub fn delete_frame(&mut self, ctx: &egui::Context, id: u64) {
         self.snapshot();
         self.data.frames.retain(|f| f.id != id);
@@ -784,6 +796,7 @@ impl App {
         e.id = self.data.new_id();
         // a copy of a synced or subscribed event is a new event of one's own
         e.detach();
+        e.skipped = false;
         e.calendar = self.data.writable_or_own(e.calendar);
         let len = src.end - src.start;
         let day_shift = Duration::days((at.date() - src.start.date()).num_days());

@@ -13,6 +13,9 @@ use eframe::egui::{
     Stroke, StrokeKind,
 };
 
+/// How much of a skipped block shows through.
+const SKIPPED_OPACITY: f32 = 0.45;
+
 #[derive(Clone)]
 struct Item {
     id: u64,
@@ -23,6 +26,8 @@ struct Item {
     task: Option<(u64, bool)>,
     draft: bool,
     past: bool,
+    /// set aside: greyed, see-through, under the other blocks
+    skipped: bool,
 }
 
 /// Where one day's stretch of a frame was painted.
@@ -44,9 +49,14 @@ fn draw_item(p: &egui::Painter, pal: &Palette, it: &Item, selected: bool, hover:
     let r = it.rect.shrink2(vec2(1.0, 0.0));
     let done = matches!(it.task, Some((_, true)));
     let is_task = it.task.is_some();
-    // a finished task goes grey
+    // a finished task goes grey; a skipped event goes grey and see-through
     let grey = Item { color: mix(pal.muted, pal.bg, 0.35), ..it.clone() };
-    let it = if done { &grey } else { it };
+    let it = if done || it.skipped { &grey } else { it };
+    let mut faded = p.clone();
+    if it.skipped && !selected {
+        faded.multiply_opacity(SKIPPED_OPACITY);
+    }
+    let p = &faded;
     let soft = mix(it.color, Color32::from_gray(if pal.dark { 228 } else { 245 }), 0.5);
     let (fill, text, sub) = if is_task {
         let base = mix(pal.bg, it.color, if it.draft || it.past { 0.08 } else { 0.14 });
@@ -347,9 +357,9 @@ impl App {
             let (Some(a), Some(b)) = (first, last) else { continue };
             let y = hrect.top() + 47.0 + *row as f32 * 22.0;
             let r = Rect::from_min_max(pos2(x0 + a as f32 * col_w + 2.0, y), pos2(x0 + (b + 1) as f32 * col_w - 4.0, y + 20.0));
-            let color = rgb(self.data.event_color(e));
+            let color = if e.skipped { self.pal.muted } else { rgb(self.data.event_color(e)) };
             let is_draft = draft_id == Some(e.id);
-            hp.rect_filled(r, 4.0, mix(self.pal.bg, color, if is_draft { 0.25 } else { 0.55 }));
+            hp.rect_filled(r, 4.0, mix(self.pal.bg, color, if is_draft || e.skipped { 0.25 } else { 0.55 }));
             if self.selected == Some(e.id) {
                 hp.rect_stroke(r, 4.0, Stroke::new(1.5, self.pal.text), StrokeKind::Inside);
             }
@@ -359,7 +369,7 @@ impl App {
                 Align2::LEFT_CENTER,
                 title,
                 FontId::proportional(theme::size::SMALL),
-                self.pal.text,
+                if e.skipped { self.pal.muted } else { self.pal.text },
             );
             if !is_draft {
                 chips.push((e.id, r));
@@ -590,7 +600,14 @@ impl App {
                 })
                 .collect();
             let cw = col_w - 8.0;
-            let lay = overlap_layout(&boxes, OVERLAP_INSET / col_w);
+            // skipped events take the whole width beneath the others, which
+            // are laid out as if they were not there
+            let live: Vec<usize> = (0..evs.len()).filter(|&k| !evs[k].0.skipped).collect();
+            let live_boxes: Vec<(f32, f32)> = live.iter().map(|&k| boxes[k]).collect();
+            let mut lay = vec![(0.0f32, 1.0f32, 0usize); evs.len()];
+            for (k, l) in live.iter().zip(overlap_layout(&live_boxes, OVERLAP_INSET / col_w)) {
+                lay[*k] = l;
+            }
             let mut day_items: Vec<(usize, Item)> = vec![];
             for (k, (e, draft)) in evs.iter().enumerate() {
                 let (top_y, bottom_y) = boxes[k];
@@ -632,6 +649,7 @@ impl App {
                         task,
                         draft: *draft,
                         past: p.dim_past && e.end < now,
+                        skipped: e.skipped,
                     },
                 ));
             }
@@ -682,7 +700,8 @@ impl App {
 
         if resp.drag_started_by(PointerButton::Primary) {
             if let Some(o) = ui.input(|i| i.pointer.press_origin()) {
-                if let Some(it) = hit(o).filter(|it| !self.data.event(it.id).is_some_and(|e| self.data.locked(e).is_some())) {
+                // a skipped event is drawn over, not moved
+                if let Some(it) = hit(o).filter(|it| !self.data.event(it.id).is_some_and(|e| e.skipped || self.data.locked(e).is_some())) {
                     let id = it.id;
                     let resize = o.y > it.rect.bottom() - 6.0;
                     self.snapshot();
@@ -1011,6 +1030,12 @@ impl App {
                 self.run(&ctx, Cmd::Copy);
                 ui.close();
             }
+            if m.item(ui, icons::PEN, tr("Side notes"), false).clicked() {
+                self.edit_event_at(id, None);
+                ui.close();
+            }
+            m.line(ui);
+            self.skip_item(&ctx, ui, &mut m, &ev);
             m.end(ui);
             return;
         }
@@ -1143,12 +1168,22 @@ impl App {
                 ui.close();
             }
             m.line(ui);
+            self.skip_item(&ctx, ui, &mut m, &ev);
             if m.item(ui, icons::TRASH, tr("Delete event"), true).clicked() {
                 self.delete_event(&ctx, id);
                 ui.close();
             }
         }
         m.end(ui);
+    }
+
+    /// Skip or Unskip in a block's menu.
+    fn skip_item(&mut self, ctx: &egui::Context, ui: &mut egui::Ui, m: &mut Menu, ev: &Event) {
+        let (icon, text) = if ev.skipped { (icons::UNDO, tr("Unskip event")) } else { (icons::BAN, tr("Skip event")) };
+        if m.item(ui, icon, text, false).clicked() {
+            self.toggle_skip(ctx, ev.id);
+            ui.close();
+        }
     }
 
     // ---------------------------------------------------------------- month
@@ -1216,17 +1251,18 @@ impl App {
             let clip = painter.with_clip_rect(cell.shrink(1.0));
             for (k, e) in evs.iter().take(show).enumerate() {
                 let er = Rect::from_min_size(cell.left_top() + vec2(3.0, 26.0 + k as f32 * 19.0), vec2(cw - 6.0, 17.0));
-                let color = rgb(self.data.event_color(e));
+                let color = if e.skipped { self.pal.muted } else { rgb(self.data.event_color(e)) };
                 let title = if e.title.is_empty() { tr("New Event") } else { &e.title };
                 let tclip = painter.with_clip_rect(er.intersect(cell));
+                let ink = if e.skipped { self.pal.muted } else { self.pal.text };
                 if e.all_day {
-                    clip.rect_filled(er, 4.0, mix(self.pal.bg, color, 0.55));
-                    tclip.text(er.left_center() + vec2(6.0, 0.0), Align2::LEFT_CENTER, title, FontId::proportional(theme::size::TINY), self.pal.text);
+                    clip.rect_filled(er, 4.0, mix(self.pal.bg, color, if e.skipped { 0.25 } else { 0.55 }));
+                    tclip.text(er.left_center() + vec2(6.0, 0.0), Align2::LEFT_CENTER, title, FontId::proportional(theme::size::TINY), ink);
                 } else {
                     clip.circle_filled(er.left_center() + vec2(6.0, 0.0), 3.5, color);
                     let label = format!("{}  {}", p.fmt_time(e.start.time()), title);
                     let done = e.task_id.and_then(|t| self.data.task(t)).map(|t| t.done).unwrap_or(false);
-                    let c = if done { self.pal.muted } else { self.pal.text };
+                    let c = if done { self.pal.muted } else { ink };
                     tclip.text(er.left_center() + vec2(14.0, 0.0), Align2::LEFT_CENTER, label, FontId::proportional(theme::size::TINY), c);
                 }
                 if self.selected == Some(e.id) {
@@ -1336,7 +1372,7 @@ impl App {
                     for e in evs {
                         ui.horizontal(|ui| {
                             let (r, _) = ui.allocate_exact_size(vec2(12.0, 16.0), Sense::hover());
-                            ui.painter().circle_filled(r.center(), 4.5, rgb(self.data.event_color(&e)));
+                            ui.painter().circle_filled(r.center(), 4.5, if e.skipped { muted } else { rgb(self.data.event_color(&e)) });
                             let when = if e.all_day {
                                 tr("All day").to_string()
                             } else {
@@ -1351,6 +1387,7 @@ impl App {
                             }
                             let sel = self.selected == Some(e.id);
                             let title = if e.title.is_empty() { "(No title)" } else { &e.title };
+                            let title = if e.skipped { RichText::new(title).color(muted).strikethrough() } else { RichText::new(title) };
                             let r = ui.selectable_label(sel, title);
                             if r.clicked() {
                                 self.selected = Some(e.id);

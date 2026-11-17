@@ -609,3 +609,19 @@ fn archiving_puts_away_only_completed_tasks() {
     assert!(!d.task(2).unwrap().archived);
     assert_eq!(d.archive_done(), 0);
 }
+
+#[test]
+fn a_skipped_event_leaves_its_time_free() {
+    let mut d = empty();
+    let day = ymd(11, 17);
+    let at = |h| day.and_hms_opt(h, 0, 0).unwrap();
+    let cal = d.first_own_calendar();
+    d.events.push(Event { id: 1, start: at(10), end: at(12), calendar: cal, ..Default::default() });
+    assert!(d.free_gaps_in(at(9), at(13)).iter().all(|g| *g != (at(9), at(13))));
+    d.events[0].skipped = true;
+    assert_eq!(d.free_gaps_in(at(9), at(13)), vec![(at(9), at(13))]);
+    // kept here only: a server never sees it
+    let mut o = d.events[0].clone();
+    o.side_notes = "mine".into();
+    assert!(o.same_content(&d.events[0]));
+}

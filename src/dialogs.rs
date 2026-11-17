@@ -142,32 +142,51 @@ fn editor_label(ui: &mut egui::Ui, text: &str, muted: egui::Color32) {
 }
 
 /// The editor's notes, at the end of its fields; Ctrl+Enter saves.
-fn editor_notes(ui: &mut egui::Ui, notes: &mut String) -> bool {
+fn editor_notes(ui: &mut egui::Ui, notes: &mut String, hint: &str) -> bool {
     ui.add_space(4.0);
-    ui.add(egui::TextEdit::multiline(notes).hint_text(tr("Notes")).desired_rows(3).desired_width(f32::INFINITY));
+    ui.add(egui::TextEdit::multiline(notes).hint_text(hint).desired_rows(3).desired_width(f32::INFINITY));
     ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter))
 }
 
-/// Save, Cancel and Delete, kept at the foot of the editor window
-/// whatever its size; returns save, cancel, delete.
-fn editor_buttons(ui: &mut egui::Ui, can_delete: bool) -> (bool, bool, bool) {
-    let (mut save, mut cancel, mut delete) = (false, false, false);
+/// What was pressed at the foot of an editor window.
+#[derive(Clone, Copy, Default)]
+struct Pressed {
+    save: bool,
+    cancel: bool,
+    delete: bool,
+    skip: bool,
+}
+
+/// What an editor window offers besides Save and Cancel.
+#[derive(Clone, Copy)]
+struct Offer {
+    delete: bool,
+    /// Some(is it skipped now) shows Skip or Unskip
+    skip: Option<bool>,
+}
+
+/// Save and Cancel, with Skip and Delete on the right, kept at the foot of
+/// the editor window whatever its size.
+fn editor_buttons(ui: &mut egui::Ui, offer: Offer) -> Pressed {
+    let mut out = Pressed::default();
     ui.horizontal(|ui| {
-        if ui.button(RichText::new(tr("Save")).strong()).on_hover_text(tr("Ctrl+Enter")).clicked() {
-            save = true;
-        }
-        if ui.button(tr("Cancel")).on_hover_text(tr("Esc")).clicked() {
-            cancel = true;
-        }
-        if can_delete {
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button(tr("Delete")).clicked() {
-                    delete = true;
-                }
-            });
-        }
+        out.save = ui.button(RichText::new(tr("Save")).strong()).on_hover_text(tr("Ctrl+Enter")).clicked();
+        out.cancel = ui.button(tr("Cancel")).on_hover_text(tr("Esc")).clicked();
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if offer.delete {
+                out.delete = ui.button(tr("Delete")).clicked();
+            }
+            if let Some(skipped) = offer.skip {
+                let (text, tip) = if skipped {
+                    (tr("Unskip"), tr("Show it as a usual event again"))
+                } else {
+                    (tr("Skip"), tr("Keep it on the calendar, greyed, and let other blocks go over it"))
+                };
+                out.skip = ui.button(text).on_hover_text(tip).clicked();
+            }
+        });
     });
-    (save, cancel, delete)
+    out
 }
 
 /// A dropdown where one thing is picked, drawn as `pick_many` draws its
@@ -985,9 +1004,10 @@ impl App {
             tr("Event")
         };
         let at = self.editor_spot(ctx, ids::event_editor().with(ed.ev.id), ed.anchor_rect);
-        let can_delete = !ed.is_new;
-        let (save, cancel, delete) = self.edit_window(ctx, "event_editor", title, at, can_delete, |app, ui| app.event_form(ui, &mut ed));
-        self.finish_event_edit(ctx, ed, save, cancel, delete);
+        let stored = (!ed.is_new).then(|| self.data.event(ed.ev.id)).flatten();
+        let offer = Offer { delete: stored.is_some_and(|e| self.data.locked(e).is_none()), skip: stored.filter(|e| e.task_id.is_none()).map(|e| e.skipped) };
+        let pressed = self.edit_window(ctx, "event_editor", title, at, offer, |app, ui| app.event_form(ui, &mut ed));
+        self.finish_event_edit(ctx, ed, pressed);
     }
 
     /// Where an editor window opens: beside the block it came from, else at
@@ -1014,9 +1034,9 @@ impl App {
         name: &str,
         title: &str,
         at: egui::Pos2,
-        can_delete: bool,
+        offer: Offer,
         mut form: impl FnMut(&mut App, &mut egui::Ui) -> bool,
-    ) -> (bool, bool, bool) {
+    ) -> Pressed {
         let builder = egui::ViewportBuilder::default()
             .with_title(title)
             .with_app_id("kalendar")
@@ -1024,15 +1044,15 @@ impl App {
             .with_inner_size(EDITOR_SIZE)
             .with_min_inner_size([380.0, 300.0])
             .with_window_level(egui::WindowLevel::AlwaysOnTop);
-        let mut out = (false, false, false);
+        let mut out = Pressed::default();
         ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(name), builder, |ui, class| {
             if class == egui::ViewportClass::EmbeddedWindow {
                 self.own_windows = false;
                 ui.set_width(EDITOR_SIZE[0] - 28.0);
                 let save = form(self, ui);
                 ui.add_space(4.0);
-                out = editor_buttons(ui, can_delete);
-                out.0 |= save;
+                out = editor_buttons(ui, offer);
+                out.save |= save;
                 return;
             }
             self.own_windows = true;
@@ -1041,7 +1061,7 @@ impl App {
             egui::Panel::bottom(ids::editor_buttons())
                 .show_separator_line(false)
                 .frame(egui::Frame::new().fill(self.pal.bg).inner_margin(egui::Margin { left: 14, right: 14, top: 8, bottom: 14 }))
-                .show(ui, |ui| out = editor_buttons(ui, can_delete));
+                .show(ui, |ui| out = editor_buttons(ui, offer));
             let mut save = false;
             egui::CentralPanel::default().frame(egui::Frame::new().fill(self.pal.bg).inner_margin(egui::Margin { left: 14, right: 14, top: 14, bottom: 0 })).show(ui, |ui| {
                 egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
@@ -1049,10 +1069,10 @@ impl App {
                     save = form(self, ui);
                 });
             });
-            out.0 |= save;
+            out.save |= save;
             let (close, esc) = ctx.input(|i| (i.viewport().close_requested(), i.key_pressed(egui::Key::Escape)));
             if close || esc {
-                out.1 = true;
+                out.cancel = true;
             }
         });
         out
@@ -1089,91 +1109,99 @@ impl App {
         let is_task = ed.ev.task_id.is_some();
         let hour12 = self.data.prefs.hour12;
         let muted = self.pal.muted;
-        let mut save = editor_title(ui, &mut ed.ev.title, if is_task { tr("New Task") } else { tr("New Event") }, &mut ed.focus);
-        let was_all_day = ed.ev.all_day;
-        ui.checkbox(&mut ed.ev.all_day, tr("All day"));
-        if ed.ev.all_day && !was_all_day {
-            ed.ev.start = midnight(ed.ev.start.date());
-            ed.ev.end = ed.ev.start + Duration::days(1);
-        } else if !ed.ev.all_day && was_all_day {
-            ed.ev.start = midnight(ed.ev.start.date()) + Duration::hours(NEW_EVENT_NOON_H);
-            ed.ev.end = ed.ev.start + Duration::minutes(NEW_EVENT_MIN);
+        // a read-only event: only Skip and the side notes can change
+        let locked = if ed.is_new { None } else { self.data.locked(&ed.ev) };
+        if let Some(why) = locked {
+            ui.label(RichText::new(why).size(theme::size::TINY).color(muted));
+            ui.add_space(2.0);
         }
-        editor_grid(ui, "eventgrid", |ui| {
-            editor_label(ui, tr("Date"), muted);
-            ui.horizontal(|ui| {
-                if ui.small_button(icons::CHEVRON_LEFT).clicked() {
-                    ed.ev.start -= Duration::days(1);
-                    ed.ev.end -= Duration::days(1);
-                }
-                ui.label(ed.ev.start.format("%a, %b %-d %Y").to_string());
-                if ui.small_button(icons::CHEVRON_RIGHT).clicked() {
-                    ed.ev.start += Duration::days(1);
-                    ed.ev.end += Duration::days(1);
-                }
-            });
-            ui.end_row();
-            if ed.ev.all_day {
-                let mut n = (ed.ev.end.date() - ed.ev.start.date()).num_days().max(1);
-                editor_label(ui, tr("Days"), muted);
-                ui.add(egui::DragValue::new(&mut n).range(1..=60));
-                ui.end_row();
-                ed.ev.end = midnight(ed.ev.start.date()) + Duration::days(n);
-            } else {
-                let len = ed.ev.end - ed.ev.start;
-                let (mut sh, mut sm) = (ed.ev.start.hour(), ed.ev.start.minute());
-                let (mut eh, mut em) = (ed.ev.end.hour(), ed.ev.end.minute());
-                let time = |ui: &mut egui::Ui, h: &mut u32, m: &mut u32, after: Option<String>| -> bool {
-                    let mut ch = false;
-                    ui.horizontal(|ui| {
-                        ch |= ui.add(egui::DragValue::new(h).range(0..=23).speed(0.1)).changed();
-                        ui.label(":");
-                        ch |= ui
-                            .add(egui::DragValue::new(m).range(0..=59).speed(0.25).custom_formatter(|v, _| format!("{:02}", v as u32)))
-                            .changed();
-                        if hour12 {
-                            let h12 = if *h % 12 == 0 { 12 } else { *h % 12 };
-                            let ap = if *h < 12 { "AM" } else { "PM" };
-                            ui.label(RichText::new(format!("{h12}:{:02} {ap}", *m)).color(muted));
-                        }
-                        if let Some(a) = after {
-                            ui.label(RichText::new(a).color(muted).size(theme::size::TINY));
-                        }
-                    });
-                    ch
-                };
-                editor_label(ui, tr("Start"), muted);
-                if time(ui, &mut sh, &mut sm, None) {
-                    ed.ev.start = ed.ev.start.date().and_hms_opt(sh, sm, 0).unwrap();
-                    ed.ev.end = ed.ev.start + len;
-                }
-                ui.end_row();
-                let mins = ed.ev.minutes();
-                let length = if mins % 60 == 0 {
-                    trf("{} h", &[&(mins / 60)])
-                } else if mins > 60 {
-                    trf("{} h {} min", &[&(mins / 60), &(mins % 60)])
-                } else {
-                    trf("{} min", &[&mins])
-                };
-                editor_label(ui, tr("End"), muted);
-                if time(ui, &mut eh, &mut em, Some(length)) {
-                    let mut e = ed.ev.start.date().and_hms_opt(eh, em, 0).unwrap();
-                    if e <= ed.ev.start {
-                        e += Duration::days(1);
-                    }
-                    ed.ev.end = e;
-                }
-                ui.end_row();
+        let mut save = false;
+        ui.add_enabled_ui(locked.is_none(), |ui| {
+            save |= editor_title(ui, &mut ed.ev.title, if is_task { tr("New Task") } else { tr("New Event") }, &mut ed.focus);
+            let was_all_day = ed.ev.all_day;
+            ui.checkbox(&mut ed.ev.all_day, tr("All day"));
+            if ed.ev.all_day && !was_all_day {
+                ed.ev.start = midnight(ed.ev.start.date());
+                ed.ev.end = ed.ev.start + Duration::days(1);
+            } else if !ed.ev.all_day && was_all_day {
+                ed.ev.start = midnight(ed.ev.start.date()) + Duration::hours(NEW_EVENT_NOON_H);
+                ed.ev.end = ed.ev.start + Duration::minutes(NEW_EVENT_MIN);
             }
-            editor_label(ui, tr("Calendar"), muted);
-            let name = self.data.calendar(ed.ev.calendar).map(|c| c.name.clone()).unwrap_or_default();
-            egui::ComboBox::from_id_salt("cal").selected_text(name).show_ui(ui, |ui| {
-                for c in self.data.calendars.iter().filter(|c| c.writable()) {
-                    ui.selectable_value(&mut ed.ev.calendar, c.id, RichText::new(format!("{} {}", icons::CIRCLE, c.name)).color(rgb(c.color)));
+            editor_grid(ui, "eventgrid", |ui| {
+                editor_label(ui, tr("Date"), muted);
+                ui.horizontal(|ui| {
+                    if ui.small_button(icons::CHEVRON_LEFT).clicked() {
+                        ed.ev.start -= Duration::days(1);
+                        ed.ev.end -= Duration::days(1);
+                    }
+                    ui.label(ed.ev.start.format("%a, %b %-d %Y").to_string());
+                    if ui.small_button(icons::CHEVRON_RIGHT).clicked() {
+                        ed.ev.start += Duration::days(1);
+                        ed.ev.end += Duration::days(1);
+                    }
+                });
+                ui.end_row();
+                if ed.ev.all_day {
+                    let mut n = (ed.ev.end.date() - ed.ev.start.date()).num_days().max(1);
+                    editor_label(ui, tr("Days"), muted);
+                    ui.add(egui::DragValue::new(&mut n).range(1..=60));
+                    ui.end_row();
+                    ed.ev.end = midnight(ed.ev.start.date()) + Duration::days(n);
+                } else {
+                    let len = ed.ev.end - ed.ev.start;
+                    let (mut sh, mut sm) = (ed.ev.start.hour(), ed.ev.start.minute());
+                    let (mut eh, mut em) = (ed.ev.end.hour(), ed.ev.end.minute());
+                    let time = |ui: &mut egui::Ui, h: &mut u32, m: &mut u32, after: Option<String>| -> bool {
+                        let mut ch = false;
+                        ui.horizontal(|ui| {
+                            ch |= ui.add(egui::DragValue::new(h).range(0..=23).speed(0.1)).changed();
+                            ui.label(":");
+                            ch |= ui
+                                .add(egui::DragValue::new(m).range(0..=59).speed(0.25).custom_formatter(|v, _| format!("{:02}", v as u32)))
+                                .changed();
+                            if hour12 {
+                                let h12 = if *h % 12 == 0 { 12 } else { *h % 12 };
+                                let ap = if *h < 12 { "AM" } else { "PM" };
+                                ui.label(RichText::new(format!("{h12}:{:02} {ap}", *m)).color(muted));
+                            }
+                            if let Some(a) = after {
+                                ui.label(RichText::new(a).color(muted).size(theme::size::TINY));
+                            }
+                        });
+                        ch
+                    };
+                    editor_label(ui, tr("Start"), muted);
+                    if time(ui, &mut sh, &mut sm, None) {
+                        ed.ev.start = ed.ev.start.date().and_hms_opt(sh, sm, 0).unwrap();
+                        ed.ev.end = ed.ev.start + len;
+                    }
+                    ui.end_row();
+                    let mins = ed.ev.minutes();
+                    let length = if mins % 60 == 0 {
+                        trf("{} h", &[&(mins / 60)])
+                    } else if mins > 60 {
+                        trf("{} h {} min", &[&(mins / 60), &(mins % 60)])
+                    } else {
+                        trf("{} min", &[&mins])
+                    };
+                    editor_label(ui, tr("End"), muted);
+                    if time(ui, &mut eh, &mut em, Some(length)) {
+                        let mut e = ed.ev.start.date().and_hms_opt(eh, em, 0).unwrap();
+                        if e <= ed.ev.start {
+                            e += Duration::days(1);
+                        }
+                        ed.ev.end = e;
+                    }
+                    ui.end_row();
                 }
-            });
-            ui.end_row();
+                editor_label(ui, tr("Calendar"), muted);
+                let name = self.data.calendar(ed.ev.calendar).map(|c| c.name.clone()).unwrap_or_default();
+                egui::ComboBox::from_id_salt("cal").selected_text(name).show_ui(ui, |ui| {
+                    for c in self.data.calendars.iter().filter(|c| c.writable()) {
+                        ui.selectable_value(&mut ed.ev.calendar, c.id, RichText::new(format!("{} {}", icons::CIRCLE, c.name)).color(rgb(c.color)));
+                    }
+                });
+                ui.end_row();
         });
         // a task's block shows the whole task, as its own editor does
         if let Some(t) = ed.task.as_mut() {
@@ -1182,17 +1210,43 @@ impl App {
             ui.add_space(2.0);
             self.task_fields(ui, t);
         }
-        save |= editor_notes(ui, &mut ed.ev.notes);
+        });
+        if locked.is_none() {
+            save |= editor_notes(ui, &mut ed.ev.notes, tr("Notes"));
+        } else if !ed.ev.notes.trim().is_empty() {
+            // its own notes, to read and copy from
+            ui.add_space(4.0);
+            let mut notes = ed.ev.notes.as_str();
+            ui.add(egui::TextEdit::multiline(&mut notes).desired_rows(2).desired_width(f32::INFINITY));
+        }
+        if locked.is_some() || !ed.ev.side_notes.is_empty() {
+            ui.add_space(6.0);
+            ui.label(RichText::new(tr("Side notes · kept in this app only")).size(theme::size::TINY).color(muted));
+            save |= editor_notes(ui, &mut ed.ev.side_notes, tr("Your own notes on this event"));
+        }
         save
     }
 
-    fn finish_event_edit(&mut self, ctx: &egui::Context, mut ed: EventEdit, save: bool, cancel: bool, delete: bool) {
+    fn finish_event_edit(&mut self, ctx: &egui::Context, mut ed: EventEdit, p: Pressed) {
+        let Pressed { save, cancel, delete, skip } = p;
+        if skip {
+            // the editor stays open, showing Unskip
+            self.toggle_skip(ctx, ed.ev.id);
+            return self.editor = Some(ed);
+        }
         if save && ed.task.as_mut().is_some_and(|t| t.read_text().is_err()) {
             self.say(ctx, tr("The due date should look like 2026-11-30"), false);
             return self.editor = Some(ed);
         }
-        if let Some(why) = self.data.locked(&ed.ev).filter(|_| save) {
-            self.say(ctx, why, false);
+        if save && self.data.locked(&ed.ev).is_some() {
+            // only the side notes are its own here
+            if self.data.event(ed.ev.id).is_some_and(|e| e.side_notes != ed.ev.side_notes) {
+                self.snapshot();
+                if let Some(e) = self.data.event_mut(ed.ev.id) {
+                    e.side_notes = ed.ev.side_notes.clone();
+                }
+                self.commit();
+            }
         } else if save {
             let mut ev = ed.ev.clone();
             if ev.all_day {
@@ -1241,8 +1295,8 @@ impl App {
         let Some(mut ed) = self.task_editor.take() else { return };
         self.sync_task_edit(&mut ed);
         let at = self.editor_spot(ctx, ids::task_editor().with(ed.task.id), None);
-        let (save, cancel, delete) = self.edit_window(ctx, "task_editor", tr("Task"), at, true, |app, ui| app.task_form(ui, &mut ed));
-        self.finish_task_edit(ctx, ed, save, cancel, delete);
+        let p = self.edit_window(ctx, "task_editor", tr("Task"), at, Offer { delete: true, skip: None }, |app, ui| app.task_form(ui, &mut ed));
+        self.finish_task_edit(ctx, ed, p.save, p.cancel, p.delete);
     }
 
     /// As [`Self::sync_event_edit`], for a task: what changed elsewhere
@@ -1270,7 +1324,7 @@ impl App {
     fn task_form(&mut self, ui: &mut egui::Ui, ed: &mut TaskEdit) -> bool {
         let save = editor_title(ui, &mut ed.task.title, tr("New Task"), &mut ed.focus);
         self.task_fields(ui, ed);
-        save | editor_notes(ui, &mut ed.task.notes)
+        save | editor_notes(ui, &mut ed.task.notes, tr("Notes"))
     }
 
     /// A task's own fields, below its name: in the task editor and in the
@@ -1569,7 +1623,7 @@ mod tests {
         (t.task.priority, t.tags_text, t.due_text) = (1, "deep #admin".into(), "2026-12-01".into());
         ed.ev.title = "Write more".into();
         let ctx = egui::Context::default();
-        app.finish_event_edit(&ctx, ed, true, false, false);
+        app.finish_event_edit(&ctx, ed, Pressed { save: true, ..Default::default() });
         let t = app.data.task(id).unwrap();
         assert_eq!((t.priority, t.title.as_str()), (1, "Write more"));
         assert_eq!(t.tags, ["deep", "admin"]);
@@ -1591,5 +1645,33 @@ mod tests {
         assert!(ed.task.done);
         assert_eq!(ed.due_text, day.to_string());
         assert_eq!(ed.task.notes, "draft");
+    }
+    #[test]
+    fn a_read_only_event_keeps_its_fields_and_takes_side_notes() {
+        let mut app = app_with_event();
+        let cal = 9901;
+        app.data.calendars.push(Calendar { id: cal, name: "Feed".into(), url: Some("https://example.org/a.ics".into()), visible: true, ..Default::default() });
+        app.data.events[0].calendar = cal;
+        app.edit_event(700);
+        let mut ed = app.editor.take().unwrap();
+        (ed.ev.title, ed.ev.side_notes) = ("Changed".into(), "bring slides".into());
+        let ctx = egui::Context::default();
+        app.finish_event_edit(&ctx, ed, Pressed { save: true, ..Default::default() });
+        let e = app.data.event(700).unwrap();
+        assert_eq!((e.title.as_str(), e.side_notes.as_str()), ("Talk", "bring slides"));
+        assert!(app.editor.is_none());
+    }
+
+    #[test]
+    fn skip_keeps_the_editor_open_and_undoes() {
+        let mut app = app_with_event();
+        app.edit_event(700);
+        let ed = app.editor.take().unwrap();
+        let ctx = egui::Context::default();
+        app.finish_event_edit(&ctx, ed, Pressed { skip: true, ..Default::default() });
+        assert!(app.data.event(700).unwrap().skipped);
+        assert!(app.editor.is_some());
+        app.toggle_skip(&ctx, 700);
+        assert!(!app.data.event(700).unwrap().skipped);
     }
 }

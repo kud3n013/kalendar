@@ -16,7 +16,7 @@ impl Data {
     }
 
     /// Stretches of [a, b) not covered by any timed event, on any calendar.
-    /// Frames are not events and never count as busy.
+    /// Frames are not events and never count as busy, nor do skipped events.
     pub(super) fn free_gaps_in(&self, a: NaiveDateTime, b: NaiveDateTime) -> Vec<(NaiveDateTime, NaiveDateTime)> {
         if a >= b {
             return vec![];
@@ -24,7 +24,7 @@ impl Data {
         let mut busy: Vec<(NaiveDateTime, NaiveDateTime)> = self
             .events
             .iter()
-            .filter(|e| !e.all_day && e.start < b && e.end > a)
+            .filter(|e| !e.all_day && !e.skipped && e.start < b && e.end > a)
             .map(|e| (e.start, e.end))
             .collect();
         busy.sort();

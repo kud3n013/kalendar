@@ -143,6 +143,14 @@ pub struct Event {
     /// changed here and not yet sent to the server
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub dirty: bool,
+    /// set aside here: still shown, greyed, and other blocks may sit on it.
+    /// Kept in this app only, never sent to a server.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub skipped: bool,
+    /// notes of one's own, kept in this app only: the way to write on an
+    /// event whose own notes can't be changed here
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub side_notes: String,
 }
 
 impl Event {
@@ -158,6 +166,7 @@ impl Event {
         self.all_day = n.all_day;
         self.calendar = n.calendar;
         self.notes = n.notes;
+        self.side_notes = n.side_notes;
     }
     pub fn detach(&mut self) {
         self.remote = false;
