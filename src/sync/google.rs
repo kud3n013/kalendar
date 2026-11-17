@@ -24,6 +24,15 @@ pub fn app(client_id: &str, client_secret: &str, email: &str) -> OAuthApp {
     }
 }
 
+/// The client ID and secret out of the JSON file the Google Cloud console
+/// offers for download, when that is pasted whole.
+pub fn from_client_json(text: &str) -> Option<(String, String)> {
+    let v: Value = serde_json::from_str(text.trim()).ok()?;
+    let c = v.get("installed").or_else(|| v.get("web")).unwrap_or(&v);
+    let id = c["client_id"].as_str()?.trim().to_string();
+    Some((id, c["client_secret"].as_str().unwrap_or("").trim().to_string()))
+}
+
 /// Where a Google account's calendars are asked for.
 pub fn server(email: &str) -> String {
     format!("https://apidata.googleusercontent.com/caldav/v2/{}/user", url_encode(email.trim()))
@@ -53,6 +62,13 @@ pub fn revoke(refresh_token: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_downloaded_client_file_fills_both_fields() {
+        let file = r#"{"installed":{"client_id":"1-abc.apps.googleusercontent.com","project_id":"k","client_secret":"not-secret","redirect_uris":["http://localhost"]}}"#;
+        assert_eq!(from_client_json(file), Some(("1-abc.apps.googleusercontent.com".into(), "not-secret".into())));
+        assert_eq!(from_client_json("1-abc.apps.googleusercontent.com"), None);
+    }
 
     #[test]
     fn addresses_and_keyring_text() {

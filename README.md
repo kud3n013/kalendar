@@ -29,6 +29,10 @@ JSON data file, no account.
   list, duration, and due date in one line.
 - **Calendar subscriptions**: subscribe to read-only `.ics` feeds
   (`https://` or `webcal://`), refreshed automatically.
+- **Accounts**: two-way sync with Google, Microsoft 365 / Outlook.com,
+  Nextcloud, CalDAV servers and Proton. Google and Microsoft need a
+  sign-in registration of your own; see
+  [Connecting Google and Microsoft](docs/connect-google-and-microsoft.md).
 - **Comfort**: command bar (Ctrl+K), search, undo with a grace toast,
   light/dark themes, a task panel that can sit on the left or the right,
   and a full keyboard shortcut set (press `.`). Every shortcut can be
@@ -55,8 +59,9 @@ Kalendar follows the XDG base directories:
 | Settings and shortcuts | `$XDG_CONFIG_HOME/kalendar/config.json` (usually `~/.config/kalendar/config.json`) |
 
 Older versions kept settings inside `data.json`; they are read from there
-once and then saved to `config.json`. Nothing is sent anywhere; the only
-network access is fetching the `.ics` feeds you subscribe to.
+once and then saved to `config.json`. Nothing is sent anywhere except to the
+`.ics` feeds you subscribe to and the accounts you add; sign-ins are kept
+in your desktop's keyring.
 
 Note that subscription links are stored in that file in plain text. Some
 providers (for example Proton Calendar) embed the access key in the link

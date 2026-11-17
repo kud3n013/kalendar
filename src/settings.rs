@@ -1105,9 +1105,17 @@ impl App {
                         }
                     }
                     4 => {
-                        help(ui, "kalendar has no registration of its own with Google, so you bring one: in the Google Cloud console, make a project, switch on the CalDAV API, add yourself as a test user on the consent screen, and make an OAuth client ID of the type \"Desktop app\". Paste its client ID and client secret here. While the project is in Testing, Google asks you to sign in again every 7 days.");
+                        help(ui, "kalendar has no registration of its own with Google, so you bring one: in the Google Cloud console, make a project, switch on the CalDAV API, add yourself as a test user on the consent screen, and make an OAuth client ID of the type \"Desktop app\". Paste its client ID and client secret here, or the whole JSON file it lets you download. While the project is in Testing, Google asks you to sign in again every 7 days.");
                         field(ui, &mut self.g_email, tr("Your Google address"), false);
+                        setup_links(ui, &[(tr("Step-by-step guide"), GUIDE_GOOGLE), (tr("Google Cloud console"), "https://console.cloud.google.com/auth/clients")]);
                         field(ui, &mut self.g_client_id, tr("Client ID, ending in .apps.googleusercontent.com"), false);
+                        // the client file Google offers for download fills both fields
+                        if self.g_client_id.trim_start().starts_with('{') {
+                            if let Some((id, secret)) = crate::sync::google::from_client_json(&self.g_client_id) {
+                                self.g_client_id = id;
+                                self.g_secret = secret;
+                            }
+                        }
                         field(ui, &mut self.g_secret, tr("Client secret"), true);
                         if go(ui, tr("Sign in with Google…"), !waiting) {
                             self.connect_google(ctx);
@@ -1131,6 +1139,7 @@ impl App {
                     _ => {
                         help(ui, tr("For Microsoft 365 and Outlook.com. kalendar has no registration of its own with Microsoft, so you bring one: in the Microsoft Entra admin center, register an app for accounts in any organisation and personal accounts, add the platform \"Mobile and desktop applications\" with the redirect address http://localhost, and allow the delegated Graph permission Calendars.ReadWrite. Paste its Application (client) ID here; there is no secret."));
                         field(ui, &mut self.ms_email, tr("Your Microsoft address"), false);
+                        setup_links(ui, &[(tr("Step-by-step guide"), GUIDE_MICROSOFT), (tr("App registrations"), "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade")]);
                         field(ui, &mut self.ms_client_id, tr("Application (client) ID"), false);
                         if go(ui, tr("Sign in with Microsoft…"), !waiting) {
                             self.connect_microsoft(ctx);
@@ -1561,4 +1570,20 @@ mod tests {
         assert!(search_hit(&search_words("ctrl+t"), &["Create a new task", "Events and tasks", "Ctrl+T"]));
         assert!(search_hit(&search_words(""), &["anything"]));
     }
+}
+
+const GUIDE_GOOGLE: &str = "https://github.com/kud3n013/kalendar/blob/main/docs/connect-google-and-microsoft.md#google-calendar";
+const GUIDE_MICROSOFT: &str = "https://github.com/kud3n013/kalendar/blob/main/docs/connect-google-and-microsoft.md#microsoft-365-and-outlookcom";
+
+/// A row of small links to the pages a sign-in has to be set up on.
+fn setup_links(ui: &mut egui::Ui, links: &[(&str, &str)]) {
+    ui.horizontal_wrapped(|ui| {
+        for (i, (name, url)) in links.iter().enumerate() {
+            if i > 0 {
+                ui.label(RichText::new("·").size(theme::size::CAPTION).weak());
+            }
+            ui.hyperlink_to(RichText::new(*name).size(theme::size::CAPTION), *url);
+        }
+    });
+    ui.add_space(2.0);
 }
