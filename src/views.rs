@@ -15,6 +15,9 @@ use eframe::egui::{
 
 /// How much of a skipped block shows through.
 const SKIPPED_OPACITY: f32 = 0.45;
+/// Empty room under the last hour, so a block's bottom edge can be grabbed
+/// without landing on the window's resize border.
+const GRID_BOTTOM_PAD: f32 = 24.0;
 
 #[derive(Clone)]
 struct Item {
@@ -462,7 +465,10 @@ impl App {
                 sa = sa.vertical_scroll_offset(((self.grid_scroll.0 + my) * shown / was - my).max(0.0));
             }
         }
-        let out = sa.show(ui, |ui| self.grid_body(ui, &days, col_w, now));
+        let out = sa.show(ui, |ui| {
+            self.grid_body(ui, &days, col_w, now);
+            ui.add_space(GRID_BOTTOM_PAD);
+        });
         self.grid_scroll = (out.state.clamped_offset().y, out.inner_rect.top());
     }
 
