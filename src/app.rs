@@ -69,12 +69,38 @@ pub struct ListEdit {
 }
 
 /// What a button on the compact task rail stands for.
-#[derive(Clone, Copy, PartialEq, Debug, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub enum Shelf {
     /// a task list, 0 being the Inbox
     List(u64),
     /// a group pinned above the lists, by its key: "overdue", "today"…
     Due(&'static str),
+    /// the Completed list
+    Done,
+    /// the calendar's navigation, under the menu button
+    Nav,
+}
+
+/// Where each list's icon sits on the rail and in the panel, kept so the
+/// one can turn into the other: the icons glide between the two places
+/// while the panel grows out of the rail or shrinks back into it.
+/// Places are measured from the panel's outer edge and its top.
+#[derive(Default)]
+pub struct Morph {
+    pub rail: std::collections::HashMap<Shelf, egui::Vec2>,
+    pub panel: std::collections::HashMap<Shelf, egui::Vec2>,
+    /// icons seen this frame, on the screen, until they are measured
+    pub seen: Vec<(Shelf, egui::Pos2)>,
+    /// the panel's width when last fully open
+    pub width: f32,
+    /// how far the task list was scrolled, so the moving panel matches
+    pub scroll: f32,
+    /// the task list's visible part, measured like the places
+    /// the task list's visible part, as y from the panel's top
+    pub view: Option<egui::Rangef>,
+    /// while the panel moves its headings leave out their icons, which
+    /// are drawn gliding instead
+    pub moving: bool,
 }
 
 /// A list shown beside the compact task rail while its icon is hovered.
@@ -249,6 +275,7 @@ pub struct App {
     pub new_list_text: Option<(String, bool)>,
     pub list_edit: Option<ListEdit>,
     pub flyer: Option<Flyer>,
+    pub morph: Morph,
     /// the name typed for a new list in the settings
     pub new_list_name: String,
     pub collapsed: std::collections::HashSet<String>,
@@ -373,6 +400,7 @@ impl App {
             new_list_text: None,
             list_edit: None,
             flyer: None,
+            morph: Morph::default(),
             new_list_name: String::new(),
             collapsed: ["done".to_string()].into_iter().collect(),
             scroll_to: Some(scroll.max(0.0)),

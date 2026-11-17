@@ -38,6 +38,17 @@ fn round_check(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
     resp
 }
 
+/// The rail's shelf a panel section stands for, from the section's key.
+fn shelf_of(key: &str) -> Option<Shelf> {
+    match key {
+        "done" => Some(Shelf::Done),
+        _ => match ["overdue", "today", "tomorrow", "soon"].into_iter().find(|k| *k == key) {
+            Some(k) => Some(Shelf::Due(k)),
+            None => key.strip_prefix("list")?.parse().ok().map(Shelf::List),
+        },
+    }
+}
+
 /// A flat icon button: a Lucide glyph on a squircle that glows on hover.
 /// `c` is (side, muted, text) from the palette.
 pub fn icon_btn(ui: &mut egui::Ui, glyph: &str, size: f32, tip: &str, c: (Color32, Color32, Color32)) -> egui::Response {
@@ -337,6 +348,18 @@ impl App {
         let c = (self.pal.side, self.pal.muted, self.pal.text);
         let open = self.data.prefs.sidebar_open;
         let right = self.data.prefs.sidebar_side == PanelSide::Right;
+        // closed, it folds to a strip of list icons; in between, the panel
+        // grows out of the strip or shrinks back into it
+        let t = motion::ease_in_out(ctx.animate_bool_with_time(ids::morph(), open, motion::LONG.secs()));
+        if t <= 0.0 {
+            self.ui_rail(ui, ctx, right, c);
+            return;
+        }
+        self.flyer = None;
+        if t < 1.0 {
+            self.ui_morph(ui, ctx, right, today, t, c);
+            return;
+        }
         let panel = if right { egui::Panel::right("tasks") } else { egui::Panel::left("tasks") };
         let mut still_open = open;
         let shown = panel
@@ -346,25 +369,122 @@ impl App {
             .show_separator_line(false)
             .drag_to_open(false)
             .frame(egui::Frame::new().fill(side))
-            .show_collapsible(ui, &mut still_open, |ui| {
-                egui::Panel::bottom(ids::panel_bottom())
-                    .show_separator_line(false)
-                    .frame(egui::Frame::new().fill(side).inner_margin(Margin { left: 10, right: 10, top: 4, bottom: 8 }))
-                    .show(ui, |ui| self.panel_bottom(ui, ctx, right, c));
-                egui::CentralPanel::default()
-                    .frame(egui::Frame::new().fill(side).inner_margin(Margin { left: 14, right: 12, top: 10, bottom: 0 }))
-                    .show(ui, |ui| self.panel_main(ui, ctx, right, today, c));
-            });
+            .show_collapsible(ui, &mut still_open, |ui| self.panel_body(ui, ctx, right, today, c));
+        match shown {
+            Some(s) => {
+                self.morph.width = s.response.rect.width();
+                self.measure(s.response.rect, right, false);
+            }
+            None => self.morph.seen.clear(),
+        }
         // dragging the edge past the minimum closes the panel, like the button
         if still_open != open {
             self.run(ctx, Cmd::ToggleTasks);
         }
-        // closed, it folds to a strip of list icons
-        if shown.is_none() {
-            self.ui_rail(ui, ctx, right, c);
-        } else {
-            self.flyer = None;
+    }
+
+    /// The panel's insides: the bottom row under the lists.
+    fn panel_body(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, right: bool, today: NaiveDate, c: (Color32, Color32, Color32)) {
+        let side = self.pal.side;
+        egui::Panel::bottom(ids::panel_bottom())
+            .show_separator_line(false)
+            .frame(egui::Frame::new().fill(side).inner_margin(Margin { left: 10, right: 10, top: 4, bottom: 8 }))
+            .show(ui, |ui| self.panel_bottom(ui, ctx, right, c));
+        egui::CentralPanel::default()
+            .frame(egui::Frame::new().fill(side).inner_margin(Margin { left: 14, right: 12, top: 10, bottom: 0 }))
+            .show(ui, |ui| self.panel_main(ui, ctx, right, today, c));
+    }
+
+    /// Keeps where the icons seen this frame sit, from the outer edge and
+    /// top of `outer`, as the rail's places or the panel's.
+    fn measure(&mut self, outer: Rect, right: bool, rail: bool) {
+        let rel = |p: egui::Pos2| vec2(if right { outer.right() - p.x } else { p.x - outer.left() }, p.y - outer.top());
+        let seen = std::mem::take(&mut self.morph.seen);
+        let map = if rail { &mut self.morph.rail } else { &mut self.morph.panel };
+        map.clear();
+        for (shelf, p) in seen {
+            map.insert(shelf, rel(p));
         }
+        if !rail {
+            // the task list noted its visible part on the screen
+            if let Some(v) = self.morph.view {
+                self.morph.view = Some(egui::Rangef::new(v.min - outer.top(), v.max - outer.top()));
+            }
+        }
+    }
+
+    /// The panel part way open, `t` from 0 (the rail) to 1. It widens from
+    /// the rail's width, uncovering the full panel as it fades in while the
+    /// rail's tools fade out. The menu button stays where it is in both,
+    /// and each list's icon glides from its button to its heading.
+    fn ui_morph(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, right: bool, today: NaiveDate, t: f32, c: (Color32, Color32, Color32)) {
+        let (side, text) = (self.pal.side, self.pal.text);
+        let full_w = if self.morph.width > 0.0 { self.morph.width } else { self.data.prefs.sidebar_w };
+        let w = egui::lerp(RAIL_W..=full_w, t);
+        let panel = if right { egui::Panel::right(ids::morph_panel()) } else { egui::Panel::left(ids::morph_panel()) };
+        panel.resizable(false).exact_size(w).show_separator_line(false).frame(egui::Frame::new().fill(side)).show(ui, |ui| {
+            let outer = ui.max_rect();
+            let clip = outer.intersect(ui.clip_rect());
+            // a strip of `width` along the outer edge, from `top` down
+            let strip = |width: f32, top: f32| {
+                let x = if right { outer.right() - width } else { outer.left() };
+                Rect::from_min_max(pos2(x, outer.top() + top), pos2(x + width, outer.bottom()))
+            };
+            // the panel at its full width, uncovered as this one widens
+            self.morph.moving = true;
+            let mut full = ui.new_child(egui::UiBuilder::new().max_rect(strip(full_w, 0.0)).id_salt("morph_full"));
+            full.set_clip_rect(clip);
+            full.set_opacity(t);
+            self.panel_body(&mut full, ctx, right, today, c);
+            self.morph.moving = false;
+            self.measure(outer, right, false);
+            // the rail's tools fading the other way, and an unseen copy of
+            // its buttons, to learn where they sit
+            let mut col = ui.new_child(egui::UiBuilder::new().max_rect(strip(RAIL_W, 10.0)).id_salt("morph_rail"));
+            col.set_clip_rect(clip);
+            col.set_opacity(1.0 - t);
+            self.rail_tools_panel(&mut col, ctx, c, None);
+            let shelves = self.shelves(today);
+            col.scope_builder(egui::UiBuilder::new().invisible(), |ui| {
+                egui::CentralPanel::default().frame(egui::Frame::new()).show(ui, |ui| {
+                    self.rail_icons(ui, ctx, c, &shelves);
+                });
+            });
+            self.measure(outer, right, true);
+            // the menu button, in the same place on the rail and the panel
+            let at = strip(RAIL_W, 10.0).center_top() + vec2(0.0, 14.5);
+            let mut b = ui.new_child(egui::UiBuilder::new().max_rect(Rect::from_center_size(at, vec2(29.0, 29.0))).id_salt("morph_menu"));
+            if icon_btn(&mut b, icons::MENU, 17.0, &self.tip(tr("Show the task panel"), Cmd::ToggleTasks), c).clicked() {
+                self.run(ctx, Cmd::ToggleTasks);
+            }
+            // the gliding icons
+            let p = ui.painter().with_clip_rect(clip);
+            let abs = |v: egui::Vec2| pos2(if right { outer.right() - v.x } else { outer.left() + v.x }, outer.top() + v.y);
+            let view = self.morph.view;
+            for (shelf, glyph, color) in &shelves {
+                let from = self.morph.rail.get(shelf).copied();
+                let to = self.morph.panel.get(shelf).copied();
+                // an icon with no place on one side fades there instead
+                let (at, alpha) = match (from, to) {
+                    (Some(a), Some(b)) => (a + (b - a) * t, if view.is_none_or(|v| v.contains(b.y)) { 1.0 } else { 1.0 - t }),
+                    (Some(a), None) => (a, 1.0 - t),
+                    (None, Some(b)) => (b, t),
+                    (None, None) => continue,
+                };
+                let at = abs(at);
+                let soft = mix(*color, text, 0.25);
+                let tile = Rect::from_center_size(at, vec2(RAIL_ICON, RAIL_ICON));
+                fill_squircle(&p, tile, theme::RADIUS, mix(side, soft, 0.04).gamma_multiply(alpha * (1.0 - t)));
+                let color = color.gamma_multiply(alpha);
+                if glyph.is_empty() {
+                    p.circle_stroke(at, 5.5, Stroke::new(2.0, color));
+                } else {
+                    let size = egui::lerp(theme::size::LARGE..=theme::size::UI, t);
+                    p.text(at, Align2::CENTER_CENTER, glyph, FontId::proportional(size), color);
+                }
+            }
+        });
+        ctx.request_repaint();
     }
 
     /// The row of buttons at the bottom of the panel: the new-list button in
@@ -422,29 +542,7 @@ impl App {
         // refresh, then back, today and forward
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            let nav = |ui: &mut egui::Ui, app: &mut App, flipped: bool| {
-                // drawn right to left when flipped
-                let order: [(&str, f32, &str, Cmd); 4] = if flipped {
-                    [
-                        (icons::CHEVRON_RIGHT, 17.0, tr("Next"), Cmd::Next),
-                        (icons::CALENDAR_CHECK, 16.0, tr("Today"), Cmd::Today),
-                        (icons::CHEVRON_LEFT, 17.0, tr("Previous"), Cmd::Prev),
-                        (icons::REFRESH, 15.0, tr("Refresh"), Cmd::Refresh),
-                    ]
-                } else {
-                    [
-                        (icons::REFRESH, 15.0, tr("Refresh"), Cmd::Refresh),
-                        (icons::CHEVRON_LEFT, 17.0, tr("Previous"), Cmd::Prev),
-                        (icons::CALENDAR_CHECK, 16.0, tr("Today"), Cmd::Today),
-                        (icons::CHEVRON_RIGHT, 17.0, tr("Next"), Cmd::Next),
-                    ]
-                };
-                for (glyph, size, tip, cmd) in order {
-                    if icon_btn(ui, glyph, size, &app.tip(tip, cmd), c).clicked() {
-                        app.run(ctx, cmd);
-                    }
-                }
-            };
+            let nav = |ui: &mut egui::Ui, app: &mut App, flipped: bool| app.nav_row(ui, ctx, c, flipped);
             if right {
                 nav(ui, self, false);
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -453,6 +551,8 @@ impl App {
                     }
                 });
             } else {
+                // centred over the rail's own, so it stays put as the panel folds
+                ui.add_space(-2.5);
                 if icon_btn(ui, icons::MENU, 17.0, &self.tip(tr("Hide the task panel"), Cmd::ToggleTasks), c).clicked() {
                     self.run(ctx, Cmd::ToggleTasks);
                 }
@@ -463,6 +563,7 @@ impl App {
         ui.horizontal(|ui| {
             ui.label(RichText::new(tr("Tasks")).font(theme::bold(theme::size::HEADING)));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
                 ui.menu_button(RichText::new(icons::SLIDERS).size(theme::size::UI).color(muted), |ui| {
                     ui.set_min_width(220.0);
                     let p = &mut self.data.prefs;
@@ -484,6 +585,19 @@ impl App {
                 })
                 .response
                 .on_hover_text(tr("List options"));
+                // fold every list, or open them all once all are folded
+                let keys = self.section_keys(today);
+                let all_shut = keys.iter().all(|k| self.collapsed.contains(k));
+                let (glyph, tip) = if all_shut { (icons::CHEVRONS_UP_DOWN, tr("Expand all lists")) } else { (icons::CHEVRONS_DOWN_UP, tr("Collapse all lists")) };
+                if icon_btn(ui, glyph, 16.0, tip, c).clicked() {
+                    if all_shut {
+                        for k in &keys {
+                            self.collapsed.remove(k);
+                        }
+                    } else {
+                        self.collapsed.extend(keys);
+                    }
+                }
             });
         });
         // tags as a quick filter
@@ -517,13 +631,18 @@ impl App {
                     let name = if id == 0 { self.data.prefs.inbox_name() } else if name.trim().is_empty() { tr("Untitled list").to_string() } else { name };
                     lists.push((id, name, icon, rgb(color), ids(&|t| t.list == id && visible_in_list(t))));
                 }
-                let done_ids: Vec<u64> = self.data.tasks.iter().filter(|t| t.done && !t.archived).map(|t| t.id).collect();
+                let done_ids = self.done_ids();
 
                 // the bar gets its own lane beside the lists instead of
                 // floating over them, with room for their washes, which
                 // reach 6 points past the content
                 ui.spacing_mut().scroll = egui::style::ScrollStyle { bar_inner_margin: 9.0, ..egui::style::ScrollStyle::solid() };
-                egui::ScrollArea::vertical().id_salt("tasklist").auto_shrink([false, false]).show(ui, |ui| {
+                let mut area = egui::ScrollArea::vertical().id_salt("tasklist").auto_shrink([false, false]);
+                if self.morph.moving {
+                    // the moving copy shows the list as far down as the panel had it
+                    area = area.vertical_scroll_offset(self.morph.scroll);
+                }
+                let out = area.show(ui, |ui| {
                     // room for the first list's border, which reaches above its heading
                     ui.add_space(6.0);
                     for (key, name, icon, color, items) in &groups {
@@ -561,6 +680,10 @@ impl App {
                     }
                     ui.add_space(20.0);
                 });
+        if !self.morph.moving {
+            self.morph.scroll = out.state.clamped_offset().y;
+        }
+        self.morph.view = Some(out.inner_rect.y_range());
         self.ui_list_edit(ctx);
     }
 
@@ -707,7 +830,14 @@ impl App {
         }
         let p = ui.painter();
         let ic = pos2(r.left() + 9.0, r.center().y);
+        let shelf = shelf_of(key);
+        if let Some(s) = shelf {
+            self.morph.seen.push((s, ic));
+        }
+        // while the panel moves, the icon is drawn gliding instead
+        let hide = self.morph.moving && shelf.is_some();
         match icon {
+            _ if hide => {}
             Some((g, c)) => {
                 p.text(ic, Align2::CENTER_CENTER, g, FontId::proportional(theme::size::UI), c);
             }
@@ -737,7 +867,7 @@ impl App {
             add_clicked = add.clicked();
         }
         // the Completed list puts its tasks away in one go
-        if key == "done" {
+        if key == "done" || key == "flydone" {
             let pr = Rect::from_center_size(pos2(r.right() - 38.0, r.center().y), vec2(24.0, 24.0));
             let b = ui.interact(pr, ids::section(&format!("{key}_archive")), Sense::click()).on_hover_text(tr("Archive completed tasks"));
             row_btn(ui, pr, &b, icons::ARCHIVE, theme::size::LARGE, glow, false, text, (muted, text));
@@ -801,6 +931,55 @@ impl App {
         }
     }
 
+    /// Refresh, then back, today and forward; drawn right to left when
+    /// `flipped`.
+    fn nav_row(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, c: (Color32, Color32, Color32), flipped: bool) {
+        let mut order: [(&str, f32, &str, Cmd); 4] = [
+            (icons::REFRESH, 15.0, tr("Refresh"), Cmd::Refresh),
+            (icons::CHEVRON_LEFT, 17.0, tr("Previous"), Cmd::Prev),
+            (icons::CALENDAR_CHECK, 16.0, tr("Today"), Cmd::Today),
+            (icons::CHEVRON_RIGHT, 17.0, tr("Next"), Cmd::Next),
+        ];
+        if flipped {
+            order.reverse();
+        }
+        for (glyph, size, tip, cmd) in order {
+            if icon_btn(ui, glyph, size, &self.tip(tip, cmd), c).clicked() {
+                self.run(ctx, cmd);
+            }
+        }
+    }
+
+    /// The completed tasks not yet archived.
+    fn done_ids(&self) -> Vec<u64> {
+        self.data.tasks.iter().filter(|t| t.done && !t.archived).map(|t| t.id).collect()
+    }
+
+    /// The keys of every list the panel shows, to fold or unfold them all.
+    fn section_keys(&self, today: NaiveDate) -> Vec<String> {
+        let mut keys: Vec<String> = self.due_groups(today, self.filter_tag.as_deref()).iter().map(|g| g.0.to_string()).collect();
+        keys.extend(std::iter::once(0).chain(self.data.lists.iter().map(|l| l.id)).map(|id| format!("list{id}")));
+        if !self.done_ids().is_empty() {
+            keys.push("done".into());
+        }
+        keys
+    }
+
+    /// Everything the rail has a button for, in order, with its icon and
+    /// colour: the pinned groups, the lists, then Completed.
+    fn shelves(&self, today: NaiveDate) -> Vec<(Shelf, String, Color32)> {
+        let mut out: Vec<(Shelf, String, Color32)> =
+            self.due_groups(today, None).into_iter().map(|(key, _, icon, color, _)| (Shelf::Due(key), icon.to_string(), color)).collect();
+        for lid in std::iter::once(0).chain(self.data.lists.iter().map(|l| l.id)) {
+            let (_, color, glyph) = self.data.list_look(lid);
+            out.push((Shelf::List(lid), glyph, rgb(color)));
+        }
+        if !self.done_ids().is_empty() {
+            out.push((Shelf::Done, icons::CHECK.to_string(), self.pal.muted));
+        }
+        out
+    }
+
     /// The open tasks, only those tagged `tag` when given, in the chosen order.
     fn open_tasks(&self, tag: Option<&str>) -> Vec<&Task> {
         let mut open: Vec<&Task> = self.data.tasks.iter().filter(|t| !t.done && tag.is_none_or(|g| t.tags.iter().any(|x| x == g))).collect();
@@ -837,71 +1016,87 @@ impl App {
 
     /// The task panel folded to a strip: a button for each list with the
     /// panel's tools stacked under them. Hovering a list's button shows
-    /// the list beside the strip.
+    /// the list beside the strip; hovering the menu button, the calendar's
+    /// navigation.
     fn ui_rail(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, right: bool, c: (Color32, Color32, Color32)) {
-        let (side, border) = (self.pal.side, self.pal.border);
+        let side = self.pal.side;
+        let today = Local::now().date_naive();
         let panel = if right { egui::Panel::right(ids::rail()) } else { egui::Panel::left(ids::rail()) };
         let mut hot: Option<(Shelf, Rect)> = None;
-        let groups = self.due_groups(Local::now().date_naive(), None);
+        let groups = self.due_groups(today, None);
+        let shelves = self.shelves(today);
         let out = panel
             .resizable(false)
             .exact_size(RAIL_W)
             .show_separator_line(false)
             .frame(egui::Frame::new().fill(side).inner_margin(Margin { left: 0, right: 0, top: 10, bottom: 0 }))
             .show(ui, |ui| {
-                egui::Panel::bottom(ids::rail_bottom())
-                    .show_separator_line(false)
-                    .frame(egui::Frame::new().fill(side).inner_margin(Margin { left: 0, right: 0, top: 4, bottom: 8 }))
-                    .show(ui, |ui| {
-                        ui.vertical_centered(|ui| {
-                            ui.spacing_mut().item_spacing.y = 2.0;
-                            self.rail_tools(ui, ctx, c);
-                        });
-                    });
+                self.rail_tools_panel(ui, ctx, c, Some(side));
                 egui::CentralPanel::default().frame(egui::Frame::new().fill(side)).show(ui, |ui| {
-                    ui.vertical_centered(|ui| {
-                        if icon_btn(ui, icons::MENU, 17.0, &self.tip(tr("Show the task panel"), Cmd::ToggleTasks), c).clicked() {
-                            self.run(ctx, Cmd::ToggleTasks);
-                        }
-                        ui.add_space(6.0);
-                        let (r, _) = ui.allocate_exact_size(vec2(20.0, 1.0), Sense::hover());
-                        ui.painter().rect_filled(r, 0.0, border);
-                        ui.add_space(6.0);
-                        egui::ScrollArea::vertical()
-                            .id_salt("rail")
-                            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
-                            .show(ui, |ui| {
-                                ui.vertical_centered(|ui| {
-                                    ui.spacing_mut().item_spacing.y = 4.0;
-                                    for (key, _, icon, color, _) in &groups {
-                                        if let Some(r) = self.rail_icon(ui, ctx, Shelf::Due(key), icon, *color) {
-                                            hot = Some((Shelf::Due(key), r));
-                                        }
-                                    }
-                                    if !groups.is_empty() {
-                                        ui.add_space(2.0);
-                                        let (r, _) = ui.allocate_exact_size(vec2(20.0, 1.0), Sense::hover());
-                                        ui.painter().rect_filled(r, 0.0, border);
-                                        ui.add_space(2.0);
-                                    }
-                                    let lists: Vec<u64> = std::iter::once(0).chain(self.data.lists.iter().map(|l| l.id)).collect();
-                                    for lid in lists {
-                                        let (_, color, glyph) = self.data.list_look(lid);
-                                        if let Some(r) = self.rail_icon(ui, ctx, Shelf::List(lid), &glyph, rgb(color)) {
-                                            hot = Some((Shelf::List(lid), r));
-                                        }
-                                    }
-                                    // a new list is named in the full panel
-                                    if icon_btn(ui, icons::PLUS, 17.0, tr("New task list"), c).clicked() {
-                                        self.new_list_text = Some((String::new(), true));
-                                        self.run(ctx, Cmd::ToggleTasks);
-                                    }
-                                });
-                            });
-                    });
+                    hot = self.rail_icons(ui, ctx, c, &shelves);
                 });
             });
+        self.measure(out.response.rect, right, true);
         self.ui_flyer(ctx, out.response.rect, right, hot, &groups);
+    }
+
+    /// The rail's tools along its bottom, on `fill` when given.
+    fn rail_tools_panel(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, c: (Color32, Color32, Color32), fill: Option<Color32>) {
+        let frame = egui::Frame::new().fill(fill.unwrap_or(Color32::TRANSPARENT)).inner_margin(Margin { left: 0, right: 0, top: 4, bottom: 8 });
+        egui::Panel::bottom(ids::rail_bottom()).show_separator_line(false).frame(frame).show(ui, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                self.rail_tools(ui, ctx, c);
+            });
+        });
+    }
+
+    /// The menu button and a button for each of `shelves`, the pinned
+    /// groups set apart from the lists. Returns the one under the pointer.
+    fn rail_icons(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, c: (Color32, Color32, Color32), shelves: &[(Shelf, String, Color32)]) -> Option<(Shelf, Rect)> {
+        let border = self.pal.border;
+        let mut hot = None;
+        ui.vertical_centered(|ui| {
+            let menu = icon_btn(ui, icons::MENU, 17.0, &self.tip(tr("Show the task panel"), Cmd::ToggleTasks), c);
+            if menu.clicked() {
+                self.run(ctx, Cmd::ToggleTasks);
+            }
+            if self.drag_task.is_none() && ui.rect_contains_pointer(menu.rect) {
+                hot = Some((Shelf::Nav, menu.rect));
+            }
+            ui.add_space(6.0);
+            let (r, _) = ui.allocate_exact_size(vec2(20.0, 1.0), Sense::hover());
+            ui.painter().rect_filled(r, 0.0, border);
+            ui.add_space(6.0);
+            egui::ScrollArea::vertical()
+                .id_salt("rail")
+                .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                .show(ui, |ui| {
+                    ui.vertical_centered(|ui| {
+                        ui.spacing_mut().item_spacing.y = 4.0;
+                        let mut pinned = false;
+                        for (shelf, glyph, color) in shelves {
+                            let due = matches!(shelf, Shelf::Due(_));
+                            if pinned && !due {
+                                ui.add_space(2.0);
+                                let (r, _) = ui.allocate_exact_size(vec2(20.0, 1.0), Sense::hover());
+                                ui.painter().rect_filled(r, 0.0, border);
+                                ui.add_space(2.0);
+                            }
+                            pinned = due;
+                            if let Some(r) = self.rail_icon(ui, ctx, *shelf, glyph, *color) {
+                                hot = Some((*shelf, r));
+                            }
+                        }
+                        // a new list is named in the full panel
+                        if icon_btn(ui, icons::PLUS, 17.0, tr("New task list"), c).clicked() {
+                            self.new_list_text = Some((String::new(), true));
+                            self.run(ctx, Cmd::ToggleTasks);
+                        }
+                    });
+                });
+        });
+        hot
     }
 
     /// The panel's tools, one above the other, settings at the bottom.
@@ -939,6 +1134,7 @@ impl App {
     fn rail_icon(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, shelf: Shelf, glyph: &str, color: Color32) -> Option<Rect> {
         let (side, text) = (self.pal.side, self.pal.text);
         let (r, _) = ui.allocate_exact_size(vec2(RAIL_ICON, RAIL_ICON), Sense::hover());
+        self.morph.seen.push((shelf, r.center()));
         // the pointer, not egui's hover, which a drag elsewhere turns off
         let over = ui.rect_contains_pointer(r);
         let open = self.flyer.as_ref().is_some_and(|f| f.shelf == shelf);
@@ -981,15 +1177,20 @@ impl App {
         let gone = match shelf {
             Shelf::List(lid) => lid != 0 && !self.data.lists.iter().any(|l| l.id == lid),
             Shelf::Due(key) => !groups.iter().any(|g| g.0 == key),
+            Shelf::Done => self.done_ids().is_empty(),
+            Shelf::Nav => false,
         };
         if gone {
             self.flyer = None;
             return;
         }
-        let side = self.pal.side;
+        let (side, muted) = (self.pal.side, self.pal.muted);
+        let c = (side, muted, self.pal.text);
+        let nav = shelf == Shelf::Nav;
         let screen = ctx.content_rect();
         let x = if right { rail.left() - 4.0 } else { rail.right() + 4.0 };
-        let y = (top - 10.0).max(screen.top() + 8.0);
+        // the navigation row lines up with the menu button
+        let y = if nav { top - 5.0 } else { (top - 10.0).max(screen.top() + 8.0) };
         let max_h = (screen.bottom() - y - 12.0).max(160.0);
         let out = egui::Area::new(ids::flyer())
             .order(egui::Order::Foreground)
@@ -997,7 +1198,15 @@ impl App {
             .fixed_pos(pos2(x, y))
             .constrain(true)
             .show(ctx, |ui| {
-                egui::Frame::popup(ui.style()).fill(side).inner_margin(Margin { left: 14, right: 12, top: 6, bottom: 4 }).show(ui, |ui| {
+                let margin = if nav { Margin::same(4) } else { Margin { left: 14, right: 12, top: 6, bottom: 4 } };
+                egui::Frame::popup(ui.style()).fill(side).inner_margin(margin).show(ui, |ui| {
+                    if nav {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 2.0;
+                            self.nav_row(ui, ctx, c, false);
+                        });
+                        return;
+                    }
                     ui.set_width(FLYER_W);
                     ui.spacing_mut().scroll = egui::style::ScrollStyle { bar_inner_margin: 9.0, ..egui::style::ScrollStyle::solid() };
                     egui::ScrollArea::vertical().id_salt("flyer").max_height(max_h).min_scrolled_height(max_h).show(ui, |ui| {
@@ -1010,6 +1219,12 @@ impl App {
                                     self.collapsed.remove(&format!("fly{key}"));
                                 }
                             }
+                            Shelf::Done => {
+                                let items = self.done_ids();
+                                self.section(ui, ctx, "flydone", tr("Completed"), Some((icons::CHECK, muted)), muted, &items, None);
+                                self.collapsed.remove("flydone");
+                            }
+                            Shelf::Nav => {}
                         }
                     });
                 });

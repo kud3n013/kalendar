@@ -57,6 +57,9 @@ fixed! {
     /// the narrow strip of list icons shown while the task panel is closed
     rail = "rail";
     rail_bottom = "rail_bottom";
+    /// the task panel while it grows out of the rail or shrinks back
+    morph_panel = "morph_panel";
+    morph = "morph";
     /// a list hanging beside the rail
     flyer = "flyer";
     list_edit = "list_edit";
