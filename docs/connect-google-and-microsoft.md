@@ -11,6 +11,7 @@ errors people usually hit.
 
 - [Google Calendar](#google-calendar)
 - [Microsoft 365 and Outlook.com](#microsoft-365-and-outlookcom)
+- [No registration: read-only links](#no-registration-read-only-links)
 
 ---
 
@@ -71,7 +72,7 @@ weekly.
 
 ### 6. Sign in from kalendar
 
-1. In kalendar: Settings → Integrations → **Google**.
+1. In kalendar: Settings → Calendars → **Google**.
 2. Fill in your Google address. Paste the client ID and client secret,
    or paste the whole downloaded JSON file into the client ID box; kalendar
    takes both values out of it.
@@ -111,8 +112,24 @@ and sign in.
   you see "you do not have access", ask your IT admin, or use the steps
   below with a personal account instead.
 - **Personal account only:** registering an app needs a Microsoft Entra
-  directory. Signing up for a free Azure account gives you one; no paid
-  service is needed. Then come back to the link above.
+  directory, which you get by signing up for an
+  [Azure free account](https://azure.microsoft.com/free/). No paid service
+  is needed. Then come back to the link above.
+
+If Azure says *"You're not eligible for an Azure free account"* or *"Your
+current account type is not supported"*:
+
+- The free offer is only for people new to Azure. A card, phone number or
+  address used on Azure before, even under another Microsoft account, is
+  turned down. Try a card and number never used there.
+- A Microsoft account made from a Gmail or other non-Microsoft address
+  can count as the wrong kind of account. Sign up with an Outlook.com
+  address instead.
+- Pick **Pay-As-You-Go** instead of the free offer. It asks for a card,
+  but registering an app costs nothing; you are billed only for Azure
+  services you start, and this needs none.
+- If none of that works, use a [read-only link](#no-registration-read-only-links)
+  instead.
 
 ### 2. Register the app
 
@@ -142,7 +159,7 @@ looks like `1a2b3c4d-…`. Don't copy the Directory (tenant) ID next to it.
 
 ### 5. Sign in from kalendar
 
-1. In kalendar: Settings → Integrations → **Microsoft**.
+1. In kalendar: Settings → Calendars → **Microsoft**.
 2. Fill in your Microsoft address and paste the Application (client) ID.
 3. Click **Sign in with Microsoft…**, sign in in the browser and accept.
 
@@ -156,6 +173,28 @@ looks like `1a2b3c4d-…`. Don't copy the Directory (tenant) ID next to it.
 | `AADSTS50020` (account not in tenant) | Account types set to this directory only | Same as above |
 | "Need admin approval" | Your organisation doesn't let users approve apps | Ask an admin to grant consent on **API permissions** → **Grant admin consent** |
 | Signed in, but no calendars | `Calendars.ReadWrite` wasn't added | Add it (step 3), then remove and add the account again in kalendar |
+
+---
+
+## No registration: read-only links
+
+If you can't make a registration, both services give you a private link
+to your calendar that kalendar can subscribe to. You see your events and
+they refresh on their own, but changes made in kalendar don't go back.
+
+**Google:** open [Google Calendar settings](https://calendar.google.com/calendar/r/settings),
+pick the calendar on the left, and copy **Secret address in iCal format**.
+
+**Outlook.com and Microsoft 365:** open
+[Outlook calendar settings → Shared calendars](https://outlook.live.com/calendar/0/options/calendar/SharedCalendars)
+(for a work account, the same page in Outlook on the web), under
+**Publish a calendar** pick the calendar and **Can view all details**,
+click **Publish**, and copy the **ICS** link. Some organisations switch
+publishing off.
+
+In kalendar: Settings → Calendars → **Calendar feed**, and paste
+it. Anyone with the link can read the calendar, so keep it private; both
+pages let you reset it.
 
 ---
 
