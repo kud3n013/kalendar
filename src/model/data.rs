@@ -259,6 +259,11 @@ impl Data {
             .map(|c| c.id)
             .unwrap_or_else(|| self.first_own_calendar())
     }
+    /// The calendar new events start in: the one picked under Active
+    /// calendars while it can take them, else the first of one's own.
+    pub fn default_calendar(&self) -> u64 {
+        self.prefs.default_calendar.filter(|id| self.calendar(*id).is_some_and(|c| c.writable())).unwrap_or_else(|| self.first_own_calendar())
+    }
     /// The first calendar new events can be written to.
     pub fn first_own_calendar(&self) -> u64 {
         self.calendars.iter().find(|c| c.is_local()).or(self.calendars.first()).map(|c| c.id).unwrap_or(0)

@@ -768,7 +768,7 @@ impl App {
                             start: anchor,
                             end: anchor + Duration::minutes(snap),
                             all_day: false,
-                            calendar: self.data.first_own_calendar(),
+                            calendar: self.data.default_calendar(),
                             notes: String::new(),
                             task_id: None,
                         color: None,
@@ -988,7 +988,7 @@ impl App {
                     }
                 } else if m.item(ui, icons::CALENDAR_DAYS, tr("New frame here"), false).clicked() {
                     let s = (t - midnight(t.date())).num_minutes();
-                    self.open_new_frame(t.date(), s, (s + 60).min(24 * 60), self.data.first_own_calendar(), String::new());
+                    self.open_new_frame(t.date(), s, (s + 60).min(24 * 60), self.data.default_calendar(), String::new());
                     ui.close();
                 }
                 m.end(ui);

@@ -81,6 +81,9 @@ pub enum PanelSide {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Prefs {
+    /// the calendar a block drawn on the calendar and a new event start
+    /// in; None, or one that can't take events, is the first of one's own
+    pub default_calendar: Option<u64>,
     pub first_day: u8, // 0 = Sunday
     pub hour12: bool,
     pub initial_view: View,
@@ -140,6 +143,7 @@ pub struct Prefs {
 impl Default for Prefs {
     fn default() -> Self {
         Prefs {
+            default_calendar: None,
             first_day: 0,
             hour12: false,
             initial_view: View::Week,

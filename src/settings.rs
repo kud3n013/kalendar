@@ -705,7 +705,7 @@ impl App {
     fn page_active(&mut self, ui: &mut egui::Ui) {
         if finding(ui) {
             let names: Vec<&str> = self.data.calendars.iter().map(|c| c.name.as_str()).collect();
-            let words = [&["show", "hide", "colour", "color", "rename", "add", "remove", "delete", "new calendar"][..], &names].concat();
+            let words = [&["show", "hide", "colour", "color", "rename", "add", "remove", "delete", "new calendar", "default"][..], &names].concat();
             page_result(ui, Page::ActiveCalendars, tr("Manage calendars"), tr("Show or hide calendars, rename, recolour, add or remove them"), &words);
             return;
         }
@@ -714,6 +714,16 @@ impl App {
         heading(ui, tr("Active calendars"));
         ui.add(egui::Label::new(RichText::new(tr("Show or hide calendars, rename them, change their colour, add new ones or remove them.")).size(theme::size::UI).color(muted)).wrap());
         ui.add_space(12.0);
+        // where a drawn block and a new event start
+        let mut default = self.data.default_calendar();
+        let was = default;
+        let cals: Vec<(u64, String)> = self.data.calendars.iter().filter(|c| c.writable()).map(|c| (c.id, c.name.clone())).collect();
+        row(ui, tr("Default calendar"), tr("A block drawn on the calendar and a new event start in this calendar"), |ui| combo(ui, "defcal", &mut default, &cals));
+        if default != was {
+            self.data.prefs.default_calendar = Some(default);
+            self.commit();
+        }
+        ui.add_space(8.0);
         // add a calendar of one's own
         ui.horizontal(|ui| {
             let r = ui.add(

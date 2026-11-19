@@ -636,3 +636,19 @@ fn a_repeat_lists_the_days_after_up_to_the_last() {
     assert!(Repeat::None.days_after(d(11, 2), d(12, 2)).is_empty());
     assert!(Repeat::Daily.days_after(d(11, 2), d(11, 1)).is_empty());
 }
+
+#[test]
+fn new_events_start_in_the_picked_default_calendar() {
+    let mut d = empty();
+    let own = d.first_own_calendar();
+    d.calendars.push(Calendar { id: 7, name: "Work".into(), visible: true, ..Default::default() });
+    d.calendars.push(Calendar { id: 8, name: "Feed".into(), url: Some("https://example.org/a.ics".into()), visible: true, ..Default::default() });
+    assert_eq!(d.default_calendar(), own);
+    d.prefs.default_calendar = Some(7);
+    assert_eq!(d.default_calendar(), 7);
+    // a feed can't take events, and a removed one is gone
+    d.prefs.default_calendar = Some(8);
+    assert_eq!(d.default_calendar(), own);
+    d.prefs.default_calendar = Some(99);
+    assert_eq!(d.default_calendar(), own);
+}

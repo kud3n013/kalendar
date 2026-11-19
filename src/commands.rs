@@ -245,7 +245,7 @@ impl App {
                 let now = Self::now();
                 let start_h = if self.anchor == now.date() { (now.hour() as i64 + 1).min(22) } else { 9 };
                 let day = self.anchor;
-                self.open_new_frame(day, start_h * 60, (start_h + 2).min(24) * 60, self.data.first_own_calendar(), String::new());
+                self.open_new_frame(day, start_h * 60, (start_h + 2).min(24) * 60, self.data.default_calendar(), String::new());
             }
             Cmd::Edit => {
                 if let Some(id) = self.selected {
