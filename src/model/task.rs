@@ -82,6 +82,39 @@ impl Repeat {
             Repeat::Monthly => d.checked_add_months(chrono::Months::new(1)).unwrap_or(d + Duration::days(30)),
         }
     }
+    /// A first last day for a repeating event that starts on `day`: four
+    /// weeks on, twelve weeks for a weekly one, a year for a monthly one.
+    pub fn first_until(&self, day: NaiveDate) -> NaiveDate {
+        match self {
+            Repeat::Weekly => day + Duration::weeks(12),
+            Repeat::Monthly => day.checked_add_months(chrono::Months::new(12)).unwrap_or(day),
+            _ => day + Duration::weeks(4),
+        }
+    }
+    /// The days after `day`, up to and with `until`, on which an event
+    /// that starts on `day` comes again. A monthly one keeps its day of the
+    /// month where the month has it; at most 200 days.
+    pub fn days_after(&self, day: NaiveDate, until: NaiveDate) -> Vec<NaiveDate> {
+        let mut out = Vec::new();
+        if *self == Repeat::None {
+            return out;
+        }
+        let mut d = day;
+        for i in 1..200u32 {
+            d = match self {
+                Repeat::Monthly => match day.checked_add_months(chrono::Months::new(i)) {
+                    Some(n) => n,
+                    None => break,
+                },
+                r => r.next(d),
+            };
+            if d > until {
+                break;
+            }
+            out.push(d);
+        }
+        out
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, Default)]

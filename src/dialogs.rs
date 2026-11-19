@@ -118,6 +118,24 @@ const EDITOR_SIZE: [f32; 2] = [420.0, 540.0];
 /// Width of the label column in an editor's field grid.
 const EDITOR_LABEL_W: f32 = 96.0;
 
+/// Puts the typing cursor in the field `r`, after its last letter, when
+/// `pending` is set. It stays set until the field has the cursor, since a
+/// window that has just opened may take a pass or two to get the keys.
+fn grab_focus(ui: &egui::Ui, r: &egui::Response, len: usize, pending: &mut bool) {
+    if !*pending {
+        return;
+    }
+    if r.has_focus() {
+        *pending = false;
+        return;
+    }
+    r.request_focus();
+    let mut state = egui::text_edit::TextEditState::load(ui.ctx(), r.id).unwrap_or_default();
+    state.cursor.set_char_range(Some(egui::text::CCursorRange::one(egui::text::CCursor::new(len))));
+    state.store(ui.ctx(), r.id);
+    ui.ctx().request_repaint();
+}
+
 /// An editor's name field at the top; true when Enter was pressed in it.
 fn editor_title(ui: &mut egui::Ui, text: &mut String, hint: &str, focus: &mut bool) -> bool {
     let r = ui.add(
@@ -126,10 +144,15 @@ fn editor_title(ui: &mut egui::Ui, text: &mut String, hint: &str, focus: &mut bo
             .font(FontId::proportional(theme::size::HEADING))
             .desired_width(f32::INFINITY),
     );
-    if std::mem::take(focus) {
-        r.request_focus();
-    }
+    grab_focus(ui, &r, text.chars().count(), focus);
     r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
+}
+
+/// Which field an editor opens on: the name when it has none yet, else the
+/// notes, so what is typed first goes where it is wanted. Gives (name, notes).
+fn first_field(focus: bool, title: &str) -> (bool, bool) {
+    let blank = title.trim().is_empty();
+    (focus && blank, focus && !blank)
 }
 
 /// An editor's labelled fields: muted names in a column of their own.
@@ -142,9 +165,10 @@ fn editor_label(ui: &mut egui::Ui, text: &str, muted: egui::Color32) {
 }
 
 /// The editor's notes, at the end of its fields; Ctrl+Enter saves.
-fn editor_notes(ui: &mut egui::Ui, notes: &mut String, hint: &str) -> bool {
+fn editor_notes(ui: &mut egui::Ui, notes: &mut String, hint: &str, focus: &mut bool) -> bool {
     ui.add_space(4.0);
-    ui.add(egui::TextEdit::multiline(notes).hint_text(hint).desired_rows(3).desired_width(f32::INFINITY));
+    let r = ui.add(egui::TextEdit::multiline(notes).hint_text(hint).desired_rows(3).desired_width(f32::INFINITY));
+    grab_focus(ui, &r, notes.chars().count(), focus);
     ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter))
 }
 
@@ -202,6 +226,52 @@ fn pick_one(ui: &mut egui::Ui, salt: &str, items: &[(u64, String, egui::Color32)
     });
 }
 
+/// A row of colour swatches: the calendar's own first, then the event
+/// colours. `color` is None for the calendar's.
+fn color_row(ui: &mut egui::Ui, cal_color: [u8; 3], color: &mut Option<[u8; 3]>) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        let swatch = |ui: &mut egui::Ui, col: [u8; 3], on: bool, tip: &str| {
+            let (cr, resp) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
+            ui.painter().circle_filled(cr.center(), 7.0, rgb(col));
+            if on {
+                ui.painter().circle_stroke(cr.center(), 8.5, Stroke::new(1.5_f32, ui.visuals().text_color()));
+            }
+            resp.on_hover_text(tip).clicked()
+        };
+        if swatch(ui, cal_color, color.is_none(), tr("Calendar colour")) {
+            *color = None;
+        }
+        ui.add_space(6.0);
+        for (col, cname) in EVENT_COLORS.iter() {
+            if swatch(ui, *col, *color == Some(*col), tr(cname)) {
+                *color = Some(*col);
+            }
+        }
+    });
+}
+
+/// An event's notes as the place on their first line ("Where: …") and the
+/// rest, both as typed: nothing is trimmed, so a space being typed stays.
+fn split_place(notes: &str) -> (String, String) {
+    match notes.strip_prefix("Where: ") {
+        Some(rest) => match rest.split_once('\n') {
+            Some((place, more)) => (place.to_string(), more.to_string()),
+            None => (rest.to_string(), String::new()),
+        },
+        None => (String::new(), notes.to_string()),
+    }
+}
+
+/// The other way from [`split_place`]: no place leaves the notes as they are.
+fn join_place(place: &str, notes: &str) -> String {
+    match (place.is_empty(), notes.is_empty()) {
+        (true, _) => notes.to_string(),
+        (false, true) => format!("Where: {place}"),
+        (false, false) => format!("Where: {place}\n{notes}"),
+    }
+}
+
 /// Starts the part of a window that changes with what is being made. It
 /// comes back as a `Ui` of its own: the fields drawn in it fade in after
 /// `kind` changes, and the room they take glides to their height.
@@ -257,11 +327,6 @@ fn morph_end(outer: &mut egui::Ui, child: &egui::Ui) {
     }
 }
 
-/// The time of day so many minutes after midnight.
-fn time_of(min: i64) -> chrono::NaiveTime {
-    chrono::NaiveTime::from_num_seconds_from_midnight_opt((min.clamp(0, 24 * 60 - 1) * 60) as u32, 0).unwrap_or_default()
-}
-
 impl App {
     /// The task lists as dropdown rows: (id, icon and name, colour), the
     /// Inbox first. `writable` leaves out lists that cannot take a task.
@@ -277,15 +342,10 @@ impl App {
     }
 
     pub fn ui_dialogs(&mut self, ctx: &egui::Context) {
-        let had_frame = self.frame_editor.is_some();
         self.dlg_create(ctx);
         self.dlg_event(ctx);
         self.dlg_task(ctx);
-        // a block window that has just turned to Frame was drawn in this pass
-        // already, under the same id; the frame fields come in the next pass
-        if had_frame || self.frame_editor.as_ref().is_none_or(|f| f.from_block.is_none()) {
-            self.dlg_frame(ctx);
-        }
+        self.dlg_frame(ctx);
         self.ui_settings_window(ctx);
         self.dlg_command(ctx);
         self.dlg_new_task(ctx);
@@ -365,26 +425,7 @@ impl App {
                     ui.end_row();
 
                     label(ui, tr("Colour"));
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing.x = 2.0;
-                        let swatch = |ui: &mut egui::Ui, col: [u8; 3], on: bool, tip: &str| {
-                            let (cr, resp) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
-                            ui.painter().circle_filled(cr.center(), 7.0, rgb(col));
-                            if on {
-                                ui.painter().circle_stroke(cr.center(), 8.5, Stroke::new(1.5_f32, ui.visuals().text_color()));
-                            }
-                            resp.on_hover_text(tip).clicked()
-                        };
-                        if swatch(ui, cal_color, c.ev.color.is_none(), tr("Calendar colour")) {
-                            c.ev.color = None;
-                        }
-                        ui.add_space(6.0);
-                        for (col, cname) in EVENT_COLORS.iter() {
-                            if swatch(ui, *col, c.ev.color == Some(*col), cname) {
-                                c.ev.color = Some(*col);
-                            }
-                        }
-                    });
+                    color_row(ui, cal_color, &mut c.ev.color);
                     ui.end_row();
 
                     // hours, in 5-minute steps, within the block's day
@@ -410,14 +451,7 @@ impl App {
                             }
                         });
                         if c.repeat != was && c.repeat != Repeat::None {
-                            // a first end to start from: four weeks, twelve weeks or a year
-                            let day = c.ev.start.date();
-                            let until = match c.repeat {
-                                Repeat::Weekly => day + Duration::weeks(12),
-                                Repeat::Monthly => day.checked_add_months(chrono::Months::new(12)).unwrap_or(day),
-                                _ => day + Duration::weeks(4),
-                            };
-                            c.until_text = until.to_string();
+                            c.until_text = c.repeat.first_until(c.ev.start.date()).to_string();
                         }
                         if c.repeat != Repeat::None {
                             if is_task {
@@ -539,12 +573,10 @@ impl App {
             let s = (c.ev.start - midnight(day)).num_minutes();
             let e = if c.ev.end.date() == day { (c.ev.end - midnight(day)).num_minutes() } else { 24 * 60 };
             self.open_new_frame(day, s, e, c.ev.calendar, c.ev.title.clone());
-            // the frame's fields take over this window, beside the same block
+            // the frame opens in a window of its own, beside the same block
             if let Some(fe) = &mut self.frame_editor {
                 fe.from_block = Some((c.ev.clone(), c.anchor_rect));
             }
-            // run the pass again at once, so no frame shows without the window
-            ctx.request_discard("the block window turned to Frame");
         } else if save {
             self.snapshot();
             let mut ev = c.ev.clone();
@@ -579,23 +611,7 @@ impl App {
             } else {
                 // a repeating event is laid out as one event per time, so each
                 // can be moved or removed alone and all of them sync like any other
-                let mut times: Vec<NaiveDate> = Vec::new();
-                if let Some(until) = until {
-                    let mut d = day;
-                    for i in 1..200u32 {
-                        d = match c.repeat {
-                            Repeat::Monthly => match day.checked_add_months(chrono::Months::new(i)) {
-                                Some(n) => n,
-                                None => break,
-                            },
-                            r => r.next(d),
-                        };
-                        if d > until {
-                            break;
-                        }
-                        times.push(d);
-                    }
-                }
+                let times = until.map(|u| c.repeat.days_after(day, u)).unwrap_or_default();
                 for d in &times {
                     let mut copy = ev.clone();
                     copy.id = self.data.new_id();
@@ -615,11 +631,63 @@ impl App {
         }
     }
 
-    /// The frame editor: name, calendar, colour, hours, weekdays, repeat,
-    /// end date, which tasks it takes, and whether it keeps others out.
+    /// The frame editor, in a window of its own as the event and task
+    /// editors are: name, calendar, colour, hours, weekdays, repeat, end
+    /// date, which tasks it takes, and whether it keeps others out.
     fn dlg_frame(&mut self, ctx: &egui::Context) {
         let Some(mut ed) = self.frame_editor.take() else { return };
-        let (mut save, mut cancel, mut delete) = (false, false, false);
+        let title = if ed.is_new { tr("New frame") } else { tr("Frame") };
+        let key = ids::frame_editor().with(ed.frame.id);
+        let at = self.editor_spot(ctx, key, ed.from_block.as_ref().map(|b| b.1));
+        let mut new_list: Option<String> = None;
+        let focus = ed.focus;
+        let p = self.edit_window(ctx, "frame_editor", title, at, focus, Offer { delete: !ed.is_new, skip: None }, |app, ui| app.frame_form(ui, &mut ed, &mut new_list));
+        let Pressed { save, cancel, delete, .. } = p;
+        if let Some(name) = new_list {
+            // a list added from here is taken by the frame at once
+            let id = self.new_list(&name);
+            ed.frame.filter.lists.push(id);
+            self.commit();
+        }
+        if save {
+            let text = ed.until_text.trim();
+            let until = if text.is_empty() {
+                None
+            } else if let Ok(d) = NaiveDate::parse_from_str(text, "%Y-%m-%d") {
+                Some(d)
+            } else {
+                self.say(ctx, tr("The end date should look like 2026-12-31"), false);
+                return self.frame_editor = Some(ed);
+            };
+            if ed.frame.days == 0 {
+                self.say(ctx, tr("Pick at least one day"), false);
+                return self.frame_editor = Some(ed);
+            }
+            let mut f = ed.frame;
+            f.until = until;
+            if f.name.trim().is_empty() {
+                f.name = tr("Frame").into();
+            }
+            // never a subscribed calendar
+            if self.data.calendar(f.calendar).is_none_or(|c| !c.is_local()) {
+                f.calendar = self.data.first_own_calendar();
+            }
+            self.snapshot();
+            match self.data.frame_mut(f.id) {
+                Some(old) => *old = f,
+                None => self.data.frames.push(f),
+            }
+            self.commit();
+        } else if delete {
+            self.delete_frame(ctx, ed.frame.id);
+        } else if !cancel {
+            return self.frame_editor = Some(ed);
+        }
+        ctx.data_mut(|d| d.remove_temp::<egui::Pos2>(key));
+    }
+
+    /// The frame editor's fields; returns whether to save.
+    fn frame_form(&mut self, ui: &mut egui::Ui, ed: &mut crate::FrameEdit, new_list: &mut Option<String>) -> bool {
         let muted = self.pal.muted;
         let cal_color = self.data.calendar_color(ed.frame.calendar);
         // every tag in use, plus the ones the frame already asks for
@@ -629,50 +697,8 @@ impl App {
         all_tags.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
         let lists = self.list_items(false);
         let hour12 = self.data.prefs.hour12;
-        // begun from a drawn block, it is the very window the task and the
-        // event are set up in: same place, same width, only the fields change
-        let win_id = if ed.from_block.is_some() { ids::create_popup() } else { ids::frame_editor() };
-        let win = egui::Window::new(if ed.is_new { tr("New frame") } else { tr("Frame") }).id(win_id).collapsible(false).resizable(false);
-        let win = match &ed.from_block {
-            Some((_, r)) => win.title_bar(false).fixed_pos(place_beside(ctx, win_id, *r, egui::vec2(400.0, 400.0))),
-            None => win.anchor(Align2::CENTER_CENTER, [0.0, -30.0]),
-        };
-        let mut back: Option<CreateKind> = None;
-        let mut new_list: Option<String> = None;
-        let hours = format!("{} – {}", self.data.prefs.fmt_time(time_of(ed.frame.start_min)), self.data.prefs.fmt_time(time_of(ed.frame.end_min)));
-        win.show(ctx, |ui| {
-                ui.set_width(380.0);
-                if ed.from_block.is_some() {
-                    ui.horizontal(|ui| {
-                        for (kind, label) in [(CreateKind::Task, tr("Task")), (CreateKind::Event, tr("Event")), (CreateKind::Frame, tr("Frame"))] {
-                            if ui.selectable_label(kind == CreateKind::Frame, RichText::new(label).size(theme::size::CAPTION)).clicked() && kind != CreateKind::Frame {
-                                back = Some(kind);
-                            }
-                        }
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            ui.label(RichText::new(&hours).size(theme::size::SMALL).color(muted));
-                        });
-                    });
-                }
-                let r = ui.add(
-                    egui::TextEdit::singleline(&mut ed.frame.name)
-                        .hint_text(tr("Frame name, e.g. Deep work"))
-                        .font(FontId::proportional(theme::size::HEADING))
-                        .desired_width(f32::INFINITY),
-                );
-                if ed.focus {
-                    r.request_focus();
-                    ed.focus = false;
-                }
-                if r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    save = true;
-                }
-                // the fields below change with the kind: they fade in and the
-                // window grows or shrinks to them
-                let outer_ui = ui;
-                let mut morph = morph_begin(outer_ui, 2);
-                let ui = &mut morph;
-                ui.add_space(4.0);
+        let save = editor_title(ui, &mut ed.frame.name, tr("Frame name, e.g. Deep work"), &mut ed.focus);
+        ui.add_space(4.0);
                 let label = |ui: &mut egui::Ui, t: &str| {
                     ui.label(RichText::new(t).color(muted));
                 };
@@ -687,26 +713,7 @@ impl App {
                     ui.end_row();
 
                     label(ui, tr("Colour"));
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing.x = 2.0;
-                        let swatch = |ui: &mut egui::Ui, col: [u8; 3], on: bool, tip: &str| {
-                            let (cr, resp) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
-                            ui.painter().circle_filled(cr.center(), 7.0, rgb(col));
-                            if on {
-                                ui.painter().circle_stroke(cr.center(), 8.5, Stroke::new(1.5_f32, ui.visuals().text_color()));
-                            }
-                            resp.on_hover_text(tip).clicked()
-                        };
-                        if swatch(ui, cal_color, ed.frame.color.is_none(), tr("Calendar colour")) {
-                            ed.frame.color = None;
-                        }
-                        ui.add_space(6.0);
-                        for (col, cname) in EVENT_COLORS.iter() {
-                            if swatch(ui, *col, ed.frame.color == Some(*col), cname) {
-                                ed.frame.color = Some(*col);
-                            }
-                        }
-                    });
+                    color_row(ui, cal_color, &mut ed.frame.color);
                     ui.end_row();
 
                     // hours, in 5-minute steps; a frame ends on its own day
@@ -800,7 +807,7 @@ impl App {
                             }
                         }
                         if let Some(name) = add_button(ui, "flist", tr("New list")) {
-                            new_list = Some(name);
+                            *new_list = Some(name);
                         }
                     });
                     ui.end_row();
@@ -851,79 +858,7 @@ impl App {
                 ui.checkbox(&mut ed.frame.exclusive, tr("Keep other tasks out"))
                     .on_hover_text(tr("The planner puts no other task here"));
                 ui.checkbox(&mut ed.frame.enabled, tr("Enabled"));
-                morph_end(outer_ui, &morph);
-                let ui = outer_ui;
-                ui.add_space(4.0);
-                ui.horizontal(|ui| {
-                    if ui.button(RichText::new(tr("Save")).strong()).on_hover_text(tr("Ctrl+Enter")).clicked() {
-                        save = true;
-                    }
-                    if ui.button(tr("Cancel")).on_hover_text(tr("Esc")).clicked() {
-                        cancel = true;
-                    }
-                    if !ed.is_new {
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui.button(RichText::new(tr("Delete")).color(theme::DANGER)).clicked() {
-                                delete = true;
-                            }
-                        });
-                    }
-                });
-                if ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter)) {
-                    save = true;
-                }
-            });
-        if let Some(name) = new_list {
-            // a list added from here is taken by the frame at once
-            let id = self.new_list(&name);
-            ed.frame.filter.lists.push(id);
-            self.commit();
-        }
-        if let (Some(kind), Some((mut ev, rect))) = (back, ed.from_block.clone()) {
-            // back to a task or an event, keeping the name and the calendar
-            ev.title = ed.frame.name.clone();
-            ev.calendar = ed.frame.calendar;
-            self.create = Some(crate::CreateEdit::new(ev, kind, rect));
-            // the block window ran earlier in this pass; run it again at once
-            ctx.request_discard("the frame window turned back to a block");
-            return;
-        }
-        if save {
-            let text = ed.until_text.trim();
-            let until = if text.is_empty() {
-                None
-            } else if let Ok(d) = NaiveDate::parse_from_str(text, "%Y-%m-%d") {
-                Some(d)
-            } else {
-                self.say(ctx, tr("The end date should look like 2026-12-31"), false);
-                self.frame_editor = Some(ed);
-                return;
-            };
-            if ed.frame.days == 0 {
-                self.say(ctx, tr("Pick at least one day"), false);
-                self.frame_editor = Some(ed);
-                return;
-            }
-            let mut f = ed.frame;
-            f.until = until;
-            if f.name.trim().is_empty() {
-                f.name = tr("Frame").into();
-            }
-            // never a subscribed calendar
-            if self.data.calendar(f.calendar).is_none_or(|c| !c.is_local()) {
-                f.calendar = self.data.first_own_calendar();
-            }
-            self.snapshot();
-            match self.data.frame_mut(f.id) {
-                Some(old) => *old = f,
-                None => self.data.frames.push(f),
-            }
-            self.commit();
-        } else if delete {
-            self.delete_frame(ctx, ed.frame.id);
-        } else if !cancel {
-            self.frame_editor = Some(ed);
-        }
+        save | ui.input(|i| i.modifiers.command && i.key_pressed(egui::Key::Enter))
     }
 
     /// Ctrl+T: a bar in the middle, like the command bar, for a new task.
@@ -1006,7 +941,8 @@ impl App {
         let at = self.editor_spot(ctx, ids::event_editor().with(ed.ev.id), ed.anchor_rect);
         let stored = (!ed.is_new).then(|| self.data.event(ed.ev.id)).flatten();
         let offer = Offer { delete: stored.is_some_and(|e| self.data.locked(e).is_none()), skip: stored.filter(|e| e.task_id.is_none()).map(|e| e.skipped) };
-        let pressed = self.edit_window(ctx, "event_editor", title, at, offer, |app, ui| app.event_form(ui, &mut ed));
+        let focus = ed.focus;
+        let pressed = self.edit_window(ctx, "event_editor", title, at, focus, offer, |app, ui| app.event_form(ui, &mut ed));
         self.finish_event_edit(ctx, ed, pressed);
     }
 
@@ -1027,13 +963,16 @@ impl App {
 
     /// Shows an editor in a window of its own, so the person can work in the
     /// main window and come back to it; where the system can't open one it
-    /// sits inside the main window. Closing it or Esc cancels.
+    /// sits inside the main window. Closing it or Esc cancels. While `focus`
+    /// is set the window asks the system for the keys, so typing goes in.
+    #[allow(clippy::too_many_arguments)]
     fn edit_window(
         &mut self,
         ctx: &egui::Context,
         name: &str,
         title: &str,
         at: egui::Pos2,
+        focus: bool,
         offer: Offer,
         mut form: impl FnMut(&mut App, &mut egui::Ui) -> bool,
     ) -> Pressed {
@@ -1057,6 +996,9 @@ impl App {
             }
             self.own_windows = true;
             let ctx = ui.ctx().clone();
+            if focus {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            }
             // the buttons sit at the foot of the window; the fields scroll above them
             egui::Panel::bottom(ids::editor_buttons())
                 .show_separator_line(false)
@@ -1116,8 +1058,16 @@ impl App {
             ui.add_space(2.0);
         }
         let mut save = false;
+        // a read-only event's name can't take the cursor: its side notes do
+        let (mut to_title, mut to_notes) = first_field(ed.focus, &ed.ev.title);
+        if locked.is_some() {
+            (to_title, to_notes) = (false, ed.focus);
+        }
+        // the place is the first line of the notes ("Where: …"), as servers
+        // get it; a task's block has no place of its own
+        let (mut place, mut rest) = if is_task { (String::new(), ed.ev.notes.clone()) } else { split_place(&ed.ev.notes) };
         ui.add_enabled_ui(locked.is_none(), |ui| {
-            save |= editor_title(ui, &mut ed.ev.title, if is_task { tr("New Task") } else { tr("New Event") }, &mut ed.focus);
+            save |= editor_title(ui, &mut ed.ev.title, if is_task { tr("New Task") } else { tr("New Event") }, &mut to_title);
             let was_all_day = ed.ev.all_day;
             ui.checkbox(&mut ed.ev.all_day, tr("All day"));
             if ed.ev.all_day && !was_all_day {
@@ -1202,6 +1152,34 @@ impl App {
                     }
                 });
                 ui.end_row();
+                if !is_task {
+                    // a task's block takes its list's colour and its task's repeat
+                    editor_label(ui, tr("Colour"), muted);
+                    color_row(ui, self.data.calendar_color(ed.ev.calendar), &mut ed.ev.color);
+                    ui.end_row();
+                    editor_label(ui, tr("Location"), muted);
+                    ui.add(egui::TextEdit::singleline(&mut place).hint_text(tr("Add a place")).desired_width(f32::INFINITY));
+                    ui.end_row();
+                    editor_label(ui, tr("Repeat"), muted);
+                    ui.horizontal(|ui| {
+                        let was = ed.repeat;
+                        egui::ComboBox::from_id_salt("erep").selected_text(ed.repeat.label()).show_ui(ui, |ui| {
+                            for v in Repeat::ALL {
+                                ui.selectable_value(&mut ed.repeat, v, v.label());
+                            }
+                        });
+                        if ed.repeat != was && ed.repeat != Repeat::None {
+                            ed.until_text = ed.repeat.first_until(ed.ev.start.date()).to_string();
+                        }
+                        if ed.repeat != Repeat::None {
+                            ui.label(RichText::new(tr("until")).color(muted));
+                            ui.add(egui::TextEdit::singleline(&mut ed.until_text).hint_text("YYYY-MM-DD").desired_width(100.0));
+                        }
+                    })
+                    .response
+                    .on_hover_text(tr("Saving adds a copy of this event each time, up to the last day"));
+                    ui.end_row();
+                }
         });
         // a task's block shows the whole task, as its own editor does
         if let Some(t) = ed.task.as_mut() {
@@ -1212,7 +1190,8 @@ impl App {
         }
         });
         if locked.is_none() {
-            save |= editor_notes(ui, &mut ed.ev.notes, tr("Notes"));
+            save |= editor_notes(ui, &mut rest, tr("Notes"), &mut to_notes);
+            ed.ev.notes = if is_task { rest } else { join_place(&place, &rest) };
         } else if !ed.ev.notes.trim().is_empty() {
             // its own notes, to read and copy from
             ui.add_space(4.0);
@@ -1222,8 +1201,9 @@ impl App {
         if locked.is_some() || !ed.ev.side_notes.is_empty() {
             ui.add_space(6.0);
             ui.label(RichText::new(tr("Side notes · kept in this app only")).size(theme::size::TINY).color(muted));
-            save |= editor_notes(ui, &mut ed.ev.side_notes, tr("Your own notes on this event"));
+            save |= editor_notes(ui, &mut ed.ev.side_notes, tr("Your own notes on this event"), &mut to_notes);
         }
+        ed.focus = to_title || to_notes;
         save
     }
 
@@ -1237,6 +1217,17 @@ impl App {
         if save && ed.task.as_mut().is_some_and(|t| t.read_text().is_err()) {
             self.say(ctx, tr("The due date should look like 2026-11-30"), false);
             return self.editor = Some(ed);
+        }
+        // a repeat is laid out as copies of the event up to a last day
+        let mut copies: Vec<NaiveDate> = Vec::new();
+        if save && ed.repeat != Repeat::None && ed.ev.task_id.is_none() && self.data.locked(&ed.ev).is_none() {
+            match NaiveDate::parse_from_str(ed.until_text.trim(), "%Y-%m-%d") {
+                Ok(until) => copies = ed.repeat.days_after(ed.ev.start.date(), until),
+                Err(_) => {
+                    self.say(ctx, tr("The last day should look like 2026-11-30"), false);
+                    return self.editor = Some(ed);
+                }
+            }
         }
         if save && self.data.locked(&ed.ev).is_some() {
             // only the side notes are its own here
@@ -1270,6 +1261,18 @@ impl App {
                 }
                 t.notes = ev.notes.clone();
             }
+            let day = ev.start.date();
+            for d in &copies {
+                let mut copy = ev.clone();
+                copy.detach();
+                copy.skipped = false;
+                copy.id = self.data.new_id();
+                (copy.start, copy.end) = (ev.start + (*d - day), ev.end + (*d - day));
+                self.data.events.push(copy);
+            }
+            if !copies.is_empty() {
+                self.say(ctx, trf("Added {} events", &[&copies.len()]), true);
+            }
             if let Some(slot) = self.data.event_mut(id) {
                 slot.take_edits(ev);
             } else {
@@ -1295,7 +1298,8 @@ impl App {
         let Some(mut ed) = self.task_editor.take() else { return };
         self.sync_task_edit(&mut ed);
         let at = self.editor_spot(ctx, ids::task_editor().with(ed.task.id), None);
-        let p = self.edit_window(ctx, "task_editor", tr("Task"), at, Offer { delete: true, skip: None }, |app, ui| app.task_form(ui, &mut ed));
+        let focus = ed.focus;
+        let p = self.edit_window(ctx, "task_editor", tr("Task"), at, focus, Offer { delete: true, skip: None }, |app, ui| app.task_form(ui, &mut ed));
         self.finish_task_edit(ctx, ed, p.save, p.cancel, p.delete);
     }
 
@@ -1322,9 +1326,12 @@ impl App {
 
     /// The task editor's fields; returns whether to save.
     fn task_form(&mut self, ui: &mut egui::Ui, ed: &mut TaskEdit) -> bool {
-        let save = editor_title(ui, &mut ed.task.title, tr("New Task"), &mut ed.focus);
+        let (mut to_title, mut to_notes) = first_field(ed.focus, &ed.task.title);
+        let save = editor_title(ui, &mut ed.task.title, tr("New Task"), &mut to_title);
         self.task_fields(ui, ed);
-        save | editor_notes(ui, &mut ed.task.notes, tr("Notes"))
+        let save = save | editor_notes(ui, &mut ed.task.notes, tr("Notes"), &mut to_notes);
+        ed.focus = to_title || to_notes;
+        save
     }
 
     /// A task's own fields, below its name: in the task editor and in the
@@ -1590,6 +1597,44 @@ mod tests {
         let calendar = app.data.first_own_calendar();
         app.data.events.push(Event { id: 700, title: "Talk".into(), start, end: start + Duration::hours(1), calendar, ..Default::default() });
         app
+    }
+
+    #[test]
+    fn the_place_is_the_first_line_of_the_notes() {
+        assert_eq!(split_place("Where: Room 4 \nBring notes"), ("Room 4 ".into(), "Bring notes".into()));
+        assert_eq!(split_place("Bring notes"), (String::new(), "Bring notes".into()));
+        for notes in ["Where: Room 4\nBring notes", "Where: Room 4", "Bring notes", ""] {
+            let (place, rest) = split_place(notes);
+            assert_eq!(join_place(&place, &rest), notes);
+        }
+        assert_eq!(join_place("", "Bring notes"), "Bring notes");
+    }
+
+    #[test]
+    fn an_editor_opens_on_the_name_when_blank_else_the_notes() {
+        assert_eq!(first_field(true, "  "), (true, false));
+        assert_eq!(first_field(true, "Talk"), (false, true));
+        assert_eq!(first_field(false, ""), (false, false));
+        let mut app = app_with_event();
+        app.edit_event(700);
+        assert!(app.editor.as_ref().unwrap().focus);
+    }
+
+    #[test]
+    fn saving_a_repeat_lays_out_copies_up_to_the_last_day() {
+        let mut app = app_with_event();
+        app.edit_event(700);
+        let mut ed = app.editor.take().unwrap();
+        let day = ed.ev.start.date();
+        ed.repeat = Repeat::Weekly;
+        ed.until_text = (day + Duration::weeks(3)).to_string();
+        ed.ev.color = Some(EVENT_COLORS[0].0);
+        let ctx = egui::Context::default();
+        app.finish_event_edit(&ctx, ed, Pressed { save: true, ..Default::default() });
+        let mut talks: Vec<_> = app.data.events.iter().filter(|e| e.title == "Talk").map(|e| (e.start.date(), e.color)).collect();
+        talks.sort();
+        let want: Vec<_> = (0..4).map(|w| (day + Duration::weeks(w), Some(EVENT_COLORS[0].0))).collect();
+        assert_eq!(talks, want);
     }
 
     #[test]

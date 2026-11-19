@@ -522,8 +522,9 @@ fn a_task_changed_on_the_server_updates_its_blocks() {
 fn a_window_save_keeps_what_sync_brought_in() {
     let open = Event { id: 1, title: "Old".into(), etag: Some("1".into()), href: Some("/a.ics".into()), ..Default::default() };
     let mut live = Event { etag: Some("2".into()), color: Some([1, 2, 3]), ..open.clone() };
-    live.take_edits(Event { title: "New".into(), notes: "n".into(), ..open });
-    assert_eq!((live.title.as_str(), live.notes.as_str(), live.etag.as_deref(), live.color), ("New", "n", Some("2"), Some([1, 2, 3])));
+    // the colour is the window's now; one picked elsewhere reached it already
+    live.take_edits(Event { title: "New".into(), notes: "n".into(), color: Some([4, 5, 6]), ..open });
+    assert_eq!((live.title.as_str(), live.notes.as_str(), live.etag.as_deref(), live.color), ("New", "n", Some("2"), Some([4, 5, 6])));
 
     let open = Task { id: 1, title: "Old".into(), etag: Some("1".into()), ..Default::default() };
     let mut live = Task { etag: Some("2".into()), uid: Some("u".into()), ..open.clone() };
@@ -624,4 +625,14 @@ fn a_skipped_event_leaves_its_time_free() {
     let mut o = d.events[0].clone();
     o.side_notes = "mine".into();
     assert!(o.same_content(&d.events[0]));
+}
+
+#[test]
+fn a_repeat_lists_the_days_after_up_to_the_last() {
+    let d = |m, day| NaiveDate::from_ymd_opt(2026, m, day).unwrap();
+    assert_eq!(Repeat::Weekly.days_after(d(11, 2), d(11, 23)), vec![d(11, 9), d(11, 16), d(11, 23)]);
+    // a monthly one keeps its day where the month has it
+    assert_eq!(Repeat::Monthly.days_after(d(1, 31), d(3, 31)), vec![d(2, 28), d(3, 31)]);
+    assert!(Repeat::None.days_after(d(11, 2), d(12, 2)).is_empty());
+    assert!(Repeat::Daily.days_after(d(11, 2), d(11, 1)).is_empty());
 }

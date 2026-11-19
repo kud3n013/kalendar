@@ -26,6 +26,9 @@ pub struct EventEdit {
     pub base: Option<Event>,
     /// for a task's block, its task, edited in the same window
     pub task: Option<TaskEdit>,
+    /// saving lays the event out again on these days, up to `until_text`
+    pub repeat: Repeat,
+    pub until_text: String,
 }
 
 /// What a block drawn on the calendar becomes.
@@ -154,7 +157,7 @@ impl TaskEdit {
             due_text: t.due.map(|d| d.to_string()).unwrap_or_default(),
             tags_text: t.tags.join(" "),
             earliest_text: t.earliest.map(|d| d.to_string()).unwrap_or_default(),
-            focus: false,
+            focus: true,
             base: t.clone(),
         }
     }
@@ -637,7 +640,7 @@ impl App {
                 frame: f,
                 from_block: None,
                 is_new: false,
-                focus: false,
+                focus: true,
             });
             self.create = None;
             self.close_inline_editor();
@@ -705,6 +708,8 @@ impl App {
             anchor_rect: None,
             base: None,
             task: None,
+            repeat: Repeat::None,
+            until_text: String::new(),
         });
         self.selected = None;
     }
@@ -718,7 +723,7 @@ impl App {
     pub fn edit_event_at(&mut self, id: u64, anchor_rect: Option<egui::Rect>) {
         if let Some(ev) = self.shown_event(id) {
             let task = ev.task_id.and_then(|t| self.data.task(t)).map(TaskEdit::of);
-            self.editor = Some(EventEdit { base: Some(ev.clone()), ev, is_new: false, focus: false, anchor_rect, task });
+            self.editor = Some(EventEdit { base: Some(ev.clone()), ev, is_new: false, focus: true, anchor_rect, task, repeat: Repeat::None, until_text: String::new() });
             self.create = None;
             self.selected = Some(id);
         }
