@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/icon.png" alt="Katlendar icon: a blue cat holding a pocket watch" width="160"></p>
+
 # Katlendar
 
 A fast desktop calendar and task planner for Linux, written in Rust with
