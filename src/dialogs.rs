@@ -342,10 +342,15 @@ impl App {
     }
 
     pub fn ui_dialogs(&mut self, ctx: &egui::Context) {
+        let had_frame = self.frame_editor.is_some();
         self.dlg_create(ctx);
         self.dlg_event(ctx);
         self.dlg_task(ctx);
-        self.dlg_frame(ctx);
+        // a block window that has just turned to Frame was drawn in this pass
+        // already, under the same id; the frame fields come in the next pass
+        if had_frame || self.frame_editor.as_ref().is_none_or(|f| f.from_block.is_none()) {
+            self.dlg_frame(ctx);
+        }
         self.ui_settings_window(ctx);
         self.dlg_command(ctx);
         self.dlg_new_task(ctx);
@@ -573,10 +578,12 @@ impl App {
             let s = (c.ev.start - midnight(day)).num_minutes();
             let e = if c.ev.end.date() == day { (c.ev.end - midnight(day)).num_minutes() } else { 24 * 60 };
             self.open_new_frame(day, s, e, c.ev.calendar, c.ev.title.clone());
-            // the frame opens in a window of its own, beside the same block
+            // the frame's fields take over this window, beside the same block
             if let Some(fe) = &mut self.frame_editor {
                 fe.from_block = Some((c.ev.clone(), c.anchor_rect));
             }
+            // run the pass again at once, so no frame shows without the window
+            ctx.request_discard("the block window turned to Frame");
         } else if save {
             self.snapshot();
             let mut ev = c.ev.clone();
@@ -641,13 +648,29 @@ impl App {
         let at = self.editor_spot(ctx, key, ed.from_block.as_ref().map(|b| b.1));
         let mut new_list: Option<String> = None;
         let focus = ed.focus;
-        let p = self.edit_window(ctx, "frame_editor", title, at, focus, Offer { delete: !ed.is_new, skip: None }, |app, ui| app.frame_form(ui, &mut ed, &mut new_list));
+        let mut back: Option<CreateKind> = None;
+        // a frame being made stays in the flyout beside its block (or the
+        // centre); only one already made gets a window of its own
+        let p = if ed.is_new {
+            self.frame_flyout(ctx, &mut ed, &mut new_list, &mut back)
+        } else {
+            self.edit_window(ctx, "frame_editor", title, at, focus, Offer { delete: true, skip: None }, |app, ui| app.frame_form(ui, &mut ed, &mut new_list))
+        };
         let Pressed { save, cancel, delete, .. } = p;
         if let Some(name) = new_list {
             // a list added from here is taken by the frame at once
             let id = self.new_list(&name);
             ed.frame.filter.lists.push(id);
             self.commit();
+        }
+        if let (Some(kind), Some((mut ev, rect))) = (back, ed.from_block.clone()) {
+            // back to a task or an event, keeping the name and the calendar
+            ev.title = ed.frame.name.clone();
+            ev.calendar = ed.frame.calendar;
+            self.create = Some(crate::CreateEdit::new(ev, kind, rect));
+            // the block window ran earlier in this pass; run it again at once
+            ctx.request_discard("the frame window turned back to a block");
+            return;
         }
         if save {
             let text = ed.until_text.trim();
@@ -684,6 +707,50 @@ impl App {
             return self.frame_editor = Some(ed);
         }
         ctx.data_mut(|d| d.remove_temp::<egui::Pos2>(key));
+    }
+
+    /// A new frame's in-app flyout: in the very window a drawn block was set
+    /// up in, with the Task and Event tabs to go back, else in the centre.
+    fn frame_flyout(&mut self, ctx: &egui::Context, ed: &mut crate::FrameEdit, new_list: &mut Option<String>, back: &mut Option<CreateKind>) -> Pressed {
+        let mut p = Pressed { save: false, cancel: false, delete: false, skip: false };
+        let muted = self.pal.muted;
+        let win_id = if ed.from_block.is_some() { ids::create_popup() } else { ids::frame_editor() };
+        let win = egui::Window::new(tr("New frame")).id(win_id).collapsible(false).resizable(false);
+        let win = match &ed.from_block {
+            Some((_, r)) => win.title_bar(false).fixed_pos(place_beside(ctx, win_id, *r, egui::vec2(400.0, 400.0))),
+            None => win.anchor(Align2::CENTER_CENTER, [0.0, -30.0]),
+        };
+        let at = |m: i64| chrono::NaiveTime::from_num_seconds_from_midnight_opt((m.clamp(0, 24 * 60 - 1) * 60) as u32, 0).unwrap_or_default();
+        let hours = format!("{} – {}", self.data.prefs.fmt_time(at(ed.frame.start_min)), self.data.prefs.fmt_time(at(ed.frame.end_min)));
+        win.show(ctx, |ui| {
+            ui.set_width(380.0);
+            if ed.from_block.is_some() {
+                ui.horizontal(|ui| {
+                    for (kind, label) in [(CreateKind::Task, tr("Task")), (CreateKind::Event, tr("Event")), (CreateKind::Frame, tr("Frame"))] {
+                        if ui.selectable_label(kind == CreateKind::Frame, RichText::new(label).size(theme::size::CAPTION)).clicked() && kind != CreateKind::Frame {
+                            *back = Some(kind);
+                        }
+                    }
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        ui.label(RichText::new(&hours).size(theme::size::SMALL).color(muted));
+                    });
+                });
+            }
+            // the fields fade in and the window grows or shrinks to them
+            let mut morph = morph_begin(ui, 2);
+            p.save = self.frame_form(&mut morph, ed, new_list);
+            morph_end(ui, &morph);
+            ui.add_space(4.0);
+            ui.horizontal(|ui| {
+                if ui.button(RichText::new(tr("Save")).strong()).on_hover_text(tr("Ctrl+Enter")).clicked() {
+                    p.save = true;
+                }
+                if ui.button(tr("Cancel")).on_hover_text(tr("Esc")).clicked() {
+                    p.cancel = true;
+                }
+            });
+        });
+        p
     }
 
     /// The frame editor's fields; returns whether to save.
