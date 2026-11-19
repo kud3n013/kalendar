@@ -1,4 +1,4 @@
-# Kalendar
+# Katlendar
 
 A fast desktop calendar and task planner for Linux, written in Rust with
 [egui](https://github.com/emilk/egui). Everything is local: one binary, one
@@ -44,19 +44,19 @@ Requires a Rust toolchain (edition 2021).
 
 ```
 cargo build --release
-./target/release/kalendar
+./target/release/katlendar
 ```
 
 `cargo test` runs the unit tests.
 
 ## Data and privacy
 
-Kalendar follows the XDG base directories:
+Katlendar follows the XDG base directories:
 
 | What | Where |
 | --- | --- |
-| Events, tasks, calendars | `$XDG_DATA_HOME/kalendar/data.json` (usually `~/.local/share/kalendar/data.json`) |
-| Settings and shortcuts | `$XDG_CONFIG_HOME/kalendar/config.json` (usually `~/.config/kalendar/config.json`) |
+| Events, tasks, calendars | `$XDG_DATA_HOME/katlendar/data.json` (usually `~/.local/share/katlendar/data.json`) |
+| Settings and shortcuts | `$XDG_CONFIG_HOME/katlendar/config.json` (usually `~/.config/katlendar/config.json`) |
 
 Older versions kept settings inside `data.json`; they are read from there
 once and then saved to `config.json`. Nothing is sent anywhere except to the
@@ -67,7 +67,7 @@ Note that subscription links are stored in that file in plain text. Some
 providers (for example Proton Calendar) embed the access key in the link
 itself, so treat the data file as private.
 
-A portable mode is supported: if a folder named `kalendar.home` exists next
+A portable mode is supported: if a folder named `katlendar.home` exists next
 to the binary, data and settings are kept inside it instead.
 
 ## License

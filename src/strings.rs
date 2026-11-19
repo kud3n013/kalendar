@@ -25,10 +25,10 @@ pub type Catalog = &'static [(&'static str, &'static str)];
 /// The translations there are, by language code (`de`, `pt_BR`, …).
 const CATALOGS: &[(&str, Catalog)] = &[];
 
-/// The language asked for: `KALENDAR_LANG`, else the system's
+/// The language asked for: `KATLENDAR_LANG`, else the system's
 /// (`LC_ALL`, `LC_MESSAGES`, `LANG`), as in `de_DE.UTF-8`.
 fn wanted() -> Option<String> {
-    ["KALENDAR_LANG", "LC_ALL", "LC_MESSAGES", "LANG"]
+    ["KATLENDAR_LANG", "LC_ALL", "LC_MESSAGES", "LANG"]
         .iter()
         .find_map(|k| std::env::var(k).ok().filter(|v| !v.is_empty()))
         .map(|v| v.split(['.', '@']).next().unwrap_or("").to_string())

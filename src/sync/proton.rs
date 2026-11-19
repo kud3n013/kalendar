@@ -21,10 +21,10 @@ pub const API: &str = "https://mail.proton.me/api";
 const FULL_EVERY_DAYS: i64 = 30;
 const PAGE: usize = 100;
 
-/// How kalendar names itself to Proton. Proton's servers decide which
-/// names they take; `KALENDAR_PROTON_APPVERSION` sets another.
+/// How katlendar names itself to Proton. Proton's servers decide which
+/// names they take; `KATLENDAR_PROTON_APPVERSION` sets another.
 fn app_version() -> String {
-    std::env::var("KALENDAR_PROTON_APPVERSION").ok().filter(|v| !v.trim().is_empty()).unwrap_or_else(|| "Other".into())
+    std::env::var("KATLENDAR_PROTON_APPVERSION").ok().filter(|v| !v.trim().is_empty()).unwrap_or_else(|| "Other".into())
 }
 
 /// An answer Proton gave that is not a plain yes.
@@ -69,7 +69,7 @@ fn call(base: &str, method: &str, path: &str, who: Option<As>, body: Option<&Val
     let mut req = ureq::http::Request::builder()
         .method(method)
         .uri(format!("{base}{path}"))
-        .header("User-Agent", "kalendar")
+        .header("User-Agent", "katlendar")
         .header("Accept", "application/vnd.protonmail.v1+json")
         .header("x-pm-appversion", app_version());
     if let Some(w) = who {
@@ -196,7 +196,7 @@ pub fn sign_in(base: &str, username: &str, password: &str, code: &str, second: &
             })
         })?;
     } else if two_factor != 0 {
-        return Err(fail(SyncError::Other(tr("This account signs in with a security key only, which kalendar cannot do yet.").into())));
+        return Err(fail(SyncError::Other(tr("This account signs in with a security key only, which katlendar cannot do yet.").into())));
     }
     let mailbox = if auth["PasswordMode"].as_i64() == Some(2) {
         if second.is_empty() {
@@ -260,7 +260,7 @@ fn fold(line: &str) -> String {
 
 fn wrap(lines: &[&String]) -> String {
     let body: Vec<String> = lines.iter().map(|l| fold(l)).collect();
-    format!("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//kalendar//EN\r\nBEGIN:VEVENT\r\n{}\r\nEND:VEVENT\r\nEND:VCALENDAR", body.join("\r\n"))
+    format!("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//katlendar//EN\r\nBEGIN:VEVENT\r\n{}\r\nEND:VEVENT\r\nEND:VCALENDAR", body.join("\r\n"))
 }
 
 /// An event's lines as the three texts Proton takes: signed, encrypted,
@@ -469,7 +469,7 @@ impl Proton {
         let cal = self.calendar_keys(id)?;
         let addresses = self.addresses()?;
         if !cal.signed || cal.member.is_empty() || addresses.get(cal.address).is_none_or(|a| a.keys.is_empty()) {
-            return Err(SyncError::Other(tr("This Proton calendar is shared with you; kalendar can only change calendars of your own for now.").into()));
+            return Err(SyncError::Other(tr("This Proton calendar is shared with you; katlendar can only change calendars of your own for now.").into()));
         }
         Ok((cal, addresses))
     }
@@ -719,11 +719,11 @@ impl Provider for Proton {
         if has("AttendeesEvents") || lines.iter().any(|l| ["ORGANIZER", "ATTENDEE"].contains(&name_of(l).as_str())) {
             return Err(SyncError::Other(tr("Events with guests can't be changed here yet.").into()));
         }
-        // a part kalendar would not write back must not get lost
+        // a part katlendar would not write back must not get lost
         let packet = old["SharedKeyPacket"].as_str().and_then(|p| b64(p).ok());
         let odd = old["CalendarEvents"].as_array().into_iter().flatten().any(|p| p["Type"].as_i64().unwrap_or(0) & 1 != 0);
         let Some(packet) = packet.filter(|_| !odd) else {
-            return Err(SyncError::Other(tr("This event is kept on Proton in a way kalendar can't change yet.").into()));
+            return Err(SyncError::Other(tr("This event is kept on Proton in a way katlendar can't change yet.").into()));
         };
         let (mut event, _) = Self::content(&keys, &addresses[keys.address].keys[0], &lines, Some(&packet))?;
         event["IsOrganizer"] = json!(1);
@@ -1057,7 +1057,7 @@ mod tests {
         let new = Event { id: 5, title: "Lunch, with Ana".into(), start: at(12), end: at(13), notes: "Where: Corner café\nBring the long list of things that we said we would talk about last time".into(), ..Default::default() };
         let res = super::super::push(&mut p, &cal, &[super::super::PushJob::Save(new.clone())], now());
         let PushResult::Saved { href, etag, uid, .. } = &res[0] else { panic!("{:?}", res[0]) };
-        assert!(href.starts_with("cal1/new") && etag.is_some() && uid.ends_with("-kalendar"));
+        assert!(href.starts_with("cal1/new") && etag.is_some() && uid.ends_with("-katlendar"));
         let d = p.pull(&cal, first.state.as_deref(), now()).unwrap();
         assert!(d.full);
         let lunch = d.upserts.iter().find(|e| e.title == "Lunch, with Ana").unwrap();

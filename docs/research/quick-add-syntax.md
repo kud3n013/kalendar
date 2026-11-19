@@ -1,7 +1,7 @@
-# Quick-add syntax in task apps, and presets for kalendar
+# Quick-add syntax in task apps, and presets for katlendar
 
 Research notes, gathered 2026-11-16. Scope: how popular task apps read a typed line in their quick-add
-field (dates, times, durations, repeats, priority, tags, lists), so that kalendar's quick task field
+field (dates, times, durations, repeats, priority, tags, lists), so that katlendar's quick task field
 (`src/model/quick.rs`) can offer **presets** that feel familiar to people coming from those apps.
 
 Citation conventions used below:
@@ -18,9 +18,9 @@ Citation conventions used below:
 
 ---
 
-## 0. What kalendar built from this
+## 0. What katlendar built from this
 
-- Presets in Settings → Quick add: Kalendar (like Morgen, the default), Todoist (`#List`, `@tag`/`%tag`,
+- Presets in Settings → Quick add: Katlendar (like Morgen, the default), Todoist (`#List`, `@tag`/`%tag`,
   `p1`–`p4`), TickTick (`#tag`, `~List`/`^List`, `!high`), Plain words (like Things: no marks), and My own.
   Changing any mark switches to My own.
 - Plain dates, times and repeats are read in every preset (switchable): `tomorrow`, `fri`, `next fri`,
@@ -54,7 +54,7 @@ Citation conventions used below:
   OmniFocus defer/planned, Things "When"), a *deadline* (Todoist `{…}`, Akiflow `<`, Things Deadline,
   OmniFocus due, Motion due/hard deadline), and a *time slot on the calendar* (Akiflow `>`, Morgen
   "include a time", Todoist time + `for` duration).
-- **kalendar's current syntax** (`#tag`, `!high|!m|!l`, `>List`, `30m`/`1h30m`, `.today`/`.tomorrow`/
+- **katlendar's current syntax** (`#tag`, `!high|!m|!l`, `>List`, `30m`/`1h30m`, `.today`/`.tomorrow`/
   `.2026-11-30`) is already close to Morgen's command bar (`>list`, `!`, `.` + due date). Keep it as the
   default and add Todoist, TickTick and Plain presets (§5).
 
@@ -237,7 +237,7 @@ Command-bar guide (https://www.morgen.so/guides/create-events-and-tasks-with-com
   preferences is used (https://www.morgen.so/guides/troubleshooting-the-ai-planner). The changelog notes
   the duration is now displayed when such a tag is present (seen via search summary:
   https://changelog.morgen.so/rescheduling-assistant-rsvp-inbox-more-308543, unverified).
-- kalendar's `>List` and `.date` already match Morgen.
+- katlendar's `>List` and `.date` already match Morgen.
 
 ### 4.4 Akiflow
 
@@ -374,19 +374,19 @@ Smart Type (https://support.any.do/en/articles/8637042-smart-type-natural-langua
 
 ---
 
-## 5. Recommended presets for kalendar
+## 5. Recommended presets for katlendar
 
 Today `parse_quick` reads whitespace-separated words and picks out sigil words; everything else is the
 title. Presets only change **which sigil means what** and **which natural-language extras are on**. They
 map onto the existing `Task` fields (`src/model/task.rs`): `tags`, `priority` (iCal 1/5/9),
 `list`, `duration_min`, `due` (deadline), `earliest` (not before), `repeat`
-(None/Daily/Weekdays/Weekly/Monthly). kalendar has no scheduled-time field, so a typed time can only
+(None/Daily/Weekdays/Weekly/Monthly). katlendar has no scheduled-time field, so a typed time can only
 become a planner hint or be ignored until such a field exists.
 
 All presets share the date/time phrase parser in §5.6. In every preset, a token the parser can't resolve
 stays in the title (as `.foo` does today).
 
-### 5.1 kalendar (default, current syntax, extended)
+### 5.1 katlendar (default, current syntax, extended)
 
 | Kind | Tokens |
 |---|---|
@@ -395,7 +395,7 @@ stays in the title (as `.foo` does today).
 | List | `>List` |
 | Duration | `30m`, `2h`, `1h30m` (as now) |
 | Due (deadline) | `.today`, `.tomorrow`, `.2026-11-30`; extend to `.fri`, `.next-fri`, `.in-3d`, `.3d`, `.30/11`, `.nov30` (hyphen joins multi-word phrases so the token stays one word) |
-| Not before (`earliest`) | `^tomorrow`, `^2026-12-01` (new; `^` unused elsewhere in kalendar) |
+| Not before (`earliest`) | `^tomorrow`, `^2026-12-01` (new; `^` unused elsewhere in katlendar) |
 | Repeat | `*daily`, `*weekdays`, `*weekly`, `*monthly` (new; one word each, matches `Repeat`) |
 | Escape | `\#notatag` keeps `#notatag` in the title; clicking a chip under the field undoes that token |
 
@@ -406,13 +406,13 @@ date words are parsed, so a title like "Report for Friday" is never rewritten.
 
 | Kind | Tokens |
 |---|---|
-| Project → kalendar list | `#List` (Todoist's `/Section` ignored, left in the title) |
+| Project → katlendar list | `#List` (Todoist's `/Section` ignored, left in the title) |
 | Label → tag | `@tag` and `%tag` (Todoist is moving from `@` to `%`) |
-| Priority | `p1` → 1 (high), `p2` → 3 (high band), `p3` → 5 (medium), `p4` → 0 (none). Todoist has four levels and kalendar three bands, so `p2` lands in "High"; alternatively map `p2` → 5 and `p3` → 9 |
+| Priority | `p1` → 1 (high), `p2` → 3 (high band), `p3` → 5 (medium), `p4` → 0 (none). Todoist has four levels and katlendar three bands, so `p2` lands in "High"; alternatively map `p2` → 5 and `p3` → 9 |
 | Date | free natural language anywhere in the line (§5.6): `today`, `tom`, `next fri`, `in 3 days`, `27/1`, `jan 27` |
 | Time | `at 5pm`, `17:00`, `5pm`, `in the morning` |
 | Duration | `for 30m`, `for 1h15m`, `from 9:30 to 10:00`, `9:30-10:00` |
-| Deadline | `{next friday}`; when a deadline is given, the plain date goes to `earliest`, otherwise the plain date is `due` (Todoist's plain date is a plan date, but kalendar has only `due` as the primary date) |
+| Deadline | `{next friday}`; when a deadline is given, the plain date goes to `earliest`, otherwise the plain date is `due` (Todoist's plain date is a plan date, but katlendar has only `due` as the primary date) |
 | Repeat | `every day`/`daily`, `every weekday`/`every workday`, `every week`/`weekly`, `every month`/`monthly`; other `every …` forms stay in the title until `Repeat` grows |
 | Not parsed | `!reminder`, `+assignee`: left in the title |
 | Escape | click the highlighted phrase (chip) to return it to the title, as in Todoist |
@@ -423,9 +423,9 @@ date words are parsed, so a title like "Report for Friday" is never rewritten.
 |---|---|
 | Tag | `#tag` |
 | List | `~List` (TickTick's documented Google Calendar shortcut); also accept `^List` (third-party, see §4.2) |
-| Priority | `!high`/`!medium`/`!low`/`!none`; numeric `!1` high, `!2` medium, `!3` low (kalendar's choice; TickTick's own numeric meaning is unverified) |
+| Priority | `!high`/`!medium`/`!low`/`!none`; numeric `!1` high, `!2` medium, `!3` low (katlendar's choice; TickTick's own numeric meaning is unverified) |
 | Date + time | free natural language (§5.6), ambiguous → nearest future (TickTick rule) |
-| Duration | none in TickTick; keep kalendar's bare `30m`/`1h30m` |
+| Duration | none in TickTick; keep katlendar's bare `30m`/`1h30m` |
 | Repeat | `daily`, `every day`, `every weekday`, `weekly`, `every week`, `monthly`, `every month` |
 | Option | "Remove date text from title" toggle, matching TickTick's setting (default on) |
 | Escape | Delete/Backspace right after a recognised phrase, or click its chip |
@@ -482,7 +482,7 @@ Drawn from Todoist, ClickUp, Things, OmniFocus, Microsoft To Do and Any.do (sour
 - `30m`, `45min`, `1h`, `1.5h`, `1h30m`, `90m`, `for 30m`, `for 1h15m`, `~30m` (Sunsama), `=30m`
   (Akiflow), `[30m]` (Morgen), ranges `9:30-10:00` and `from 21:00 to 22:00` (Todoist).
 
-**Repeats** (limited to kalendar's `Repeat` today)
+**Repeats** (limited to katlendar's `Repeat` today)
 
 - `daily`/`every day`, `every weekday`/`every workday`/`weekdays`, `weekly`/`every week`,
   `monthly`/`every month`. Later: `every mon`, `every other week`, `every 2 weeks`, `every!` (from
@@ -507,11 +507,11 @@ Drawn from Todoist, ClickUp, Things, OmniFocus, Microsoft To Do and Any.do (sour
 
 1. TickTick's in-app symbols for list and priority are documented only for Google Calendar titles; test
    `~`, `^` and `!` in the quick add bar before shipping that preset as "TickTick".
-2. Todoist's deadline/recurrence pages contradict each other (§4.1); irrelevant for kalendar unless
+2. Todoist's deadline/recurrence pages contradict each other (§4.1); irrelevant for katlendar unless
    `{…}` on a repeating task needs a rule.
 3. ClickUp and Motion have no title grammar, so no preset is named after them. Things gets the
    "Things-ish / Plain" preset only by analogy.
-4. kalendar has no scheduled time on tasks. Todoist, Morgen and Akiflow all let a typed time put the
+4. katlendar has no scheduled time on tasks. Todoist, Morgen and Akiflow all let a typed time put the
    task on the calendar; adding a `scheduled: Option<NaiveDateTime>` would be a model change.
-5. `m` = minutes vs months: ClickUp's date fields read `m` as months; kalendar uses `m` as minutes in
+5. `m` = minutes vs months: ClickUp's date fields read `m` as months; katlendar uses `m` as minutes in
    durations. Keep `m` = minutes and use `mo` for months everywhere.

@@ -165,7 +165,7 @@ impl CalDav {
             if !safe_for_password(&url) {
                 return Err(SyncError::Other(tr("The server address must start with https://, so the password stays private.").into()));
             }
-            let mut req = ureq::http::Request::builder().method(method).uri(&url).header("User-Agent", "kalendar");
+            let mut req = ureq::http::Request::builder().method(method).uri(&url).header("User-Agent", "katlendar");
             if same_site(&self.server, &url) {
                 let auth = match &self.bearer {
                     Some(token) => format!("Bearer {token}"),
@@ -501,14 +501,14 @@ mod tests {
         assert!(child(prop(rs[0], "resourcetype").unwrap(), "calendar").is_none());
     }
 
-    /// Against a real server. Set KALENDAR_TEST_CALDAV to its address
-    /// (a Radicale on this computer will do), and KALENDAR_TEST_USER and
-    /// KALENDAR_TEST_PASS; without them the test does nothing.
+    /// Against a real server. Set KATLENDAR_TEST_CALDAV to its address
+    /// (a Radicale on this computer will do), and KATLENDAR_TEST_USER and
+    /// KATLENDAR_TEST_PASS; without them the test does nothing.
     #[test]
     fn against_a_server() {
-        let Ok(server) = std::env::var("KALENDAR_TEST_CALDAV") else { return };
-        let user = std::env::var("KALENDAR_TEST_USER").unwrap_or_else(|_| "test".into());
-        let pass = std::env::var("KALENDAR_TEST_PASS").unwrap_or_else(|_| "test".into());
+        let Ok(server) = std::env::var("KATLENDAR_TEST_CALDAV") else { return };
+        let user = std::env::var("KATLENDAR_TEST_USER").unwrap_or_else(|_| "test".into());
+        let pass = std::env::var("KATLENDAR_TEST_PASS").unwrap_or_else(|_| "test".into());
         let now = NaiveDate::from_ymd_opt(2026, 11, 13).unwrap().and_hms_opt(12, 0, 0).unwrap();
         let mut dav = CalDav::new(&server, &user, &pass, None);
 
@@ -521,12 +521,12 @@ mod tests {
         assert!(home.ends_with(&format!("/{user}/")), "{home}");
 
         // a fresh calendar with one single and one repeating event
-        let name = format!("kalendar-test-{}", std::process::id());
+        let name = format!("katlendar-test-{}", std::process::id());
         let cal_url = format!("{home}{name}/");
         let mk = format!("<c:mkcalendar {NS}><d:set><d:prop><d:displayname>Test &amp; Co</d:displayname><ic:calendar-color>#ff8f1eff</ic:calendar-color><c:supported-calendar-component-set><c:comp name=\"VEVENT\"/></c:supported-calendar-component-set></d:prop></d:set></c:mkcalendar>");
         dav.ask("MKCALENDAR", &cal_url, None, &mk).expect("mkcalendar");
         let event = |uid: &str, title: &str, extra: &str| {
-            format!("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//kalendar//test\r\nBEGIN:VEVENT\r\nUID:{uid}\r\nDTSTAMP:20261101T000000Z\r\nSUMMARY:{title}\r\nDTSTART:20261116T150000Z\r\nDTEND:20261116T160000Z\r\n{extra}END:VEVENT\r\nEND:VCALENDAR\r\n")
+            format!("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//katlendar//test\r\nBEGIN:VEVENT\r\nUID:{uid}\r\nDTSTAMP:20261101T000000Z\r\nSUMMARY:{title}\r\nDTSTART:20261116T150000Z\r\nDTEND:20261116T160000Z\r\n{extra}END:VEVENT\r\nEND:VCALENDAR\r\n")
         };
         dav.ask("PUT", &format!("{cal_url}one.ics"), None, &event("one", "One", "")).expect("put");
         dav.ask("PUT", &format!("{cal_url}many.ics"), None, &event("many", "Many", "RRULE:FREQ=DAILY;COUNT=3\r\n")).expect("put");

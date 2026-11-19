@@ -1039,7 +1039,7 @@ impl App {
     ) -> Pressed {
         let builder = egui::ViewportBuilder::default()
             .with_title(title)
-            .with_app_id("kalendar")
+            .with_app_id("katlendar")
             .with_position(at)
             .with_inner_size(EDITOR_SIZE)
             .with_min_inner_size([380.0, 300.0])

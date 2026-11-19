@@ -488,7 +488,7 @@ impl App {
         app
     }
 
-    /// The current time; KALENDAR_NOW=2026-11-11T10:30 overrides it for testing.
+    /// The current time; KATLENDAR_NOW=2026-11-11T10:30 overrides it for testing.
     pub fn now() -> NaiveDateTime {
         if let Some(t) = testaid::get().now {
             return t;

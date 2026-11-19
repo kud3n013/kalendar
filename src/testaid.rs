@@ -2,9 +2,9 @@
 //! (`--screenshot`) or a manual check. They are read once, at the first
 //! call to [`get`], so the list below is every one there is.
 //!
-//! Not here, because they are not test aids: `KALENDAR_PASS` (the password
-//! for `--check-caldav`), `KALENDAR_PROTON_APPVERSION` (a user override) and
-//! the `KALENDAR_TEST_*` server addresses of the integration tests.
+//! Not here, because they are not test aids: `KATLENDAR_PASS` (the password
+//! for `--check-caldav`), `KATLENDAR_PROTON_APPVERSION` (a user override) and
+//! the `KATLENDAR_TEST_*` server addresses of the integration tests.
 //!
 //! Marked *(picture)* below: only honoured when a screenshot is being taken.
 
@@ -23,59 +23,59 @@ pub enum Create {
 
 #[derive(Debug, Default)]
 pub struct Aids {
-    /// `KALENDAR_NOW=2026-11-11T10:30`: the current time
+    /// `KATLENDAR_NOW=2026-11-11T10:30`: the current time
     pub now: Option<NaiveDateTime>,
-    /// `KALENDAR_WINDOW=760x480`: the window size *(picture)*
+    /// `KATLENDAR_WINDOW=760x480`: the window size *(picture)*
     pub window: Option<egui::Vec2>,
-    /// `KALENDAR_THEME=light|dark` *(picture)*
+    /// `KATLENDAR_THEME=light|dark` *(picture)*
     pub theme: Option<String>,
-    /// `KALENDAR_FONT=<family>`: a font other than the system's
+    /// `KATLENDAR_FONT=<family>`: a font other than the system's
     pub font: Option<String>,
-    /// `KALENDAR_SLOT=<minutes>`: the grid slot length *(picture)*
+    /// `KATLENDAR_SLOT=<minutes>`: the grid slot length *(picture)*
     pub slot: Option<i64>,
-    /// `KALENDAR_PANEL_RIGHT`: the task panel on the right
+    /// `KATLENDAR_PANEL_RIGHT`: the task panel on the right
     pub panel_right: bool,
-    /// `KALENDAR_NARROW`: as if the window were narrow *(picture)*
+    /// `KATLENDAR_NARROW`: as if the window were narrow *(picture)*
     pub narrow: bool,
-    /// `KALENDAR_DAYS=3`: show that many days *(picture)*
+    /// `KATLENDAR_DAYS=3`: show that many days *(picture)*
     pub days: Option<u8>,
-    /// `KALENDAR_NAV=<n>`: turn that many pages just before the picture *(picture)*
+    /// `KATLENDAR_NAV=<n>`: turn that many pages just before the picture *(picture)*
     pub nav: Option<i64>,
-    /// `KALENDAR_NAV_DAYS=<n>`: move that many single days, as the day keys do *(picture)*
+    /// `KATLENDAR_NAV_DAYS=<n>`: move that many single days, as the day keys do *(picture)*
     pub nav_days: Option<i64>,
-    /// `KALENDAR_DEMO_ACCOUNT`: a signed-in account with calendars and lists *(picture)*
+    /// `KATLENDAR_DEMO_ACCOUNT`: a signed-in account with calendars and lists *(picture)*
     pub demo_account: bool,
-    /// `KALENDAR_GREY`: scheduled tasks are done and every frame skips tomorrow
+    /// `KATLENDAR_GREY`: scheduled tasks are done and every frame skips tomorrow
     pub grey: bool,
-    /// `KALENDAR_SHOW_MENU=<name>`: a right-click menu, shown in a window
+    /// `KATLENDAR_SHOW_MENU=<name>`: a right-click menu, shown in a window
     pub show_menu: Option<String>,
-    /// `KALENDAR_SHOW_SETTINGS=<page>`: the settings fill the window
+    /// `KATLENDAR_SHOW_SETTINGS=<page>`: the settings fill the window
     pub show_settings: Option<String>,
-    /// `KALENDAR_SETTINGS_QUERY=<text>`: typed into the settings search
+    /// `KATLENDAR_SETTINGS_QUERY=<text>`: typed into the settings search
     pub settings_query: Option<String>,
-    /// `KALENDAR_SHORTCUT_QUERY=<text>`: typed into the shortcut search
+    /// `KATLENDAR_SHORTCUT_QUERY=<text>`: typed into the shortcut search
     pub shortcut_query: Option<String>,
-    /// `KALENDAR_SUB_KIND=<n>`: which kind of integration is being set up
+    /// `KATLENDAR_SUB_KIND=<n>`: which kind of integration is being set up
     pub sub_kind: Option<u8>,
-    /// `KALENDAR_SUB_URL=<url>`: a subscription address being typed
+    /// `KATLENDAR_SUB_URL=<url>`: a subscription address being typed
     pub sub_url: Option<String>,
-    /// `KALENDAR_SHOW_CREATE[=frame]`: the new block window is open
+    /// `KATLENDAR_SHOW_CREATE[=frame]`: the new block window is open
     pub show_create: Option<Create>,
-    /// `KALENDAR_CREATE_AT=15`: its block starts at that hour (default ten)
+    /// `KATLENDAR_CREATE_AT=15`: its block starts at that hour (default ten)
     pub create_at: u32,
-    /// `KALENDAR_SHOW_FRAME`: the first frame's editor is open *(picture)*
+    /// `KATLENDAR_SHOW_FRAME`: the first frame's editor is open *(picture)*
     pub show_frame: bool,
-    /// `KALENDAR_SHOW_EDIT=<n>`: the editor of the nth block is open *(picture)*
+    /// `KATLENDAR_SHOW_EDIT=<n>`: the editor of the nth block is open *(picture)*
     pub show_edit: Option<usize>,
-    /// `KALENDAR_SHOW_NEWTASK=<list>`: a new task opened as that list's + does
+    /// `KATLENDAR_SHOW_NEWTASK=<list>`: a new task opened as that list's + does
     pub show_newtask: Option<String>,
-    /// `KALENDAR_LIST_EDIT=<list>`: that list has an icon and its editor is open
+    /// `KATLENDAR_LIST_EDIT=<list>`: that list has an icon and its editor is open
     pub list_edit: Option<String>,
-    /// `KALENDAR_NEW_LIST`: the new-list window open, as the + button opens it *(picture)*
+    /// `KATLENDAR_NEW_LIST`: the new-list window open, as the + button opens it *(picture)*
     pub new_list: bool,
-    /// `KALENDAR_DRAG="title@x,y"`: that task held as if dragged, pointer at x,y *(picture)*
+    /// `KATLENDAR_DRAG="title@x,y"`: that task held as if dragged, pointer at x,y *(picture)*
     pub drag: Option<(String, egui::Pos2)>,
-    /// `KALENDAR_MORPH=<0..1>`: the task panel held that far between the rail and open *(picture)*
+    /// `KATLENDAR_MORPH=<0..1>`: the task panel held that far between the rail and open *(picture)*
     pub morph: Option<f32>,
 }
 
@@ -86,7 +86,7 @@ pub fn get() -> &'static Aids {
 }
 
 fn read(var: impl Fn(&str) -> Option<String>) -> Aids {
-    let set = |k: &str| var(&format!("KALENDAR_{k}"));
+    let set = |k: &str| var(&format!("KATLENDAR_{k}"));
     let on = |k: &str| set(k).is_some();
     let num = |k: &str| set(k).and_then(|v| v.trim().parse::<i64>().ok());
     Aids {
@@ -145,11 +145,11 @@ mod tests {
     #[test]
     fn values_are_parsed() {
         let a = with(&[
-            ("KALENDAR_WINDOW", "760x480"),
-            ("KALENDAR_DRAG", "Write a@12, 34"),
-            ("KALENDAR_SHOW_CREATE", "frame"),
-            ("KALENDAR_CREATE_AT", "23"),
-            ("KALENDAR_NOW", "2026-11-11T10:30"),
+            ("KATLENDAR_WINDOW", "760x480"),
+            ("KATLENDAR_DRAG", "Write a@12, 34"),
+            ("KATLENDAR_SHOW_CREATE", "frame"),
+            ("KATLENDAR_CREATE_AT", "23"),
+            ("KATLENDAR_NOW", "2026-11-11T10:30"),
         ]);
         assert_eq!(a.window, Some(egui::vec2(760.0, 480.0)));
         assert_eq!(a.drag, Some(("Write a".into(), egui::pos2(12.0, 34.0))));

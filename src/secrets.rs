@@ -6,7 +6,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-const SERVICE: &str = "kalendar";
+const SERVICE: &str = "katlendar";
+/// The name secrets were kept under before the app was renamed.
+const OLD_SERVICE: &str = "kalendar";
 
 /// The name a synced account's password is kept under.
 pub fn account_key(id: u64) -> String {
@@ -92,6 +94,9 @@ pub fn get(key: &str, allow_file: bool) -> Result<String, String> {
     match entry(key).and_then(|e| e.get_password().map_err(|e| e.to_string())) {
         Ok(s) => Ok(s),
         Err(e) => {
+            if let Some(s) = adopt_old(key) {
+                return Ok(s);
+            }
             if allow_file {
                 if let Some(s) = read_file(&file_path()).remove(key) {
                     return Ok(s);
@@ -102,9 +107,23 @@ pub fn get(key: &str, allow_file: bool) -> Result<String, String> {
     }
 }
 
+/// A secret kept while the app was still called kalendar, moved under the
+/// new name so the next lookup finds it there.
+fn adopt_old(key: &str) -> Option<String> {
+    let old = keyring_core::Entry::new(OLD_SERVICE, key).ok()?;
+    let s = old.get_password().ok()?;
+    if entry(key).and_then(|e| e.set_password(&s).map_err(|e| e.to_string())).is_ok() {
+        let _ = old.delete_credential();
+    }
+    Some(s)
+}
+
 /// Forgets a secret everywhere.
 pub fn delete(key: &str) {
     if let Ok(e) = entry(key) {
+        let _ = e.delete_credential();
+    }
+    if let Ok(e) = keyring_core::Entry::new(OLD_SERVICE, key) {
         let _ = e.delete_credential();
     }
     let path = file_path();
@@ -132,7 +151,7 @@ mod tests {
     #[test]
     fn password_file_is_private_and_goes_when_empty() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = std::env::temp_dir().join(format!("kalendar-secrets-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("katlendar-secrets-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let path = dir.join("secrets.json");
         file_set(&path, &account_key(7), Some("first")).unwrap();

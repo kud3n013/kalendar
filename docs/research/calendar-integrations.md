@@ -1,6 +1,6 @@
-# Calendar service integrations for kalendar
+# Calendar service integrations for katlendar
 
-Research notes, gathered 2026-11-14. Scope: how kalendar (a Rust/egui desktop calendar,
+Research notes, gathered 2026-11-14. Scope: how katlendar (a Rust/egui desktop calendar,
 GPL-2.0) could do **two-way** sync with the popular hosted calendars, in place of today's read-only
 ICS feed import.
 
@@ -41,7 +41,7 @@ Citation conventions used below:
 
 ### Phased plan
 
-| Phase | What | kalendar files touched |
+| Phase | What | katlendar files touched |
 |---|---|---|
 | 0. Groundwork | Stable calendar ids instead of `calendar: usize`. Add `uid`, `recurrence_id`, `href`, `etag`, `raw_ics` to `Event`. Upsert by (calendar, uid, recurrence-id) instead of `replace_remote`. Keep UID in the parser. Add a `SyncMsg` enum on the existing channel. | `src/model.rs`, `src/ics.rs`, `src/main.rs`, `src/views.rs`/`src/panel.rs`/`src/dialogs.rs` (index → id call sites) |
 | 1. Parser hardening | VTIMEZONE handling or a TZID alias table, a Windows→IANA zone map, `BYMONTH`/`BYSETPOS`/`WKST`. Write-side ICS serialisation (VEVENT emit with UID/DTSTAMP/SEQUENCE). | `src/ics.rs` (or replace its expander with the `rrule` crate) |
@@ -118,7 +118,7 @@ Proton remains on the existing ICS path and needs no new code.
   https://developers.google.com/workspace/tasks/reference/rest).
   - The `due` field is date-only: "the time portion of the timestamp is discarded"
     (https://developers.google.com/workspace/tasks/reference/rest/v1/tasks).
-  - That fits kalendar's `Task.due: Option<NaiveDate>`, but not `duration_min` or scheduling. Those would have to
+  - That fits katlendar's `Task.due: Option<NaiveDate>`, but not `duration_min` or scheduling. Those would have to
     live locally or in `notes`.
 
 **Auth** (https://developers.google.com/identity/protocols/oauth2/native-app)
@@ -161,7 +161,7 @@ Proton remains on the existing ICS path and needs no new code.
 - The first full `events.list` returns `nextSyncToken` on the **last page** only. Later calls pass `syncToken`.
 - **HTTP 410 Gone** means the token was invalidated: wipe the calendar's store and do a full sync.
 - `timeMin`/`timeMax` (and some other filters) are incompatible with `syncToken` and return 400.
-  - So the first sync cannot be windowed. The kalendar window (`PAST_DAYS=60`, `AHEAD_DAYS=400` in
+  - So the first sync cannot be windowed. The katlendar window (`PAST_DAYS=60`, `AHEAD_DAYS=400` in
     `src/ics.rs`) has to be applied locally.
 - Deleted events come back with `status: "cancelled"`.
 - Push notifications need a public HTTPS endpoint with a valid certificate
@@ -172,7 +172,7 @@ Proton remains on the existing ICS path and needs no new code.
 - 10,000 queries/min per project and 600/min per user per project.
 - Errors come back as `403 usageLimits` or `429`. Use exponential backoff, capped at roughly 32–64 s.
 - The page announces that billing may begin later in 2026 for projects above 1,000,000 requests/day, with
-  90 days' notice. A shared kalendar client ID is far below that.
+  90 days' notice. A shared katlendar client ID is far below that.
 
 **Recurrence and time zones**
 
@@ -197,7 +197,7 @@ Proton remains on the existing ICS path and needs no new code.
   - Exchange Online / Outlook.com do not offer CalDAV for third-party sync.
   - Inference only: the protocol list on the basic-auth deprecation page above names EAS, POP, IMAP, EWS,
     MAPI, OAB and Autodiscover, and never CalDAV. **Unverified** as a positive statement.
-  - Outlook can *publish* an ICS link, which kalendar already reads.
+  - Outlook can *publish* an ICS link, which katlendar already reads.
 
 **Auth**
 
@@ -226,7 +226,7 @@ Proton remains on the existing ICS path and needs no new code.
 - Apps registered from a personal Microsoft account cannot be verified.
 - Since November 2020, tenants with risk-based step-up consent stop end users consenting to **new unverified
   multi-tenant apps** that request more than basic permissions.
-  - In practice, many work/school tenants will need an admin to approve kalendar.
+  - In practice, many work/school tenants will need an admin to approve katlendar.
   - Personal Outlook.com accounts are not affected by tenant consent policy (unverified detail).
 
 **Incremental sync**
@@ -238,7 +238,7 @@ Proton remains on the existing ICS path and needs no new code.
   - `Prefer: odata.maxpagesize=N` controls page size.
 - `$select`, `$filter`, `$expand`, `$orderby` and `$search` are **not** supported on event delta.
 - Deletions arrive as items with `@removed: {"reason": "deleted"}`.
-- `calendarView` returns **expanded occurrences and exceptions** inside the window. kalendar does not need to
+- `calendarView` returns **expanded occurrences and exceptions** inside the window. katlendar does not need to
   expand Graph recurrences on the read path.
 - A window-less `events/delta` exists only in **beta**.
 - Permissions: delegated `Calendars.Read`/`Calendars.ReadWrite`, supported for personal Microsoft accounts.
@@ -284,7 +284,7 @@ Graph does not use RRULE. `patternedRecurrence = { pattern, range }`.
     (the delta docs mention the Prefer header).
   - Event `originalStartTimeZone` and recurrence `recurrenceTimeZone` are often **Windows zone names**, e.g.
     "W. Europe Standard Time" (unverified for current behaviour).
-  - kalendar's parser resolves TZID only through `chrono_tz::Tz` parsing, so it would treat them as floating.
+  - katlendar's parser resolves TZID only through `chrono_tz::Tz` parsing, so it would treat them as floating.
   - Ship a Windows→IANA table from CLDR `windowsZones.xml`
     (https://github.com/unicode-org/cldr/blob/main/common/supplemental/windowsZones.xml).
   - That table also fixes Outlook-published ICS feeds, which use the same names in TZID (unverified).
@@ -297,16 +297,16 @@ Graph does not use RRULE. `patternedRecurrence = { pattern, range }`.
 - **Auth:** Apple ID + **app-specific password** (https://support.apple.com/en-us/102654).
   - Requires two-factor authentication on the Apple ID.
   - Up to 25 active app-specific passwords.
-  - All of them are revoked when the main Apple ID password changes. kalendar must handle 401 by prompting for a new one.
+  - All of them are revoked when the main Apple ID password changes. katlendar must handle 401 by prompting for a new one.
 - **Registration:** none.
 - **Incremental sync:** ctag/etag works; RFC 6578 sync-collection support on iCloud is likely, but unverified.
 - **Quirks (unverified):**
   - iCloud emits VTIMEZONE blocks with Apple/Olson TZIDs, which are fine for chrono-tz.
-- **Reminders:** not reachable from kalendar; see §4.3.1.
+- **Reminders:** not reachable from katlendar; see §4.3.1.
 
 #### 4.3.1 Apple Reminders (checked 2026-11-14)
 
-**Conclusion:** kalendar on Linux cannot sync Apple Reminders. iCloud **events** over CalDAV are unaffected.
+**Conclusion:** katlendar on Linux cannot sync Apple Reminders. iCloud **events** over CalDAV are unaffected.
 Only VTODO lists that never went through the Reminders upgrade, or were created over CalDAV by another client,
 remain reachable. Apple's Reminders app does not show those lists.
 
@@ -339,14 +339,14 @@ What the sources say:
 - **Unofficial access:** the only other routes are undocumented iCloud web endpoints used by iCloud.com. They are
   reverse-engineered and fragile, and out of scope for this project.
 
-What kalendar can offer instead:
+What katlendar can offer instead:
 
 - iCloud calendars (events) via CalDAV, as in Phase 2.
 - CalDAV task sync (Phase 6) with servers that keep VTODO on CalDAV: Nextcloud, Fastmail, Radicale and
   Baïkal. Fastmail and Nextcloud were not re-verified in this pass.
 - **Setup hint for the settings page:** iPhone/Mac users who want shared tasks can add one of those CalDAV accounts
   to Apple Reminders on their device, under Settings › Reminders › Accounts. Those lists are then on CalDAV and
-  visible to kalendar. Apple's page confirms that reminders in CalDAV accounts aren't changed by the upgrade.
+  visible to katlendar. Apple's page confirms that reminders in CalDAV accounts aren't changed by the upgrade.
   The exact settings path is unverified.
 
 ### 4.4 Proton Calendar
@@ -420,8 +420,8 @@ What kalendar can offer instead:
 - **Yahoo Calendar:** CalDAV at `caldav.calendar.yahoo.com` with an app password (**unverified**, from memory).
   Works through the generic path if the URL is accepted.
 - **Zoho Calendar:** offers CalDAV and its own REST API with OAuth (**unverified**). Use the generic path.
-- **Thunderbird-style "local" calendars:** kalendar already stores its own calendars locally in
-  `$XDG_DATA_HOME/kalendar/data.json`.
+- **Thunderbird-style "local" calendars:** katlendar already stores its own calendars locally in
+  `$XDG_DATA_HOME/katlendar/data.json`.
   - A useful extra is import/export of a plain `.ics` file (or a vdir, one `.ics` per event, the vdirsyncer
     layout), which then gives interop with khal/vdirsyncer users for free.
   - khal reads vdirs and leaves network sync to vdirsyncer (unverified, from memory).
@@ -439,10 +439,10 @@ What kalendar can offer instead:
 | vdirsyncer | Makes **every user** create their own Google Cloud project and "Desktop application" OAuth client, because "it is against Google's Terms of Service to hardcode those into opensource software". | https://vdirsyncer.pimutils.org/en/stable/config.html |
 | khal | No network code; relies on vdirsyncer. | unverified |
 
-**Recommendation for kalendar**
+**Recommendation for katlendar**
 
-1. **Source tree:** no IDs or secrets. Read them with `option_env!("KALENDAR_GOOGLE_CLIENT_ID")`,
-   `option_env!("KALENDAR_GOOGLE_CLIENT_SECRET")` and `option_env!("KALENDAR_MS_CLIENT_ID")` at compile time.
+1. **Source tree:** no IDs or secrets. Read them with `option_env!("KATLENDAR_GOOGLE_CLIENT_ID")`,
+   `option_env!("KATLENDAR_GOOGLE_CLIENT_SECRET")` and `option_env!("KATLENDAR_MS_CLIENT_ID")` at compile time.
    - Release CI injects them from repository secrets.
    - Distro packagers can inject their own.
    - Source builds without them simply hide the Google/Microsoft buttons. This satisfies "no secrets committed".
@@ -463,11 +463,11 @@ Constraints from the codebase:
 | Crate | Latest (date) | Licence | Model | Verdict |
 |---|---|---|---|---|
 | `oauth2` | 5.0.0 (2025-01-21) | MIT/Apache | Sync **and** async; pluggable HTTP client | **Use.** Has `PkceCodeChallenge::new_random_sha256()`, an optional client secret (`BasicClient::new(ClientId)`), and device flow. Its optional `ureq` feature targets ureq **2**, so implement its `SyncHttpClient` (a closure `Fn(HttpRequest) -> Result<HttpResponse, E>`) over the existing ureq 3. Disable redirects on that client, as its docs advise (SSRF). |
-| `google-calendar3` | 7.0.0+20251214 (2026-01-01) | MIT | async, hyper/tokio, yup-oauth2 | Skip. It brings tokio, and the hand-written REST calls kalendar needs are few (events.list/insert/patch/delete, calendarList.list). |
+| `google-calendar3` | 7.0.0+20251214 (2026-01-01) | MIT | async, hyper/tokio, yup-oauth2 | Skip. It brings tokio, and the hand-written REST calls katlendar needs are few (events.list/insert/patch/delete, calendarList.list). |
 | `graph-rs-sdk` | 3.0.1 (2025-04-20) | MIT | async, reqwest | Skip, for the same reason. |
 | `libdav` | 0.11.2 (2026-10-30) | ISC | async, tokio/hyper 1/tower | The best CalDAV client library, with RFC 6764 `bootstrap_via_service_discovery`. It is async, so it needs a tokio runtime on the worker thread (a `current_thread` runtime per account is feasible). Its docs point to `vstorage` for sync logic. |
 | `vstorage` | 0.12.0 (2026-10-30) | **EUPL-1.2** | async | Licence compatibility with GPL-2.0-only needs checking: EUPL lists GPL-2.0 as a compatible licence, but the direction matters, so this is unverified. Probably skip. |
-| `minicaldav` | 0.8.0 (2023-07-02) | **GPL-3.0-or-later** | blocking, ureq 2 | **Incompatible** if kalendar is GPL-2.0-*only*; check the LICENSE header. It also describes itself as work-in-progress and "not correct". Skip. |
+| `minicaldav` | 0.8.0 (2023-07-02) | **GPL-3.0-or-later** | blocking, ureq 2 | **Incompatible** if katlendar is GPL-2.0-*only*; check the LICENSE header. It also describes itself as work-in-progress and "not correct". Skip. |
 | `kitchen-fridge` | 0.4.0 (2022-01-19) | MIT | async reqwest | Stale. Skip. |
 | `fast-dav-rs` | 0.19.0 (2026-10-04) | LGPL-3.0 | async hyper | Same licence question. Skip. |
 | `quick-xml` | 0.42.0 (2026-08-22) | MIT | sync | **Use** for WebDAV multistatus parsing (serde or streaming). |
@@ -638,12 +638,12 @@ RRULE ↔ `patternedRecurrence` mapping in §4.2, and must refuse rules Graph ca
 - **Never** put passwords, app passwords, refresh tokens, or Proton share URLs in `data.json` or `config.json`.
 - Use `keyring-core` + `zbus-secret-service-keyring-store`. That means GNOME Keyring or KWallet's Secret Service
   interface; KWallet ≥ 5.97 provides one (unverified version number).
-  - Entry: service `"kalendar"`, user `"account:<id>"`.
+  - Entry: service `"katlendar"`, user `"account:<id>"`.
   - Value: JSON `{ "kind": "app_password", ... }` or `{ "refresh_token": ..., "scope": ... }`.
 - Access tokens stay in memory only.
 - When no Secret Service is running (bare window managers, some headless setups), fall back in this order:
   1. refuse and explain how to start a keyring, or
-  2. opt-in plaintext file `$XDG_DATA_HOME/kalendar/secrets.json` with mode `0600`, clearly labelled.
+  2. opt-in plaintext file `$XDG_DATA_HOME/katlendar/secrets.json` with mode `0600`, clearly labelled.
   - Never fall back silently.
 - For Flatpak, `oo7`'s portal backend is the supported route (async).
 - Logout:
@@ -669,7 +669,7 @@ pre-registering a port.
 ## 8. Risks and open questions
 
 1. **Google verification.**
-   - Is anyone willing to own a Google Cloud project and a public privacy-policy page for kalendar, and go through
+   - Is anyone willing to own a Google Cloud project and a public privacy-policy page for katlendar, and go through
      sensitive-scope verification?
    - If not, Google support is "bring your own client ID" only, with the 7-day testing-token pain unless users
      publish their own unverified app.
@@ -677,15 +677,15 @@ pre-registering a port.
 2. **Microsoft tenant consent.** Without publisher verification, work/school users may need admin approval.
    Personal Outlook.com accounts should work. This needs testing with a fresh personal account and a test tenant.
 3. **Licence.**
-   - Confirm whether kalendar is GPL-2.0-only or GPL-2.0-or-later.
+   - Confirm whether katlendar is GPL-2.0-only or GPL-2.0-or-later.
    - GPL-3.0-or-later (`minicaldav`) and LGPL-3.0 (`fast-dav-rs`) code can't be linked into GPL-2.0-only.
    - EUPL-1.2 (`vstorage`) compatibility is unclear.
    - The recommended stack (oauth2, quick-xml/roxmltree, keyring-core, rrule) is MIT/Apache/ISC.
 4. **Data-model migration** is the riskiest code change: index → id touches every view.
    - Do it first, behind tests.
    - Load an old `data.json`, save, and reload, checking that events keep their calendar.
-5. **Write fidelity.** kalendar's model is much smaller than iCalendar (no attendees, alarms, attachments).
-   - Without `Event.raw` preservation, editing a title in kalendar would strip invites and reminders on the server.
+5. **Write fidelity.** katlendar's model is much smaller than iCalendar (no attendees, alarms, attachments).
+   - Without `Event.raw` preservation, editing a title in katlendar would strip invites and reminders on the server.
 6. **Recurring-event editing UX** ("this event / this and following / all") is substantial. Phase 3 could
    initially make recurring remote events read-only.
 7. **Polling cost and battery.** Incremental tokens make polls cheap. Still, avoid running sync while the window
@@ -704,5 +704,5 @@ pre-registering a port.
     - CalDAV VTODO (rich);
     - Google Tasks (date-only due, no duration);
     - Microsoft To Do (own schema).
-    kalendar's `Task` has fields (`duration_min`, `flexible`) that none of them represent. Store those in
-    `X-KALENDAR-*` properties on CalDAV and locally elsewhere.
+    katlendar's `Task` has fields (`duration_min`, `flexible`) that none of them represent. Store those in
+    `X-KATLENDAR-*` properties on CalDAV and locally elsewhere.

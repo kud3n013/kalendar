@@ -167,7 +167,7 @@ impl App {
             };
             let res = sync::oauth::authorize(&app, &opened, &stop, NEXTCLOUD_WAIT_S).and_then(|t| match t.refresh {
                 Some(r) => Ok(GoogleGrant { microsoft: false, email, client_id, secret: sync::google::pack(&r, &secret), access: t.access, expires_in: t.expires_in }),
-                None => Err(sync::SyncError::Other(tr("Google signed you in but gave nothing to stay signed in with. Remove kalendar under your Google account's third-party access, then try again.").into())),
+                None => Err(sync::SyncError::Other(tr("Google signed you in but gave nothing to stay signed in with. Remove katlendar under your Google account's third-party access, then try again.").into())),
             });
             send(SyncDone::GoogleDone { res });
         });

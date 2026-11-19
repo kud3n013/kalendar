@@ -123,7 +123,7 @@ fn token_request(app: &OAuthApp, form: &[(&str, &str)]) -> Result<Tokens, SyncEr
         .timeout_global(Some(Duration::from_secs(30)))
         .http_status_as_error(false)
         .build()
-        .header("User-Agent", "kalendar")
+        .header("User-Agent", "katlendar")
         .header("Accept", "application/json")
         .send_form(form)
         .map_err(|e| SyncError::Network(e.to_string()))?;
@@ -149,8 +149,8 @@ pub fn refresh(app: &OAuthApp, refresh_token: &str) -> Result<Tokens, SyncError>
     token_request(app, &[("grant_type", "refresh_token"), ("refresh_token", refresh_token)])
 }
 
-const DONE_PAGE: &str = "<!doctype html><meta charset=utf-8><title>kalendar</title><body style=\"font-family:sans-serif;margin:3em\"><h2>You are signed in.</h2><p>You can close this page and go back to kalendar.</p>";
-const FAILED_PAGE: &str = "<!doctype html><meta charset=utf-8><title>kalendar</title><body style=\"font-family:sans-serif;margin:3em\"><h2>Sign-in did not go through.</h2><p>Go back to kalendar to see why.</p>";
+const DONE_PAGE: &str = "<!doctype html><meta charset=utf-8><title>katlendar</title><body style=\"font-family:sans-serif;margin:3em\"><h2>You are signed in.</h2><p>You can close this page and go back to katlendar.</p>";
+const FAILED_PAGE: &str = "<!doctype html><meta charset=utf-8><title>katlendar</title><body style=\"font-family:sans-serif;margin:3em\"><h2>Sign-in did not go through.</h2><p>Go back to katlendar to see why.</p>";
 
 fn answer(stream: &mut std::net::TcpStream, status: &str, page: &str) {
     let _ = write!(stream, "HTTP/1.1 {status}\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{page}", page.len());

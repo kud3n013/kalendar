@@ -47,7 +47,7 @@ fn post(url: &str, form: &[(&str, &str)]) -> Result<(u16, String), SyncError> {
         .timeout_global(Some(std::time::Duration::from_secs(30)))
         .http_status_as_error(false)
         .build()
-        .header("User-Agent", "kalendar")
+        .header("User-Agent", "katlendar")
         .header("OCS-APIRequest", "true")
         .send_form(form.iter().copied())
         .map_err(|e| SyncError::Network(e.to_string()))?;
@@ -108,11 +108,11 @@ mod tests {
     use super::*;
 
     /// Against a server that speaks the sign-in flow. Set
-    /// KALENDAR_TEST_NEXTCLOUD to its address; without it nothing runs.
+    /// KATLENDAR_TEST_NEXTCLOUD to its address; without it nothing runs.
     /// The server must grant the sign-in on the second ask.
     #[test]
     fn against_a_server() {
-        let Ok(server) = std::env::var("KALENDAR_TEST_NEXTCLOUD") else { return };
+        let Ok(server) = std::env::var("KATLENDAR_TEST_NEXTCLOUD") else { return };
         let p = start(&server).expect("start");
         assert!(p.login.contains("/login/v2/flow/"));
         assert_eq!(poll(&p).expect("first ask"), None, "not signed in yet");

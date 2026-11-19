@@ -6,7 +6,7 @@ use super::*;
 use chrono::{Duration, NaiveDate};
 use serde::{Deserialize, Serialize};
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Data {
@@ -39,7 +39,7 @@ fn portable_home() -> Option<PathBuf> {
 }
 
 /// Where the calendar and task data is kept:
-/// $XDG_DATA_HOME/kalendar/data.json, usually ~/.local/share/kalendar/.
+/// $XDG_DATA_HOME/katlendar/data.json, usually ~/.local/share/katlendar/.
 pub fn data_path() -> PathBuf {
     let base = portable_home().map(|h| h.join(".local/share")).unwrap_or_else(|| {
         std::env::var_os("XDG_DATA_HOME")
@@ -47,11 +47,22 @@ pub fn data_path() -> PathBuf {
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
             .unwrap_or_else(|| PathBuf::from("."))
     });
-    base.join("kalendar").join("data.json")
+    own_dir(&base).join("data.json")
+}
+
+/// The app's folder under `base`. The app used to be called kalendar, so a
+/// folder left under that name is moved over the first time it is needed.
+fn own_dir(base: &Path) -> PathBuf {
+    let dir = base.join("katlendar");
+    let old = base.join("kalendar");
+    if !dir.exists() && old.is_dir() {
+        let _ = std::fs::rename(&old, &dir);
+    }
+    dir
 }
 
 /// Where the settings are kept:
-/// $XDG_CONFIG_HOME/kalendar/config.json, usually ~/.config/kalendar/.
+/// $XDG_CONFIG_HOME/katlendar/config.json, usually ~/.config/katlendar/.
 pub fn config_path() -> PathBuf {
     let base = portable_home().map(|h| h.join(".config")).unwrap_or_else(|| {
         std::env::var_os("XDG_CONFIG_HOME")
@@ -59,7 +70,24 @@ pub fn config_path() -> PathBuf {
             .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
             .unwrap_or_else(|| PathBuf::from("."))
     });
-    base.join("kalendar").join("config.json")
+    own_dir(&base).join("config.json")
+}
+
+#[cfg(test)]
+#[test]
+fn old_folder_moves_to_the_new_name() {
+    let base = std::env::temp_dir().join(format!("katlendar-rename-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    std::fs::create_dir_all(base.join("kalendar")).unwrap();
+    std::fs::write(base.join("kalendar/data.json"), "{}").unwrap();
+    let dir = own_dir(&base);
+    assert_eq!(std::fs::read_to_string(dir.join("data.json")).unwrap(), "{}");
+    assert!(!base.join("kalendar").exists());
+    // a folder already under the new name is left alone
+    std::fs::create_dir_all(base.join("kalendar")).unwrap();
+    assert_eq!(own_dir(&base), dir);
+    assert!(base.join("kalendar").exists());
+    let _ = std::fs::remove_dir_all(&base);
 }
 
 pub(super) fn write_json(p: PathBuf, s: String) {

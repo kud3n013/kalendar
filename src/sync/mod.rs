@@ -189,7 +189,7 @@ fn new_uid() -> String {
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     // only letters, digits and dashes: it is also the event's address, and
     // servers hand addresses back with other signs rewritten
-    format!("{:x}-{:x}-{:x}-kalendar", nanos, std::process::id(), N.fetch_add(1, Ordering::Relaxed))
+    format!("{:x}-{:x}-{:x}-katlendar", nanos, std::process::id(), N.fetch_add(1, Ordering::Relaxed))
 }
 
 fn save(p: &mut dyn Provider, cal: &RemoteCalendar, e: &Event, stamp: NaiveDateTime) -> PushResult {

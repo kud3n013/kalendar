@@ -892,7 +892,7 @@ impl App {
 
         let hit_info = |pos: Pos2| hit(pos).map(|it| (it.id, it.task, it.rect));
         // test aid for pictures: open the editor on the Nth visible block, as
-        // a double-click would (KALENDAR_SHOW_EDIT=N; only in picture mode)
+        // a double-click would (KATLENDAR_SHOW_EDIT=N; only in picture mode)
         if self.shot.is_some() && self.frames == 30 {
             if let Some(n) = crate::testaid::get().show_edit {
                 let mut real: Vec<_> = items.iter().filter(|it| !it.draft).map(|it| (it.id, it.rect)).collect();

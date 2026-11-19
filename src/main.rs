@@ -1,4 +1,4 @@
-//! Kalendar: a calendar and task planner.
+//! Katlendar: a calendar and task planner.
 
 mod ics;
 mod icons;
@@ -80,14 +80,14 @@ fn main() {
                 }
             }
             // test aid: sign in to a CalDAV server and say what it holds.
-            // The password is read from KALENDAR_PASS, so it stays out of
+            // The password is read from KATLENDAR_PASS, so it stays out of
             // the command line; nothing is kept.
             "--check-caldav" => {
                 let (Some(server), Some(user)) = (args.next(), args.next()) else {
-                    eprintln!("--check-caldav needs a server address and a user name; the password is read from KALENDAR_PASS");
+                    eprintln!("--check-caldav needs a server address and a user name; the password is read from KATLENDAR_PASS");
                     std::process::exit(2);
                 };
-                let pass = std::env::var("KALENDAR_PASS").unwrap_or_default();
+                let pass = std::env::var("KATLENDAR_PASS").unwrap_or_default();
                 let mut dav = CalDav::new(&server, &user, &pass, None);
                 let cals = dav.list_calendars().unwrap_or_else(|e| {
                     eprintln!("{}", e.text());
@@ -106,7 +106,7 @@ fn main() {
                 return;
             }
             "--help" | "-h" => {
-                println!("kalendar [--screenshot <file.png>]");
+                println!("katlendar [--screenshot <file.png>]");
                 return;
             }
             other => {
@@ -116,8 +116,8 @@ fn main() {
         }
     }
     let mut vb = egui::ViewportBuilder::default()
-        .with_title("Kalendar")
-        .with_app_id("kalendar")
+        .with_title("Katlendar")
+        .with_app_id("katlendar")
         .with_inner_size([1400.0, 860.0])
         .with_min_inner_size([360.0, 480.0]);
     if let Some(icon) = app_icon() {
@@ -135,7 +135,7 @@ fn main() {
     }
     let options = eframe::NativeOptions { viewport: vb, ..Default::default() };
     let res = eframe::run_native(
-        "Kalendar",
+        "Katlendar",
         options,
         Box::new(move |cc| {
             let _ = &cc;

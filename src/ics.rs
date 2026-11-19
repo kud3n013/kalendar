@@ -72,7 +72,7 @@ pub fn fetch(url: &str, now: NaiveDateTime) -> Result<Feed, String> {
         .config()
         .timeout_global(Some(std::time::Duration::from_secs(25)))
         .build()
-        .header("User-Agent", "kalendar")
+        .header("User-Agent", "katlendar")
         .header("Accept", "text/calendar, text/plain, */*")
         .call()
         .map_err(|e| match e {
@@ -718,7 +718,7 @@ pub fn read_event(raw: &str) -> Option<(String, EventFields)> {
 /// does not know stay as they were. `stamp` is the time now, in UTC.
 pub fn write_event(raw: Option<&str>, uid: &str, f: &EventFields, stamp: NaiveDateTime) -> String {
     let fresh = || -> Vec<String> {
-        ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//kalendar//EN", "BEGIN:VEVENT", &format!("UID:{uid}"), "END:VEVENT", "END:VCALENDAR"]
+        ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//katlendar//EN", "BEGIN:VEVENT", &format!("UID:{uid}"), "END:VEVENT", "END:VCALENDAR"]
             .iter()
             .map(|s| s.to_string())
             .collect()
@@ -909,7 +909,7 @@ pub struct TaskFields {
 /// `stamp` is the time now, in UTC.
 pub fn write_todo(raw: Option<&str>, uid: &str, f: &TaskFields, stamp: NaiveDateTime) -> String {
     let fresh = || -> Vec<String> {
-        ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//kalendar//EN", "BEGIN:VTODO", &format!("UID:{uid}"), "END:VTODO", "END:VCALENDAR"].iter().map(|s| s.to_string()).collect()
+        ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//katlendar//EN", "BEGIN:VTODO", &format!("UID:{uid}"), "END:VTODO", "END:VCALENDAR"].iter().map(|s| s.to_string()).collect()
     };
     let mut lines = raw.map(unfold).unwrap_or_else(fresh);
     let mut is_new = raw.is_none();

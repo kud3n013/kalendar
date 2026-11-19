@@ -265,7 +265,7 @@ impl App {
         }
         let builder = egui::ViewportBuilder::default()
             .with_title(tr("Settings"))
-            .with_app_id("kalendar")
+            .with_app_id("katlendar")
             .with_inner_size([1060.0, 820.0])
             .with_min_inner_size([760.0, 480.0]);
         ctx.show_viewport_immediate(egui::ViewportId::from_hash_of("settings"), builder, |ui, class| {
@@ -1085,7 +1085,7 @@ impl App {
                         field(ui, &mut self.acct_user, tr("User name"), false);
                         let r = field(ui, &mut self.acct_pass, tr("App password"), true);
                         let enter = r.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        help(ui, tr("Make an app password in the server's security settings and use it here, not your main password. It is kept in your desktop's keyring, never in kalendar's files."));
+                        help(ui, tr("Make an app password in the server's security settings and use it here, not your main password. It is kept in your desktop's keyring, never in katlendar's files."));
                         let connecting = self.data.accounts.iter().any(|a| a.home.is_none() && self.syncing.contains(&a.id));
                         ui.horizontal(|ui| {
                             if (go(ui, tr("Connect"), !connecting) || enter) && !connecting {
@@ -1098,14 +1098,14 @@ impl App {
                         });
                     }
                     3 => {
-                        help(ui, &trf("Only the server's address is needed. Nextcloud's own sign-in page opens in your browser and hands kalendar an app password of its own, which goes into your desktop's keyring. {}", &[&both_ways]));
+                        help(ui, &trf("Only the server's address is needed. Nextcloud's own sign-in page opens in your browser and hands katlendar an app password of its own, which goes into your desktop's keyring. {}", &[&both_ways]));
                         field(ui, &mut self.acct_server, tr("Server address, such as https://cloud.example.org"), false);
                         if go(ui, tr("Sign in with Nextcloud…"), !waiting) {
                             self.connect_nextcloud(ctx);
                         }
                     }
                     4 => {
-                        help(ui, "kalendar has no registration of its own with Google, so you bring one: in the Google Cloud console, make a project, switch on the CalDAV API, add yourself as a test user on the consent screen, and make an OAuth client ID of the type \"Desktop app\". Paste its client ID and client secret here, or the whole JSON file it lets you download. While the project is in Testing, Google asks you to sign in again every 7 days.");
+                        help(ui, "katlendar has no registration of its own with Google, so you bring one: in the Google Cloud console, make a project, switch on the CalDAV API, add yourself as a test user on the consent screen, and make an OAuth client ID of the type \"Desktop app\". Paste its client ID and client secret here, or the whole JSON file it lets you download. While the project is in Testing, Google asks you to sign in again every 7 days.");
                         field(ui, &mut self.g_email, tr("Your Google address"), false);
                         setup_links(ui, &[(tr("Step-by-step guide"), GUIDE_GOOGLE), (tr("Google Cloud console"), "https://console.cloud.google.com/auth/clients")]);
                         field(ui, &mut self.g_client_id, tr("Client ID, ending in .apps.googleusercontent.com"), false);
@@ -1122,7 +1122,7 @@ impl App {
                         }
                     }
                     6 => {
-                        help(ui, tr("Proton has no official way in for other calendar programs. kalendar signs in the way Proton's own apps do and decrypts your events on this computer. Your password is used once to sign in and is not kept; the keyring holds the session. Calendars of your own stay in step both ways; calendars shared with you, events with guests and repeating events can only be read. Proton may stop this from working at any time."));
+                        help(ui, tr("Proton has no official way in for other calendar programs. katlendar signs in the way Proton's own apps do and decrypts your events on this computer. Your password is used once to sign in and is not kept; the keyring holds the session. Calendars of your own stay in step both ways; calendars shared with you, events with guests and repeating events can only be read. Proton may stop this from working at any time."));
                         field(ui, &mut self.pr_user, tr("Your Proton address or user name"), false);
                         field(ui, &mut self.pr_pass, tr("Password"), true);
                         field(ui, &mut self.pr_code, tr("Two-factor code, if you use one"), false);
@@ -1137,7 +1137,7 @@ impl App {
                         }
                     }
                     _ => {
-                        help(ui, tr("For Microsoft 365 and Outlook.com. kalendar has no registration of its own with Microsoft, so you bring one: in the Microsoft Entra admin center, register an app for accounts in any organisation and personal accounts, add the platform \"Mobile and desktop applications\" with the redirect address http://localhost, and allow the delegated Graph permission Calendars.ReadWrite. Paste its Application (client) ID here; there is no secret."));
+                        help(ui, tr("For Microsoft 365 and Outlook.com. katlendar has no registration of its own with Microsoft, so you bring one: in the Microsoft Entra admin center, register an app for accounts in any organisation and personal accounts, add the platform \"Mobile and desktop applications\" with the redirect address http://localhost, and allow the delegated Graph permission Calendars.ReadWrite. Paste its Application (client) ID here; there is no secret."));
                         field(ui, &mut self.ms_email, tr("Your Microsoft address"), false);
                         setup_links(ui, &[(tr("Step-by-step guide"), GUIDE_MICROSOFT), (tr("App registrations"), "https://entra.microsoft.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade")]);
                         field(ui, &mut self.ms_client_id, tr("Application (client) ID"), false);
@@ -1536,12 +1536,12 @@ impl App {
 
     fn page_info(&mut self, ui: &mut egui::Ui) {
         if finding(ui) {
-            let words = ["about", "kalendar", "version", env!("CARGO_PKG_VERSION"), "data", "file", "folder", "path", "location", "config", "json", "privacy"];
+            let words = ["about", "katlendar", "version", env!("CARGO_PKG_VERSION"), "data", "file", "folder", "path", "location", "config", "json", "privacy"];
             page_result(ui, Page::Info, tr("Version and data files"), tr("Where your calendars, tasks and settings are kept"), &words);
             return;
         }
         let muted = self.pal.muted;
-        heading(ui, tr("Kalendar"));
+        heading(ui, tr("Katlendar"));
         ui.label(RichText::new(trf("Version {}", &[&env!("CARGO_PKG_VERSION")])).size(theme::size::LARGE));
         ui.add_space(8.0);
         ui.label(RichText::new(tr("Your calendars and tasks are kept on this computer, in:")).size(theme::size::UI).color(muted));

@@ -1,5 +1,5 @@
 //! Google Calendar, reached over Google's CalDAV address with a sign-in
-//! through the browser. kalendar ships no registration with Google: the
+//! through the browser. katlendar ships no registration with Google: the
 //! person brings the client ID and secret of their own Google Cloud
 //! project.
 

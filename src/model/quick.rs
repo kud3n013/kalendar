@@ -15,7 +15,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Debug, Default)]
 pub enum QuickPreset {
     #[default]
-    Kalendar,
+    #[serde(alias = "Kalendar")]
+    Katlendar,
     Todoist,
     TickTick,
     Things,
@@ -23,10 +24,10 @@ pub enum QuickPreset {
 }
 
 impl QuickPreset {
-    pub const ALL: [QuickPreset; 5] = [QuickPreset::Kalendar, QuickPreset::Todoist, QuickPreset::TickTick, QuickPreset::Things, QuickPreset::Custom];
+    pub const ALL: [QuickPreset; 5] = [QuickPreset::Katlendar, QuickPreset::Todoist, QuickPreset::TickTick, QuickPreset::Things, QuickPreset::Custom];
     pub fn label(&self) -> &'static str {
         match self {
-            QuickPreset::Kalendar => tr("Kalendar (like Morgen)"),
+            QuickPreset::Katlendar => tr("Katlendar (like Morgen)"),
             QuickPreset::Todoist => tr("Todoist"),
             QuickPreset::TickTick => tr("TickTick"),
             QuickPreset::Things => tr("Plain words (like Things)"),
@@ -44,7 +45,7 @@ impl QuickPreset {
             duration: duration.into(),
         };
         match self {
-            QuickPreset::Kalendar => Some(t("#", ">", "!", ".", "@ at", "for ~")),
+            QuickPreset::Katlendar => Some(t("#", ">", "!", ".", "@ at", "for ~")),
             QuickPreset::Todoist => Some(t("@ %", "#", "p", "", "at", "for")),
             QuickPreset::TickTick => Some(t("#", "~ ^", "!", "", "at", "for")),
             // Things reads no marks in the title, only dates and times
@@ -70,7 +71,7 @@ pub struct Tokens {
 
 impl Default for Tokens {
     fn default() -> Self {
-        QuickPreset::Kalendar.tokens().unwrap()
+        QuickPreset::Katlendar.tokens().unwrap()
     }
 }
 
@@ -162,7 +163,7 @@ pub struct QuickSyntax {
 
 impl Default for QuickSyntax {
     fn default() -> Self {
-        QuickSyntax { preset: QuickPreset::Kalendar, custom: Tokens::default(), natural: true, day_first: true, abbrevs: vec![] }
+        QuickSyntax { preset: QuickPreset::Katlendar, custom: Tokens::default(), natural: true, day_first: true, abbrevs: vec![] }
     }
 }
 
@@ -837,7 +838,7 @@ mod tests {
     }
 
     #[test]
-    fn kalendar_marks() {
+    fn katlendar_marks() {
         let q = p("buy milk #home !high >Errands");
         assert_eq!(q.title, "buy milk");
         assert_eq!(q.tags, vec!["home".to_string()]);

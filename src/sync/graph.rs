@@ -1,5 +1,5 @@
 //! Microsoft 365 and Outlook.com calendars, through Microsoft Graph, with
-//! a sign-in through the browser. kalendar ships no registration with
+//! a sign-in through the browser. katlendar ships no registration with
 //! Microsoft: the person brings the client ID of their own app
 //! registration (a public client, without a secret).
 
@@ -132,7 +132,7 @@ impl Graph {
         let mut req = ureq::http::Request::builder()
             .method(method)
             .uri(url)
-            .header("User-Agent", "kalendar")
+            .header("User-Agent", "katlendar")
             .header("Authorization", format!("Bearer {}", self.token))
             .header("Prefer", "outlook.timezone=\"UTC\", outlook.body-content-type=\"text\", odata.maxpagesize=100");
         if let Some(t) = if_match {

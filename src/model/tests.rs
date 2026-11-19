@@ -4,7 +4,7 @@ use chrono::{Duration, NaiveDate, NaiveDateTime};
 
 #[test]
 fn old_data_file_moves_settings_to_config() {
-    let dir = std::env::temp_dir().join(format!("kalendar-test-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("katlendar-test-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::env::set_var("XDG_DATA_HOME", dir.join("data"));
     std::env::set_var("XDG_CONFIG_HOME", dir.join("config"));
