@@ -34,6 +34,18 @@ use std::path::PathBuf;
 use sync::caldav::CalDav;
 use sync::Provider;
 
+/// The window and taskbar icon, decoded from the PNG baked into the binary.
+fn app_icon() -> Option<egui::IconData> {
+    let img = image::load_from_memory_with_format(
+        include_bytes!("../assets/icon.png"),
+        image::ImageFormat::Png,
+    )
+    .ok()?
+    .into_rgba8();
+    let (width, height) = img.dimensions();
+    Some(egui::IconData { rgba: img.into_raw(), width, height })
+}
+
 fn main() {
     let mut shot = None;
     let mut args = std::env::args().skip(1);
@@ -108,6 +120,9 @@ fn main() {
         .with_app_id("kalendar")
         .with_inner_size([1400.0, 860.0])
         .with_min_inner_size([360.0, 480.0]);
+    if let Some(icon) = app_icon() {
+        vb = vb.with_icon(icon);
+    }
     if shot.is_some() {
         vb = vb.with_active(false);
         if let Some(size) = testaid::get().window {
