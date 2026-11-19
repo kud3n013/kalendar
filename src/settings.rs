@@ -1572,8 +1572,8 @@ mod tests {
     }
 }
 
-const GUIDE_GOOGLE: &str = "https://github.com/kud3n013/kalendar/blob/main/docs/connect-google-and-microsoft.md#google-calendar";
-const GUIDE_MICROSOFT: &str = "https://github.com/kud3n013/kalendar/blob/main/docs/connect-google-and-microsoft.md#microsoft-365-and-outlookcom";
+const GUIDE_GOOGLE: &str = "https://github.com/kud3n013/katlendar/blob/main/docs/connect-google-and-microsoft.md#google-calendar";
+const GUIDE_MICROSOFT: &str = "https://github.com/kud3n013/katlendar/blob/main/docs/connect-google-and-microsoft.md#microsoft-365-and-outlookcom";
 
 /// A row of small links to the pages a sign-in has to be set up on.
 fn setup_links(ui: &mut egui::Ui, links: &[(&str, &str)]) {
