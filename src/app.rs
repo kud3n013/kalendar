@@ -190,8 +190,8 @@ impl TaskEdit {
         let (t, b) = (&self.task, &self.base);
         let date = |d: Option<NaiveDate>| d.map(|d| d.to_string()).unwrap_or_default();
         !same_json(
-            &(&t.title, &t.notes, t.done, t.priority, t.duration_min, t.list, &t.repeat, t.flexible),
-            &(&b.title, &b.notes, b.done, b.priority, b.duration_min, b.list, &b.repeat, b.flexible),
+            &(&t.title, &t.notes, t.done, t.priority, t.duration_min, t.list, &t.repeat, t.flexible, t.color),
+            &(&b.title, &b.notes, b.done, b.priority, b.duration_min, b.list, &b.repeat, b.flexible, b.color),
         ) || self.due_text.trim() != date(b.due)
             || self.earliest_text.trim() != date(b.earliest)
             || self.tags_text.split_whitespace().ne(b.tags.iter().map(String::as_str))
@@ -807,6 +807,33 @@ impl App {
             repeat: Repeat::None,
             until_text: String::new(),
         });
+        self.selected = None;
+    }
+
+    /// Opens the editor on a new task with a block at `start`; the task is
+    /// kept only once saved.
+    pub fn open_new_task_at(&mut self, start: NaiveDateTime, mins: i64) {
+        let task = Task { id: self.data.new_id(), duration_min: Some(mins), ..Default::default() };
+        let id = self.data.new_id();
+        self.editor = Some(EventEdit {
+            ev: Event {
+                id,
+                start,
+                end: start + Duration::minutes(mins),
+                calendar: self.data.default_calendar(),
+                task_id: Some(task.id),
+                ..Default::default()
+            },
+            is_new: true,
+            focus: true,
+            anchor_rect: None,
+            base: None,
+            task: Some(TaskEdit::of(&task)),
+            repeat: Repeat::None,
+            until_text: String::new(),
+        });
+        self.create = None;
+        self.close_inline_editor();
         self.selected = None;
     }
 

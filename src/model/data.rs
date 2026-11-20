@@ -152,9 +152,13 @@ impl Data {
     pub fn event_color(&self, e: &Event) -> [u8; 3] {
         e.color.unwrap_or_else(|| self.block_color(e.task_id.and_then(|t| self.task(t)), e.calendar))
     }
-    /// The colour of a task's block in a calendar: its list's, unless it
-    /// is in the Inbox, else the calendar's.
+    /// The colour of a task's block in a calendar: the task's own, else its
+    /// list's, unless it is in the Inbox, else the calendar's.
     pub fn block_color(&self, task: Option<&Task>, cal: u64) -> [u8; 3] {
+        task.and_then(|t| t.color).unwrap_or_else(|| self.list_color(task, cal))
+    }
+    /// A task's block colour without its own: its list's, else the calendar's.
+    pub fn list_color(&self, task: Option<&Task>, cal: u64) -> [u8; 3] {
         task.and_then(|t| self.lists.iter().find(|l| l.id == t.list && t.list != 0)).map(|l| l.color).unwrap_or_else(|| self.calendar_color(cal))
     }
     /// The main colour picked under Appearance, else the app's own.

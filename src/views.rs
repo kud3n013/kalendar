@@ -964,6 +964,10 @@ impl App {
                     self.open_new_event(t, NEW_EVENT_MIN, false);
                     ui.close();
                 }
+                if m.item(ui, icons::SQUARE_CHECK, tr("Create new task"), false).clicked() {
+                    self.open_new_task_at(t, self.data.prefs.default_task_min);
+                    ui.close();
+                }
                 let ctx = ui.ctx().clone();
                 if let Some((fid, day, name, skipped)) = &in_frame {
                     m.line(ui);

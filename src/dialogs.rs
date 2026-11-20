@@ -891,10 +891,11 @@ impl App {
         let at = self.editor_spot(ctx, key, ed.from_block.as_ref().map(|b| b.1));
         let mut new_list: Option<String> = None;
         let focus = ed.focus;
+        let is_new = ed.is_new;
         let mut back: Option<CreateKind> = None;
         // a frame being made stays in the flyout beside its block (or the
         // centre); only one already made gets a window of its own
-        let p = if ed.is_new {
+        let p = if ed.is_new && ed.from_block.is_some() {
             self.frame_flyout(ctx, &mut ed, &mut new_list, &mut back)
         } else {
             {
@@ -905,7 +906,7 @@ impl App {
                 title,
                 at,
                 focus,
-                Offer { delete: true, skip: None },
+                Offer { delete: !is_new, skip: None },
                 |app| ed.borrow().changed(app.data.frame(ed.borrow().frame.id)),
                 |app, ui| app.frame_form(ui, &mut ed.borrow_mut(), &mut new_list),
             )
@@ -1254,7 +1255,9 @@ impl App {
         let Some(mut ed) = self.editor.take() else { return };
         self.sync_event_edit(&mut ed);
         let is_task = ed.ev.task_id.is_some();
-        let title = if ed.is_new {
+        let title = if ed.is_new && is_task {
+            tr("New task")
+        } else if ed.is_new {
             tr("New event")
         } else if is_task {
             tr("Task session")
@@ -1637,6 +1640,16 @@ impl App {
             let sched = ev.task_id.map(|t| (t, ev.start.date()));
             // a block's name and note are its task's, and so its other blocks'
             let edited = ed.task.as_ref().map(|t| t.task.clone());
+            // a new task made from the calendar is kept now
+            if let (Some(tid), Some(new)) = (ev.task_id, edited.as_ref()) {
+                if self.data.task(tid).is_none() {
+                    if ev.title.trim().is_empty() {
+                        ev.title = tr("New task").into();
+                    }
+                    let duration_min = new.duration_min.or(Some(ev.minutes()));
+                    self.data.tasks.insert(0, Task { title: ev.title.clone(), notes: ev.notes.clone(), duration_min, ..new.clone() });
+                }
+            }
             if let Some(t) = ev.task_id.and_then(|t| self.data.task_mut(t)) {
                 if let Some(mut n) = edited {
                     (n.title, n.notes) = (t.title.clone(), t.notes.clone());
@@ -1700,7 +1713,7 @@ impl App {
         macro_rules! take {
             ($($f:ident),*) => { $( if now.$f != b.$f { t.$f = now.$f.clone(); } )* };
         }
-        take!(title, notes, done, priority, duration_min, list, repeat, flexible);
+        take!(title, notes, done, priority, duration_min, list, repeat, flexible, color);
         if now.due != b.due {
             ed.due_text = now.due.map(|d| d.to_string()).unwrap_or_default();
         }
@@ -1771,6 +1784,10 @@ impl App {
             editor_label(ui, tr("List"), muted);
             let items = self.list_items(false);
             pick_one(ui, "tlist", &items, &mut ed.task.list);
+            ui.end_row();
+            editor_label(ui, tr("Colour"), muted);
+            let base = self.data.list_color(Some(&ed.task), self.data.default_calendar());
+            swatches(ui, base, tr("List colour"), &mut ed.task.color);
             ui.end_row();
             editor_label(ui, tr("Tags"), muted);
             ui.add(egui::TextEdit::singleline(&mut ed.tags_text).hint_text("admin deep-work").desired_width(200.0));
@@ -1914,8 +1931,10 @@ impl App {
             self.toast = None;
             return;
         }
-        ctx.request_repaint_after(std::time::Duration::from_millis(300));
-        let (text, undo, move_due, warn) = (t.text.clone(), t.undo, t.move_due, t.warn);
+        let warn = t.warn;
+        // a warning's countdown line runs smoothly, so it repaints often
+        ctx.request_repaint_after(std::time::Duration::from_millis(if warn { 33 } else { 300 }));
+        let (text, undo, move_due) = (t.text.clone(), t.undo, t.move_due);
         let (born, until) = (if t.born < 0.0 { now } else { t.born }, t.until);
         if let Some(t) = &mut self.toast {
             t.born = born;
@@ -1931,12 +1950,14 @@ impl App {
         let fill = mix(self.pal.side, self.pal.text, 0.12);
         // a warning wears a bright orange edge and sign, so it is not missed
         let border = if warn { Stroke::new(2.0, theme::WARNING) } else { Stroke::new(1.0, self.pal.border) };
+        let accent = self.pal.accent;
+        let left = (((until - now) / (until - born).max(0.001)) as f32).clamp(0.0, 1.0);
         egui::Area::new(ids::toast())
             .anchor(Align2::CENTER_BOTTOM, [0.0, -24.0 + (1.0 - a_in) * 16.0])
             .order(egui::Order::Foreground)
             .show(ctx, |ui| {
                 ui.set_opacity(alpha);
-                egui::Frame::new()
+                let frame = egui::Frame::new()
                     .fill(fill)
                     .stroke(border)
                     .corner_radius(theme::CARD_RADIUS)
@@ -1960,6 +1981,15 @@ impl App {
                             }
                         });
                     });
+                // a warning shows the time left as a theme-coloured line that runs out
+                if warn {
+                    let r = frame.response.rect;
+                    let inset = theme::CARD_RADIUS;
+                    let y = r.bottom() - 4.0;
+                    let x0 = r.left() + inset;
+                    let x1 = x0 + (r.width() - 2.0 * inset).max(0.0) * left;
+                    ui.painter().line_segment([egui::pos2(x0, y), egui::pos2(x1, y)], Stroke::new(2.0, accent));
+                }
             });
         if do_undo {
             self.do_undo(ctx);

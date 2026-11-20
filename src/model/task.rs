@@ -40,6 +40,9 @@ pub struct Task {
     pub raw: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub dirty: bool,
+    /// its blocks' colour here, over its list's; never sent to a server
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<[u8; 3]>,
     /// Put away from the Completed list; still kept and synced.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub archived: bool,
@@ -217,6 +220,7 @@ impl Task {
         self.tags = n.tags;
         self.earliest = n.earliest;
         self.repeat = n.repeat;
+        self.color = n.color;
     }
     pub fn detach(&mut self) {
         self.dirty = false;
