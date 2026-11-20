@@ -343,6 +343,9 @@ pub struct App {
     pub morph: Morph,
     /// the name typed for a new list in the settings
     pub new_list_name: String,
+    /// tags ticked in the settings, in lower case, and the name to give them
+    pub tag_sel: std::collections::HashSet<String>,
+    pub tag_to: String,
     pub collapsed: std::collections::HashSet<String>,
     pub scroll_to: Option<f32>,
     pub clipboard: Option<Event>,
@@ -475,6 +478,8 @@ impl App {
             flyer: None,
             morph: Morph::default(),
             new_list_name: String::new(),
+            tag_sel: Default::default(),
+            tag_to: String::new(),
             collapsed,
             scroll_to: Some(scroll.max(0.0)),
             clipboard: None,

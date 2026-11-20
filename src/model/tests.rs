@@ -683,3 +683,34 @@ fn a_custom_repeat_comes_on_the_picked_weekdays() {
     // none picked: once a week
     assert_eq!(Repeat::Custom(0).next(d(11, 4)), d(11, 11));
 }
+
+#[test]
+fn tags_gather_rename_merge_remove() {
+    let mut d = empty();
+    add_task(&mut d, "a", 30, &["Admin", "email"]);
+    add_task(&mut d, "b", 30, &["admin", "Email", "admin"]);
+    add_task(&mut d, "c", 30, &[]);
+    let mut f = frame(1, 1);
+    f.filter.tags = vec!["EMAIL".into(), "focus".into()];
+    d.frames.push(f);
+    d.prefs.frame_first_tags = vec!["Focus".into()];
+    let names: Vec<(String, usize, usize)> = d.all_tags().into_iter().map(|u| (u.name, u.tasks, u.frames)).collect();
+    assert_eq!(names, [("Admin".into(), 2, 0), ("email".into(), 2, 1), ("focus".into(), 0, 1)]);
+
+    // rename, whatever the case it is typed in
+    assert_eq!(d.rename_tags(&["ADMIN".into()], "#ops"), 2);
+    assert_eq!(d.tasks[1].tags, ["ops", "Email"]);
+    assert_eq!(d.rename_tags(&["x".into()], "two words"), 0);
+
+    // merging two into one keeps each task's tag once
+    assert_eq!(d.rename_tags(&["ops".into(), "email".into()], "work"), 2);
+    assert_eq!(d.tasks[0].tags, ["work"]);
+    assert_eq!(d.tasks[1].tags, ["work"]);
+    assert_eq!(d.frames[0].filter.tags, ["work", "focus"]);
+
+    assert_eq!(d.remove_tags(&["FOCUS".into(), "work".into()]), 2);
+    assert!(d.tasks.iter().all(|t| t.tags.is_empty()));
+    assert!(d.frames[0].filter.tags.is_empty());
+    assert!(d.prefs.frame_first_tags.is_empty());
+    assert!(d.all_tags().is_empty());
+}

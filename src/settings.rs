@@ -18,6 +18,7 @@ pub enum Page {
     Appearance,
     ActiveCalendars,
     Lists,
+    Tags,
     Planner,
     Frames,
     QuickAdd,
@@ -28,11 +29,12 @@ const CONTROL_W: f32 = 390.0;
 const ROW_H: f32 = 56.0;
 
 /// The order pages are listed in search results.
-const SEARCH_ORDER: [(Page, &str); 10] = [
+const SEARCH_ORDER: [(Page, &str); 11] = [
     (Page::General, later("General")),
     (Page::Appearance, later("Appearance")),
     (Page::ActiveCalendars, later("Active calendars")),
     (Page::Lists, later("Task lists")),
+    (Page::Tags, later("Tags")),
     (Page::Planner, later("Planner")),
     (Page::Frames, later("Frames")),
     (Page::QuickAdd, later("Quick add")),
@@ -317,6 +319,7 @@ impl App {
                             (Page::Appearance, icons::PALETTE, tr("Appearance")),
                             (Page::ActiveCalendars, icons::SQUARE_CHECK, tr("Active calendars")),
                             (Page::Lists, icons::LIST_TODO, tr("Task lists")),
+                            (Page::Tags, icons::TAG, tr("Tags")),
                             (Page::Planner, icons::SHUFFLE, tr("Planner")),
                             (Page::Frames, icons::CLOCK, tr("Frames")),
                             (Page::QuickAdd, icons::KEYBOARD, tr("Quick add")),
@@ -371,6 +374,7 @@ impl App {
                         Page::QuickAdd => self.page_quick_add(ui),
                         Page::ActiveCalendars => self.page_active(ui),
                         Page::Lists => self.page_lists(ui),
+                Page::Tags => self.page_tags(ui),
                         Page::Calendars => self.page_calendars(ui, &ctx),
                         Page::Shortcuts => self.page_shortcuts(ui),
                         Page::Info => self.page_info(ui),
@@ -398,6 +402,7 @@ impl App {
                 Page::QuickAdd => self.page_quick_add(ui),
                 Page::ActiveCalendars => self.page_active(ui),
                 Page::Lists => self.page_lists(ui),
+                Page::Tags => self.page_tags(ui),
                 Page::Calendars => self.page_calendars(ui, ctx),
                 Page::Shortcuts => self.page_shortcuts(ui),
                 Page::Info => self.page_info(ui),
@@ -1022,6 +1027,138 @@ impl App {
         if let Some(id) = remove {
             self.snapshot();
             self.data.remove_own_list(id);
+        }
+    }
+
+    fn page_tags(&mut self, ui: &mut egui::Ui) {
+        let tags = self.data.all_tags();
+        if finding(ui) {
+            let names: Vec<&str> = tags.iter().map(|u| u.name.as_str()).collect();
+            let words = [&["tag", "tags", "label", "hashtag", "rename", "merge", "remove", "delete", "bulk"][..], &names].concat();
+            page_result(ui, Page::Tags, tr("Manage tags"), tr("Rename, merge or remove tags on all tasks and frames at once"), &words);
+            return;
+        }
+        let ctx = ui.ctx().clone();
+        let (muted, border, side, text, accent) = (self.pal.muted, self.pal.border, self.pal.side, self.pal.text, self.pal.accent);
+        heading(ui, tr("Tags"));
+        ui.add(egui::Label::new(RichText::new(tr("Rename a tag by editing its name. Tick several to rename, merge or remove them together; tasks, frames and the planner follow.")).size(theme::size::UI).color(muted)).wrap());
+        ui.add_space(12.0);
+        if tags.is_empty() {
+            ui.label(RichText::new(tr("No tags yet. Type #tag in a task's title or add tags in a task's details.")).size(theme::size::UI).color(muted));
+            return;
+        }
+        self.tag_sel.retain(|s| tags.iter().any(|u| u.name.eq_ignore_ascii_case(s)));
+        let picked: Vec<String> = tags.iter().filter(|u| self.tag_sel.contains(&u.name.to_lowercase())).map(|u| u.name.clone()).collect();
+
+        // what to do with the ticked ones
+        let mut apply: Option<(Vec<String>, Option<String>)> = None;
+        let mut bad = false;
+        egui::Frame::new().fill(mix(side, text, 0.04)).stroke(Stroke::new(1.0, border)).corner_radius(theme::CARD_RADIUS).inner_margin(Margin::symmetric(12, 10)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                let all = picked.len() == tags.len();
+                let mut tick = all;
+                let label = if picked.is_empty() { tr("Select all").to_string() } else { trf("{} selected", &[&picked.len()]) };
+                if ui.checkbox(&mut tick, RichText::new(label).size(theme::size::UI)).changed() {
+                    self.tag_sel = if tick { tags.iter().map(|u| u.name.to_lowercase()).collect() } else { Default::default() };
+                }
+                ui.add_space(8.0);
+                ui.add_enabled_ui(!picked.is_empty(), |ui| {
+                    let r = ui.add(
+                        egui::TextEdit::singleline(&mut self.tag_to)
+                            .hint_text(if picked.len() > 1 { tr("Merge into…") } else { tr("Rename to…") })
+                            .font(FontId::proportional(theme::size::UI))
+                            .margin(Margin::symmetric(10, 6))
+                            .desired_width((ui.available_width() - 220.0).clamp(100.0, 240.0)),
+                    );
+                    let enter = r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
+                    let name = self.tag_to.trim().trim_start_matches('#').to_string();
+                    let ok = !name.is_empty() && !name.contains(char::is_whitespace);
+                    let verb = if picked.len() > 1 { tr("Merge") } else { tr("Rename") };
+                    let b = egui::Button::new(RichText::new(verb).size(theme::size::BODY).color(Color32::WHITE)).fill(accent).corner_radius(theme::BUTTON_RADIUS);
+                    if (ui.add_enabled(ok, b).on_disabled_hover_text(tr("Type one word for the new name")).clicked() || (enter && ok)) && !picked.is_empty() {
+                        apply = Some((picked.clone(), Some(name)));
+                    }
+                    let b = egui::Button::new(RichText::new(tr("Remove")).size(theme::size::BODY).color(theme::DANGER)).fill(mix(side, text, 0.07)).corner_radius(theme::BUTTON_RADIUS);
+                    if ui.add(b).on_hover_text(tr("Take these tags off every task and frame")).clicked() {
+                        apply = Some((picked.clone(), None));
+                    }
+                });
+            });
+        });
+        ui.add_space(8.0);
+
+        for u in &tags {
+            let key = u.name.to_lowercase();
+            let id = crate::ids::tag_name(&key);
+            ui.allocate_ui_with_layout(vec2(ui.available_width(), 44.0), Layout::right_to_left(Align::Center), |ui| {
+                let b = egui::Button::new(RichText::new(tr("Remove")).size(theme::size::BODY).color(theme::DANGER)).fill(mix(side, text, 0.07)).corner_radius(theme::BUTTON_RADIUS);
+                if ui.add(b).on_hover_text(tr("Take this tag off every task and frame")).clicked() {
+                    apply = Some((vec![u.name.clone()], None));
+                }
+                if ui.available_width() > 300.0 {
+                    let mut what = if u.tasks == 1 { tr("1 task").to_string() } else { trf("{} tasks", &[&u.tasks]) };
+                    if u.frames > 0 {
+                        let f = if u.frames == 1 { tr("1 frame").to_string() } else { trf("{} frames", &[&u.frames]) };
+                        what += &format!(", {f}");
+                    }
+                    ui.label(RichText::new(what).size(theme::size::CAPTION).color(muted));
+                }
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    let mut on = self.tag_sel.contains(&key);
+                    if ui.checkbox(&mut on, "").changed() {
+                        if on {
+                            self.tag_sel.insert(key.clone());
+                        } else {
+                            self.tag_sel.remove(&key);
+                        }
+                    }
+                    ui.label(RichText::new("#").size(theme::size::LARGE).color(muted));
+                    let mut name = ui.data(|d| d.get_temp::<String>(id)).unwrap_or_else(|| u.name.clone());
+                    let r = ui.add(
+                        egui::TextEdit::singleline(&mut name)
+                            .font(FontId::proportional(theme::size::LARGE))
+                            .desired_width((ui.available_width() - 8.0).clamp(60.0, 240.0))
+                            .id_salt(("tagedit", &key)),
+                    );
+                    if r.has_focus() {
+                        ui.data_mut(|d| d.insert_temp(id, name.clone()));
+                    }
+                    if r.lost_focus() {
+                        ui.data_mut(|d| d.remove::<String>(id));
+                        let new = name.trim().trim_start_matches('#');
+                        if ui.input(|i| i.key_pressed(Key::Escape)) || new.is_empty() || new == u.name {
+                        } else if new.contains(char::is_whitespace) {
+                            bad = true;
+                        } else {
+                            apply = Some((vec![u.name.clone()], Some(new.to_string())));
+                        }
+                    }
+                });
+            });
+            let (r, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+            ui.painter().rect_filled(r, 0.0, border);
+        }
+
+        if bad {
+            self.warn(&ctx, tr("A tag is one word, with no spaces"));
+        }
+        if let Some((from, to)) = apply {
+            self.snapshot();
+            let n = match &to {
+                Some(to) => self.data.rename_tags(&from, to),
+                None => self.data.remove_tags(&from),
+            };
+            let what = match (&to, from.len()) {
+                (Some(to), 1) => trf("Renamed #{} to #{}", &[&from[0], to]),
+                (Some(to), k) => trf("Merged {} tags into #{}", &[&k, to]),
+                (None, 1) => trf("Removed #{}", &[&from[0]]),
+                (None, k) => trf("Removed {} tags", &[&k]),
+            };
+            self.say(&ctx, format!("{what} · {}", if n == 1 { tr("1 task changed").to_string() } else { trf("{} tasks changed", &[&n]) }), true);
+            self.tag_sel.clear();
+            self.tag_to.clear();
+            self.commit();
         }
     }
 

@@ -33,6 +33,7 @@ pub const INFO: &str = "\u{e0f9}"; // info
 pub const CIRCLE: &str = "\u{e076}"; // circle
 pub const HELP: &str = "\u{e082}"; // circle-help
 pub const LIST_TODO: &str = "\u{e4c3}"; // list-todo
+pub const TAG: &str = "\u{e17f}"; // tag
 pub const SLIDERS: &str = "\u{e29a}"; // sliders-horizontal
 pub const SQUARE_CHECK: &str = "\u{e559}"; // square-check
 pub const CHEVRONS_RIGHT: &str = "\u{e073}"; // chevrons-right

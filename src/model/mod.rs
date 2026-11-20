@@ -7,6 +7,7 @@ mod plan;
 mod prefs;
 mod quick;
 mod sample;
+mod tags;
 mod task;
 #[cfg(test)]
 mod tests;

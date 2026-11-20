@@ -132,6 +132,7 @@ impl eframe::App for App {
                 "planner" => Page::Planner,
                 "frames" => Page::Frames,
                 "lists" => Page::Lists,
+                "tags" => Page::Tags,
                 "appearance" => Page::Appearance,
                 "info" => Page::Info,
                 _ => Page::General,

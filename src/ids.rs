@@ -106,6 +106,8 @@ keyed! {
     date_pick = "date_pick";
     /// a time picker that should scroll to the time picked when it opens
     time_pick = "time_pick";
+    /// a tag being renamed in the settings
+    tag_name = "tag_name";
     due_glow = "due";
     /// a block on one day of the grid, for its settling motion
     block = "block";
