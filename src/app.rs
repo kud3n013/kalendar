@@ -163,8 +163,8 @@ impl EventEdit {
         let e = &self.ev;
         let mine = match &self.base {
             Some(b) => !same_json(
-                &(&e.title, &e.notes, &e.side_notes, e.start, e.end, e.all_day, e.calendar, e.color),
-                &(&b.title, &b.notes, &b.side_notes, b.start, b.end, b.all_day, b.calendar, b.color),
+                &(&e.title, &e.notes, &e.side_notes, e.start, e.end, e.all_day, e.calendar, e.color, e.buffer),
+                &(&b.title, &b.notes, &b.side_notes, b.start, b.end, b.all_day, b.calendar, b.color, b.buffer),
             ),
             None => !e.title.trim().is_empty() || !e.notes.trim().is_empty(),
         };
@@ -531,6 +531,10 @@ impl App {
         if aid.buffers {
             if let Some(c) = app.data.calendars.iter().find(|c| c.name == "Work").map(|c| c.id) {
                 *app.data.prefs.buffer_mut(c) = CalBuffer { calendar: c, enabled: true, before_min: 30, after_min: 15 };
+            }
+            // and the first lunch has its own: half an hour after
+            if let Some(e) = app.data.events.iter_mut().filter(|e| e.title == "Lunch").min_by_key(|e| e.start) {
+                e.buffer = Some(EventBuffer { before_min: 0, after_min: 30 });
             }
         }
         app.click_new_list = app.shot.is_some() && aid.new_list;

@@ -17,6 +17,18 @@ pub struct CalBuffer {
     pub after_min: i64,
 }
 
+/// An event's own buffer time, in place of its calendar's. Both at
+/// zero switches its buffers off.
+#[derive(Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Debug, Default)]
+#[serde(default)]
+pub struct EventBuffer {
+    pub before_min: i64,
+    pub after_min: i64,
+}
+
+/// The lengths offered for a buffer, in minutes.
+pub const BUFFER_CHOICES: [i64; 11] = [0, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180];
+
 /// Longest buffer on either side, in minutes.
 pub const BUFFER_MAX_MIN: i64 = 240;
 
@@ -46,20 +58,25 @@ impl Prefs {
 }
 
 impl Data {
+    /// Minutes before and after an event: its own, else its calendar's.
+    pub fn buffer_of(&self, e: &Event) -> (i64, i64) {
+        let (b, a) = match e.buffer {
+            Some(o) => (o.before_min, o.after_min),
+            None => self.prefs.buffer_for(e.calendar).map_or((0, 0), |c| (c.before_min, c.after_min)),
+        };
+        (b.clamp(0, BUFFER_MAX_MIN), a.clamp(0, BUFFER_MAX_MIN))
+    }
+
     /// Buffers touching [a, b), by start: of timed, kept events on visible
-    /// calendars with buffers on. Task sessions get none.
+    /// calendars, with their own buffers or their calendar's. Task sessions
+    /// get none.
     pub fn buffers_in(&self, a: NaiveDateTime, b: NaiveDateTime) -> Vec<BufferOcc> {
-        if self.prefs.buffers.is_empty() {
-            return vec![];
-        }
         let mut v = vec![];
         for e in &self.events {
             if e.all_day || e.skipped || e.task_id.is_some() || !self.calendar(e.calendar).is_some_and(|c| c.visible) {
                 continue;
             }
-            let Some(buf) = self.prefs.buffer_for(e.calendar) else { continue };
-            let before = buf.before_min.clamp(0, BUFFER_MAX_MIN);
-            let after = buf.after_min.clamp(0, BUFFER_MAX_MIN);
+            let (before, after) = self.buffer_of(e);
             if before > 0 {
                 v.push(BufferOcc { event: e.id, start: e.start - Duration::minutes(before), end: e.start, before: true });
             }

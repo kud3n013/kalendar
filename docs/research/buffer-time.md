@@ -81,7 +81,7 @@ https://product.akiflow.com/en/help/articles/9727858-travel-time
 
 | | Morgen | Akiflow | katlendar |
 |---|---|---|---|
-| Turned on | per workflow and calendar | per event, by hand | per calendar, in Settings > Planner |
+| Turned on | per workflow and calendar | per event, by hand | per calendar, in Settings > Planner; per event in its editor |
 | Before / after | either, length by meeting length | before only | both, minutes each |
 | Stored as | real busy events | real busy event | computed when drawn and when planning; never synced |
 | Over other events | never | allowed | allowed; drawn under events |
@@ -89,6 +89,9 @@ https://product.akiflow.com/en/help/articles/9727858-travel-time
 
 - **Which events get buffers:** timed, not skipped events on a calendar that has buffers on.
   Task sessions are excluded, because a task's buffers would push the planner around itself.
+- **Per event:** the event editor's Buffer row keeps the calendar's lengths, gives the event its
+  own before and after, or turns its buffers off. This is kept on the event in data.json, never sent
+  to a server, and works on read-only events too.
 - **Drawing:** like a frame, a tinted band with a line of the event's colour on the side away from
   the event. It is only painted, so clicks and drags still reach the grid.
 - **Planner:** with "Keep tasks out of buffers" on, buffer time is cut from frames and from free

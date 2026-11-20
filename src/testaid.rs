@@ -47,7 +47,8 @@ pub struct Aids {
     pub demo_account: bool,
     /// `KATLENDAR_GREY`: scheduled tasks are done and every frame skips tomorrow
     pub grey: bool,
-    /// `KATLENDAR_BUFFERS`: 30 minutes before and 15 after each Work event
+    /// `KATLENDAR_BUFFERS`: 30 minutes before and 15 after each Work event, and
+    /// the first lunch has its own buffer, 30 minutes after
     pub buffers: bool,
     /// `KATLENDAR_SHOW_MENU=<name>`: a right-click menu, shown in a window
     pub show_menu: Option<String>,

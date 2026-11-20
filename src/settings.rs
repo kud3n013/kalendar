@@ -579,26 +579,17 @@ impl App {
             combo(ui, "bk", &mut p.buffers_keep_out, &[(true, tr("Keep tasks out").into()), (false, tr("Allow tasks").into())]);
         });
         let cals: Vec<(u64, String)> = self.data.calendars.iter().map(|c| (c.id, c.name.clone())).collect();
-        const CHOICES: [i64; 11] = [0, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180];
-        let mins = |m: i64| if m == 0 { tr("None").to_string() } else if m % 60 == 0 { format!("{} h", m / 60) } else { format!("{m} min") };
         for (cid, name) in cals {
             let b = self.data.prefs.buffer_mut(cid);
             row(ui, &name, "", |ui| {
-                let picker = |ui: &mut egui::Ui, salt: &str, value: &mut i64| {
-                    egui::ComboBox::from_id_salt((salt, cid)).width(86.0).selected_text(mins(*value)).show_ui(ui, |ui| {
-                        for m in CHOICES {
-                            ui.selectable_value(value, m, mins(m));
-                        }
-                    });
-                };
                 ui.spacing_mut().item_spacing.x = 8.0;
                 switch(ui, &mut b.enabled, accent);
                 if b.enabled {
                     ui.add_space(6.0);
                     ui.label(RichText::new(tr("before")).size(theme::size::UI).color(muted));
-                    picker(ui, "bb", &mut b.before_min);
+                    crate::dialogs::buffer_pick(ui, ("bb", cid), 86.0, &mut b.before_min);
                     ui.label(RichText::new(tr("after")).size(theme::size::UI).color(muted));
-                    picker(ui, "ba", &mut b.after_min);
+                    crate::dialogs::buffer_pick(ui, ("ba", cid), 86.0, &mut b.after_min);
                 }
             });
         }

@@ -159,7 +159,10 @@ fn main() {
         "Katlendar",
         options,
         Box::new(move |cc| {
-            let _ = &cc;
+            // a picture holds one window, so editors are drawn inside it
+            if shot.is_some() {
+                cc.egui_ctx.set_embed_viewports(true);
+            }
             Ok(Box::new(App::new(shot)))
         }),
     );

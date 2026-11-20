@@ -323,6 +323,26 @@ fn editor_grid(ui: &mut egui::Ui, salt: &str, add: impl FnOnce(&mut egui::Ui)) {
     egui::Grid::new(salt).num_columns(2).spacing([12.0, 8.0]).show(ui, add);
 }
 
+/// A buffer length to pick, from none to three hours.
+pub(crate) fn buffer_pick(ui: &mut egui::Ui, salt: impl std::hash::Hash + std::fmt::Debug, width: f32, value: &mut i64) {
+    egui::ComboBox::from_id_salt(salt).width(width).selected_text(buffer_len(*value)).show_ui(ui, |ui| {
+        for m in BUFFER_CHOICES {
+            ui.selectable_value(value, m, buffer_len(m));
+        }
+    });
+}
+
+/// A buffer's length as shown: "None", "15 min" or "2 h".
+fn buffer_len(m: i64) -> String {
+    if m == 0 {
+        tr("None").to_string()
+    } else if m % 60 == 0 {
+        trf("{} h", &[&(m / 60)])
+    } else {
+        trf("{} min", &[&m])
+    }
+}
+
 fn editor_label(ui: &mut egui::Ui, text: &str, muted: egui::Color32) {
     ui.add_sized([EDITOR_LABEL_W, 20.0], egui::Label::new(RichText::new(text).color(muted)).halign(Align::LEFT));
 }
@@ -1422,6 +1442,9 @@ impl App {
         if now.color != base.color {
             ed.ev.color = now.color;
         }
+        if now.buffer != base.buffer {
+            ed.ev.buffer = now.buffer;
+        }
         ed.base = Some(now);
     }
 
@@ -1579,6 +1602,14 @@ impl App {
             self.task_fields(ui, t);
         }
         });
+        if !is_task && !ed.ev.all_day {
+            // buffers are this app's own, so a read-only event may have them too
+            editor_grid(ui, "ebufgrid", |ui| {
+                editor_label(ui, tr("Buffer"), muted);
+                self.event_buffer_row(ui, &mut ed.ev);
+                ui.end_row();
+            });
+        }
         if locked.is_none() {
             save |= editor_notes(ui, &mut rest, tr("Notes"), &mut to_notes);
             ed.ev.notes = if is_task { rest } else { join_place(&place, &rest) };
@@ -1595,6 +1626,65 @@ impl App {
         }
         ed.focus = to_title || to_notes;
         save
+    }
+
+    /// An event's buffer: its calendar's, its own before and after, or none.
+    fn event_buffer_row(&self, ui: &mut egui::Ui, ev: &mut Event) {
+        #[derive(PartialEq, Clone, Copy)]
+        enum Mode {
+            Calendar,
+            Own,
+            Off,
+        }
+        let muted = self.pal.muted;
+        let cal = self.data.prefs.buffer_for(ev.calendar).map(|c| (c.before_min, c.after_min));
+        let mut mode = match ev.buffer {
+            None => Mode::Calendar,
+            Some(b) if b == EventBuffer::default() => Mode::Off,
+            Some(_) => Mode::Own,
+        };
+        let was = mode;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            let name = |m: Mode| match m {
+                Mode::Calendar => tr("Calendar's"),
+                Mode::Own => tr("Own"),
+                Mode::Off => tr("None"),
+            };
+            egui::ComboBox::from_id_salt("ebufmode").width(52.0).selected_text(name(mode)).show_ui(ui, |ui| {
+                for m in [Mode::Calendar, Mode::Own, Mode::Off] {
+                    ui.selectable_value(&mut mode, m, name(m));
+                }
+            });
+            if mode != was {
+                ev.buffer = match mode {
+                    Mode::Calendar => None,
+                    Mode::Off => Some(EventBuffer::default()),
+                    // starts from the calendar's lengths, else a quarter hour each
+                    Mode::Own => {
+                        let (b, a) = cal.unwrap_or((15, 15));
+                        Some(EventBuffer { before_min: b, after_min: a })
+                    }
+                };
+            }
+            let small = |t: String| RichText::new(t).size(theme::size::TINY).color(muted);
+            match (mode, ev.buffer.as_mut()) {
+                (Mode::Own, Some(b)) => {
+                    ui.label(small(tr("before").into()));
+                    buffer_pick(ui, "ebufb", 56.0, &mut b.before_min);
+                    ui.label(small(tr("after").into()));
+                    buffer_pick(ui, "ebufa", 56.0, &mut b.after_min);
+                }
+                (Mode::Calendar, _) => {
+                    let what = match cal {
+                        Some((b, a)) => trf("{} before · {} after", &[&buffer_len(b), &buffer_len(a)]),
+                        None => tr("none set").into(),
+                    };
+                    ui.label(small(what));
+                }
+                _ => {}
+            }
+        });
     }
 
     fn finish_event_edit(&mut self, ctx: &egui::Context, mut ed: EventEdit, p: Pressed) {
@@ -1620,11 +1710,12 @@ impl App {
             }
         }
         if save && self.data.locked(&ed.ev).is_some() {
-            // only the side notes are its own here
-            if self.data.event(ed.ev.id).is_some_and(|e| e.side_notes != ed.ev.side_notes) {
+            // only the side notes and the buffer are its own here
+            if self.data.event(ed.ev.id).is_some_and(|e| e.side_notes != ed.ev.side_notes || e.buffer != ed.ev.buffer) {
                 self.snapshot();
                 if let Some(e) = self.data.event_mut(ed.ev.id) {
                     e.side_notes = ed.ev.side_notes.clone();
+                    e.buffer = ed.ev.buffer;
                 }
                 self.commit();
             }

@@ -1,5 +1,6 @@
 //! Calendars, the accounts they come from, and their events.
 
+use super::EventBuffer;
 use chrono::NaiveDateTime;
 use serde::{Deserialize, Serialize};
 
@@ -151,6 +152,9 @@ pub struct Event {
     /// event whose own notes can't be changed here
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub side_notes: String,
+    /// its own buffer time, in place of its calendar's; kept in this app only
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub buffer: Option<EventBuffer>,
 }
 
 impl Event {
@@ -166,6 +170,7 @@ impl Event {
         self.calendar = n.calendar;
         self.notes = n.notes;
         self.side_notes = n.side_notes;
+        self.buffer = n.buffer;
     }
     /// Forgets where the event lives on a server: it becomes a new event
     /// of one's own.

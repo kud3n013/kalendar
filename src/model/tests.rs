@@ -812,3 +812,46 @@ fn old_settings_keep_tasks_out_of_buffers() {
     assert!(p.buffers.is_empty());
     assert!(p.buffers_keep_out);
 }
+
+#[test]
+fn an_event_may_have_its_own_buffer() {
+    let mut d = empty();
+    meeting(&mut d, 90, 1);
+    // its calendar has none, yet the event asks for an hour before
+    d.events[0].buffer = Some(EventBuffer { before_min: 60, after_min: 0 });
+    assert_eq!(d.buffers_on(ymd(11, 16)), [BufferOcc { event: 90, start: hm(9, 0), end: hm(10, 0), before: true }]);
+    assert_eq!(d.next_free_slot(hm(9, 0), 60, None), Some(hm(11, 0)));
+}
+
+#[test]
+fn an_events_own_buffer_overrides_its_calendar() {
+    let mut d = empty();
+    meeting(&mut d, 90, 2);
+    meeting(&mut d, 91, 2);
+    d.events[1].start = hm(14, 0);
+    d.events[1].end = hm(15, 0);
+    *d.prefs.buffer_mut(2) = CalBuffer { calendar: 2, enabled: true, before_min: 30, after_min: 15 };
+    d.events[0].buffer = Some(EventBuffer { before_min: 0, after_min: 45 });
+    // switched off for this one event only
+    d.events[1].buffer = Some(EventBuffer::default());
+    assert_eq!(d.buffers_on(ymd(11, 16)), [BufferOcc { event: 90, start: hm(11, 0), end: hm(11, 45), before: false }]);
+    add_task(&mut d, "Write", 60, &[]);
+    d.plan_tasks(hm(9, 0));
+    assert_eq!(sessions(&d), ["Mon 09:00 10:00 Write c3"]);
+}
+
+#[test]
+fn an_events_buffer_is_kept_but_only_when_set() {
+    let mut e = Event { id: 1, ..Default::default() };
+    assert!(!serde_json::to_string(&e).unwrap().contains("buffer"), "old data stays as it was");
+    let old: Event = serde_json::from_str(&serde_json::to_string(&e).unwrap()).unwrap();
+    assert_eq!(old.buffer, None);
+    e.buffer = Some(EventBuffer { before_min: 20, after_min: 0 });
+    let back: Event = serde_json::from_str(&serde_json::to_string(&e).unwrap()).unwrap();
+    assert_eq!(back.buffer, e.buffer);
+    // the editor's save takes it, and the server never hears of it
+    let mut live = Event { id: 1, ..Default::default() };
+    assert!(live.same_content(&e));
+    live.take_edits(e.clone());
+    assert_eq!(live.buffer, e.buffer);
+}
