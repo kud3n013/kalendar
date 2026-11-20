@@ -391,7 +391,17 @@ impl App {
             } else if self.new_task_open {
                 self.new_task_open = false;
             } else if self.create.take().is_some() {
-            } else if self.frame_editor.take().is_some() {
+            } else if let Some(f) = self.frame_editor.as_ref() {
+                // a kept frame changed in its window asks before it goes
+                if !f.is_new && f.changed(self.data.frame(f.frame.id)) {
+                    crate::dialogs::ask_discard(ctx, "frame_editor");
+                } else {
+                    self.frame_editor = None;
+                }
+            } else if inline && self.editor.as_ref().is_some_and(|e| e.changed()) {
+                crate::dialogs::ask_discard(ctx, "event_editor");
+            } else if inline && self.task_editor.as_ref().is_some_and(|e| e.changed()) {
+                crate::dialogs::ask_discard(ctx, "task_editor");
             } else if inline && (self.editor.take().is_some() || self.task_editor.take().is_some()) {
             } else if self.show_prefs {
                 self.show_prefs = false;

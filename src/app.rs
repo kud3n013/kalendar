@@ -149,7 +149,54 @@ pub struct TaskEdit {
     pub base: Task,
 }
 
+/// Whether two things that serialize alike are the same, for the parts
+/// of a task or an event that the editors change.
+fn same_json<T: serde::Serialize>(a: &T, b: &T) -> bool {
+    serde_json::to_string(a).ok() == serde_json::to_string(b).ok()
+}
+
+impl EventEdit {
+    /// Whether the person changed anything here since it was opened (or
+    /// since the stored event last changed elsewhere); a new event counts
+    /// as changed once it has a name or notes.
+    pub fn changed(&self) -> bool {
+        let e = &self.ev;
+        let mine = match &self.base {
+            Some(b) => !same_json(
+                &(&e.title, &e.notes, &e.side_notes, e.start, e.end, e.all_day, e.calendar, e.color),
+                &(&b.title, &b.notes, &b.side_notes, b.start, b.end, b.all_day, b.calendar, b.color),
+            ),
+            None => !e.title.trim().is_empty() || !e.notes.trim().is_empty(),
+        };
+        mine || self.repeat != Repeat::None || self.task.as_ref().is_some_and(|t| t.changed())
+    }
+}
+
+impl FrameEdit {
+    /// Whether the frame differs from `stored`, the one kept; a new frame
+    /// (none kept) counts as changed once it has a name.
+    pub fn changed(&self, stored: Option<&Frame>) -> bool {
+        match stored {
+            Some(f) => self.frame != *f || self.until_text.trim() != f.until.map(|d| d.to_string()).unwrap_or_default(),
+            None => !self.frame.name.trim().is_empty(),
+        }
+    }
+}
+
 impl TaskEdit {
+    /// Whether the person changed anything here since the stored task
+    /// was last looked at.
+    pub fn changed(&self) -> bool {
+        let (t, b) = (&self.task, &self.base);
+        let date = |d: Option<NaiveDate>| d.map(|d| d.to_string()).unwrap_or_default();
+        !same_json(
+            &(&t.title, &t.notes, t.done, t.priority, t.duration_min, t.list, &t.repeat, t.flexible),
+            &(&b.title, &b.notes, b.done, b.priority, b.duration_min, b.list, &b.repeat, b.flexible),
+        ) || self.due_text.trim() != date(b.due)
+            || self.earliest_text.trim() != date(b.earliest)
+            || self.tags_text.split_whitespace().ne(b.tags.iter().map(String::as_str))
+    }
+
     /// An editor for a task as it is stored.
     pub fn of(t: &Task) -> Self {
         TaskEdit {

@@ -179,6 +179,20 @@ struct Pressed {
     cancel: bool,
     delete: bool,
     skip: bool,
+    /// while unsaved changes were asked about: drop them, or go on editing
+    discard: bool,
+    keep: bool,
+}
+
+/// Where an editor window keeps whether it is asking about unsaved changes.
+fn asking_id(name: &str) -> egui::Id {
+    egui::ViewportId::from_hash_of(name).0.with("ask")
+}
+
+/// Has the editor window `name` ask whether to drop its unsaved changes,
+/// instead of closing.
+pub(crate) fn ask_discard(ctx: &egui::Context, name: &str) {
+    ctx.data_mut(|d| d.insert_temp(asking_id(name), true));
 }
 
 /// What an editor window offers besides Save and Cancel.
@@ -191,8 +205,20 @@ struct Offer {
 
 /// Save and Cancel, with Skip and Delete on the right, kept at the foot of
 /// the editor window whatever its size.
-fn editor_buttons(ui: &mut egui::Ui, offer: Offer) -> Pressed {
+fn editor_buttons(ui: &mut egui::Ui, offer: Offer, asking: bool) -> Pressed {
     let mut out = Pressed::default();
+    if asking {
+        // closing would lose what was typed: say so where the buttons were
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(tr("Discard unsaved changes?")).strong());
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                out.keep = ui.button(tr("Keep editing")).on_hover_text(tr("Esc")).clicked();
+                out.discard = ui.button(tr("Discard")).clicked();
+                out.save = ui.button(RichText::new(tr("Save")).strong()).on_hover_text(tr("Ctrl+Enter")).clicked();
+            });
+        });
+        return out;
+    }
     ui.horizontal(|ui| {
         out.save = ui.button(RichText::new(tr("Save")).strong()).on_hover_text(tr("Ctrl+Enter")).clicked();
         out.cancel = ui.button(tr("Cancel")).on_hover_text(tr("Esc")).clicked();
@@ -699,7 +725,19 @@ impl App {
         let p = if ed.is_new {
             self.frame_flyout(ctx, &mut ed, &mut new_list, &mut back)
         } else {
-            self.edit_window(ctx, "frame_editor", title, at, focus, Offer { delete: true, skip: None }, |app, ui| app.frame_form(ui, &mut ed, &mut new_list))
+            {
+            let ed = std::cell::RefCell::new(&mut ed);
+            self.edit_window(
+                ctx,
+                "frame_editor",
+                title,
+                at,
+                focus,
+                Offer { delete: true, skip: None },
+                |app| ed.borrow().changed(app.data.frame(ed.borrow().frame.id)),
+                |app, ui| app.frame_form(ui, &mut ed.borrow_mut(), &mut new_list),
+            )
+        }
         };
         let Pressed { save, cancel, delete, .. } = p;
         if let Some(name) = new_list {
@@ -757,7 +795,7 @@ impl App {
     /// A new frame's in-app flyout: in the very window a drawn block was set
     /// up in, with the Task and Event tabs to go back, else in the centre.
     fn frame_flyout(&mut self, ctx: &egui::Context, ed: &mut crate::FrameEdit, new_list: &mut Option<String>, back: &mut Option<CreateKind>) -> Pressed {
-        let mut p = Pressed { save: false, cancel: false, delete: false, skip: false };
+        let mut p = Pressed::default();
         let muted = self.pal.muted;
         let win_id = if ed.from_block.is_some() { ids::create_popup() } else { ids::frame_editor() };
         let win = egui::Window::new(tr("New frame")).id(win_id).collapsible(false).resizable(false);
@@ -1046,7 +1084,10 @@ impl App {
         let stored = (!ed.is_new).then(|| self.data.event(ed.ev.id)).flatten();
         let offer = Offer { delete: stored.is_some_and(|e| self.data.locked(e).is_none()), skip: stored.filter(|e| e.task_id.is_none()).map(|e| e.skipped) };
         let focus = ed.focus;
-        let pressed = self.edit_window(ctx, "event_editor", title, at, focus, offer, |app, ui| app.event_form(ui, &mut ed));
+        let pressed = {
+            let ed = std::cell::RefCell::new(&mut ed);
+            self.edit_window(ctx, "event_editor", title, at, focus, offer, |_| ed.borrow().changed(), |app, ui| app.event_form(ui, &mut ed.borrow_mut()))
+        };
         self.finish_event_edit(ctx, ed, pressed);
     }
 
@@ -1078,8 +1119,11 @@ impl App {
         at: egui::Pos2,
         focus: bool,
         offer: Offer,
+        changed: impl Fn(&App) -> bool,
         mut form: impl FnMut(&mut App, &mut egui::Ui) -> bool,
     ) -> Pressed {
+        let ask = asking_id(name);
+        let asking = ctx.data(|d| d.get_temp::<bool>(ask)).unwrap_or(false);
         let builder = egui::ViewportBuilder::default()
             .with_title(title)
             .with_app_id("katlendar")
@@ -1094,7 +1138,7 @@ impl App {
                 ui.set_width(EDITOR_SIZE[0] - 28.0);
                 let save = form(self, ui);
                 ui.add_space(4.0);
-                out = editor_buttons(ui, offer);
+                out = editor_buttons(ui, offer, asking);
                 out.save |= save;
                 return;
             }
@@ -1107,7 +1151,7 @@ impl App {
             let foot = egui::Panel::bottom(ids::editor_buttons())
                 .show_separator_line(false)
                 .frame(egui::Frame::new().fill(self.pal.bg).inner_margin(egui::Margin { left: 14, right: 14, top: 8, bottom: 14 }))
-                .show(ui, |ui| out = editor_buttons(ui, offer));
+                .show(ui, |ui| out = editor_buttons(ui, offer, asking));
             let mut save = false;
             let mut content = egui::Vec2::ZERO;
             egui::CentralPanel::default().frame(egui::Frame::new().fill(self.pal.bg).inner_margin(egui::Margin { left: 14, right: 14, top: 14, bottom: 0 })).show(ui, |ui| {
@@ -1141,10 +1185,32 @@ impl App {
                 }
             }
             let (close, esc) = ctx.input(|i| (i.viewport().close_requested(), i.key_pressed(egui::Key::Escape)));
-            if close || esc {
-                out.cancel = true;
+            if close {
+                // the window stays until the unsaved changes are asked about
+                ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             }
+            out.cancel |= close;
+            out.keep |= asking && esc;
+            out.cancel |= esc && !asking;
         });
+        // leaving with changes not saved asks first; while it asks, closing
+        // again only keeps the question up
+        if asking {
+            if out.discard {
+                out.cancel = true;
+            } else if out.cancel || out.keep {
+                out.cancel = false;
+                if out.keep {
+                    ctx.data_mut(|d| d.insert_temp(ask, false));
+                }
+            }
+        } else if out.cancel && changed(self) {
+            out.cancel = false;
+            ask_discard(ctx, name);
+        }
+        if out.save || out.cancel || out.delete {
+            ctx.data_mut(|d| d.remove_temp::<bool>(ask));
+        }
         out
     }
 
@@ -1331,7 +1397,7 @@ impl App {
     }
 
     fn finish_event_edit(&mut self, ctx: &egui::Context, mut ed: EventEdit, p: Pressed) {
-        let Pressed { save, cancel, delete, skip } = p;
+        let Pressed { save, cancel, delete, skip, .. } = p;
         if skip {
             // the editor stays open, showing Unskip
             self.toggle_skip(ctx, ed.ev.id);
@@ -1422,7 +1488,10 @@ impl App {
         self.sync_task_edit(&mut ed);
         let at = self.editor_spot(ctx, ids::task_editor().with(ed.task.id), None);
         let focus = ed.focus;
-        let p = self.edit_window(ctx, "task_editor", tr("Task"), at, focus, Offer { delete: true, skip: None }, |app, ui| app.task_form(ui, &mut ed));
+        let p = {
+            let ed = std::cell::RefCell::new(&mut ed);
+            self.edit_window(ctx, "task_editor", tr("Task"), at, focus, Offer { delete: true, skip: None }, |_| ed.borrow().changed(), |app, ui| app.task_form(ui, &mut ed.borrow_mut()))
+        };
         self.finish_task_edit(ctx, ed, p.save, p.cancel, p.delete);
     }
 
@@ -1839,5 +1908,32 @@ mod tests {
         assert!(app.editor.is_some());
         app.toggle_skip(&ctx, 700);
         assert!(!app.data.event(700).unwrap().skipped);
+    }
+
+    #[test]
+    fn an_editor_knows_when_it_has_unsaved_changes() {
+        let mut app = app_with_event();
+        app.edit_event(700);
+        let mut ed = app.editor.take().unwrap();
+        assert!(!ed.changed(), "just opened");
+        ed.ev.title.push('!');
+        assert!(ed.changed());
+
+        let task = Task { id: 5, title: "Read".into(), tags: vec!["a".into(), "b".into()], ..Default::default() };
+        let mut t = crate::TaskEdit::of(&task);
+        assert!(!t.changed());
+        t.tags_text = "a  b ".into();
+        assert!(!t.changed(), "the same tags, spaced otherwise");
+        t.due_text = "2026-12-01".into();
+        assert!(t.changed());
+
+        let id = app.data.frames.first().map(|f| f.id);
+        if let Some(id) = id {
+            app.edit_frame(id);
+            let mut f = app.frame_editor.take().unwrap();
+            assert!(!f.changed(app.data.frame(id)));
+            f.frame.name.push('!');
+            assert!(f.changed(app.data.frame(id)));
+        }
     }
 }
