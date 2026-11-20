@@ -229,6 +229,11 @@ fn pick_one(ui: &mut egui::Ui, salt: &str, items: &[(u64, String, egui::Color32)
 /// A row of colour swatches: the calendar's own first, then the event
 /// colours. `color` is None for the calendar's.
 fn color_row(ui: &mut egui::Ui, cal_color: [u8; 3], color: &mut Option<[u8; 3]>) {
+    swatches(ui, cal_color, tr("Calendar colour"), color);
+}
+
+/// A row of colour dots: the first, `base`, for None, then the palette.
+pub(crate) fn swatches(ui: &mut egui::Ui, base: [u8; 3], base_tip: &str, color: &mut Option<[u8; 3]>) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         let swatch = |ui: &mut egui::Ui, col: [u8; 3], on: bool, tip: &str| {
@@ -239,7 +244,7 @@ fn color_row(ui: &mut egui::Ui, cal_color: [u8; 3], color: &mut Option<[u8; 3]>)
             }
             resp.on_hover_text(tip).clicked()
         };
-        if swatch(ui, cal_color, color.is_none(), tr("Calendar colour")) {
+        if swatch(ui, base, color.is_none(), base_tip) {
             *color = None;
         }
         ui.add_space(6.0);

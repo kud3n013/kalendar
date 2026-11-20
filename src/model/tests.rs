@@ -652,3 +652,21 @@ fn new_events_start_in_the_picked_default_calendar() {
     d.prefs.default_calendar = Some(99);
     assert_eq!(d.default_calendar(), own);
 }
+
+#[test]
+fn a_block_takes_its_list_colour_else_its_calendars() {
+    let mut d = empty();
+    let cal = d.first_own_calendar();
+    let cal_col = d.calendar_color(cal);
+    d.lists.push(TaskList { id: 4242, color: [1, 2, 3], ..Default::default() });
+    d.tasks.push(Task { id: 1, list: 4242, ..Default::default() });
+    d.tasks.push(Task { id: 2, list: 0, ..Default::default() });
+    let block = |task| Event { task_id: Some(task), calendar: cal, ..Default::default() };
+    assert_eq!(d.event_color(&block(1)), [1, 2, 3]);
+    // the Inbox is no list: straight to the calendar
+    assert_eq!(d.event_color(&block(2)), cal_col);
+    // a block's own colour comes first; with its calendar gone, the main one
+    assert_eq!(d.event_color(&Event { color: Some([9, 9, 9]), ..block(1) }), [9, 9, 9]);
+    d.prefs.main_color = Some([7, 7, 7]);
+    assert_eq!(d.event_color(&Event { calendar: 999, ..block(2) }), [7, 7, 7]);
+}

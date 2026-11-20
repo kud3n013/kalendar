@@ -1029,7 +1029,7 @@ impl App {
                         f.zip(t).is_none_or(|(f, t)| f.matches(t, p.default_task_min))
                     });
                     let bg = self.pal.bg;
-                    let own = self.data.task(tid).map_or(self.pal.accent, |t| rgb(self.data.list_look(t.list).1));
+                    let own = rgb(self.data.block_color(self.data.task(tid), self.data.default_calendar()));
                     let (fill, line, text) = match over {
                         Some(b) if fits => (mix(bg, own, 0.35), b.color, self.pal.text),
                         Some(b) => (mix(bg, b.color, 0.10), mix(bg, b.color, 0.40), self.pal.muted),

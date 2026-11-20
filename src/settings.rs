@@ -510,6 +510,9 @@ impl App {
             combo(ui, "sz", &mut pct, &sizes);
             p.ui_scale = pct as f32 / 100.0;
         });
+        row(ui, tr("Main colour"), tr("For buttons, switches and marks, and for a block whose calendar has gone. Blocks take their list's colour, or their calendar's when they have no list or sit in the Inbox."), |ui| {
+            crate::dialogs::swatches(ui, MAIN_COLOR, tr("Default"), &mut p.main_color);
+        });
         let accent = self.pal.accent;
         row(ui, tr("Animations"), tr("Sliding pages, gliding blocks, the zoom and fades. Off, everything changes at once."), |ui| {
             switch(ui, &mut p.animations, accent);

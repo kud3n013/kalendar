@@ -89,6 +89,7 @@ impl eframe::App for App {
             self.font_applied = Some(want);
         }
         self.pal = Palette::new(ctx.global_style().visuals.dark_mode);
+        self.pal.accent = crate::rgb(self.data.main_color());
         let (bg, side, text) = (self.pal.bg, self.pal.side, self.pal.text);
         ctx.global_style_mut(|s| {
             s.visuals.panel_fill = bg;

@@ -40,6 +40,8 @@ pub const PLAN_SPAN_DAYS: i64 = 3; // the planner fills this many days
 pub const PLAN_MAX_SPAN_DAYS: i64 = 8; // longest look-ahead
 pub const PLAN_OWN_FRAME_DAYS: i64 = 15; // how far ahead a task's own frame is looked for
 /// Event colours, in menu order.
+/// The app's own main colour, as theme::ACCENT.
+pub const MAIN_COLOR: [u8; 3] = [0x62, 0x5e, 0xfc];
 pub const EVENT_COLORS: [([u8; 3], &str); 13] = [
     ([0xf1, 0x76, 0xa8], "Pink"),
     ([0xeb, 0x62, 0x62], "Red"),

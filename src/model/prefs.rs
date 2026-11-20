@@ -84,6 +84,9 @@ pub struct Prefs {
     /// the calendar a block drawn on the calendar and a new event start
     /// in; None, or one that can't take events, is the first of one's own
     pub default_calendar: Option<u64>,
+    /// the main colour of buttons, switches and marks, and of a block
+    /// whose calendar has gone; None is the app's own
+    pub main_color: Option<[u8; 3]>,
     pub first_day: u8, // 0 = Sunday
     pub hour12: bool,
     pub initial_view: View,
@@ -144,6 +147,7 @@ impl Default for Prefs {
     fn default() -> Self {
         Prefs {
             default_calendar: None,
+            main_color: None,
             first_day: 0,
             hour12: false,
             initial_view: View::Week,

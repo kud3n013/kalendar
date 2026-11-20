@@ -147,9 +147,19 @@ impl Data {
         self.events.iter().any(|e| e.task_id == Some(id))
     }
     /// An event's own colour, else for a task's block its list's colour,
-    /// else its calendar's.
+    /// else its calendar's, else the main colour. The Inbox is no list
+    /// here: a task in it takes its calendar's colour.
     pub fn event_color(&self, e: &Event) -> [u8; 3] {
-        e.color.or_else(|| self.task(e.task_id?).map(|t| self.list_look(t.list).1)).unwrap_or_else(|| self.calendar_color(e.calendar))
+        e.color.unwrap_or_else(|| self.block_color(e.task_id.and_then(|t| self.task(t)), e.calendar))
+    }
+    /// The colour of a task's block in a calendar: its list's, unless it
+    /// is in the Inbox, else the calendar's.
+    pub fn block_color(&self, task: Option<&Task>, cal: u64) -> [u8; 3] {
+        task.and_then(|t| self.lists.iter().find(|l| l.id == t.list && t.list != 0)).map(|l| l.color).unwrap_or_else(|| self.calendar_color(cal))
+    }
+    /// The main colour picked under Appearance, else the app's own.
+    pub fn main_color(&self) -> [u8; 3] {
+        self.prefs.main_color.unwrap_or(MAIN_COLOR)
     }
     /// Reads a data file, bringing an older one up to date.
     pub fn from_json(text: &str) -> Option<Data> {
@@ -454,7 +464,7 @@ impl Data {
         self.calendars.retain(|c| c.id != cal);
     }
     pub fn calendar_color(&self, id: u64) -> [u8; 3] {
-        self.calendar(id).map(|c| c.color).unwrap_or([66, 133, 244])
+        self.calendar(id).map(|c| c.color).unwrap_or_else(|| self.main_color())
     }
     /// Archives the completed tasks; returns how many.
     pub fn archive_done(&mut self) -> usize {
