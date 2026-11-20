@@ -1936,4 +1936,28 @@ mod tests {
             assert!(f.changed(app.data.frame(id)));
         }
     }
+
+    #[test]
+    fn folded_lists_stay_folded_through_the_rail() {
+        let mut app = App::new(Some(PathBuf::from("unused.png")));
+        let ctx = egui::Context::default();
+        let mut t = 0.0;
+        let frame = |app: &mut App, t: &mut f64| {
+            *t += 0.05;
+            let raw = egui::RawInput { time: Some(*t), screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 900.0))), ..Default::default() };
+            let mut out = ctx.run_ui(raw, |ui| app.ui_sidebar(ui));
+            out.textures_delta.clear();
+        };
+        for _ in 0..5 { frame(&mut app, &mut t); }
+        let keys = app.section_keys(Local::now().date_naive());
+        app.collapsed.extend(keys.clone());
+        let before = app.collapsed.clone();
+        // folded to the rail and opened again
+        for _ in 0..5 { frame(&mut app, &mut t); }
+        app.run(&ctx, Cmd::ToggleTasks);
+        for _ in 0..40 { frame(&mut app, &mut t); }
+        app.run(&ctx, Cmd::ToggleTasks);
+        for _ in 0..40 { frame(&mut app, &mut t); }
+        assert_eq!(before, app.collapsed);
+    }
 }

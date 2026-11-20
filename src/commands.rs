@@ -286,7 +286,13 @@ impl App {
                 }
             }
             Cmd::Plan => self.plan(ctx, None),
-            Cmd::ToggleTasks => self.data.prefs.sidebar_open = !self.data.prefs.sidebar_open,
+            Cmd::ToggleTasks => {
+                self.data.prefs.sidebar_open = !self.data.prefs.sidebar_open;
+                // kept for next time, unless a narrow window is what hid it
+                if self.compact.is_none() {
+                    self.save();
+                }
+            }
             Cmd::ToggleTheme => {
                 let dark_now = self.pal.dark;
                 self.data.prefs.theme = match self.data.prefs.theme {

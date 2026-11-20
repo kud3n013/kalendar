@@ -100,6 +100,8 @@ pub struct Prefs {
     pub grid_start_h: i64,
     pub grid_end_h: i64,
     pub sidebar_open: bool,
+    /// the task panel's lists and groups left folded, by their keys
+    pub folded: Vec<String>,
     pub sidebar_w: f32,
     pub sidebar_side: PanelSide,
     /// font family for all text; empty follows the system
@@ -161,6 +163,7 @@ impl Default for Prefs {
             grid_start_h: 0,
             grid_end_h: 24,
             sidebar_open: true,
+            folded: vec!["done".into()],
             sidebar_w: 410.0,
             sidebar_side: PanelSide::Left,
             font: String::new(),

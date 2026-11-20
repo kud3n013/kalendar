@@ -387,6 +387,7 @@ impl App {
             data.lists.push(TaskList { id: 911, name: tr("Home").into(), color: EVENT_COLORS[6].0, account: Some(900), remote_id: Some("https://cloud.example.org/dav/calendars/sam/0/".into()), ..Default::default() });
         }
         let view = data.prefs.initial_view;
+        let collapsed = data.prefs.folded.iter().cloned().collect();
         let scroll = (opening_scroll_min(Self::now()) - data.prefs.grid_start_h * 60) as f32 / 60.0 * data.prefs.hour_height();
         let mut app = App {
             data,
@@ -466,7 +467,7 @@ impl App {
             flyer: None,
             morph: Morph::default(),
             new_list_name: String::new(),
-            collapsed: ["done".to_string()].into_iter().collect(),
+            collapsed,
             scroll_to: Some(scroll.max(0.0)),
             clipboard: None,
             recording: None,
@@ -555,9 +556,25 @@ impl App {
 
     pub fn commit(&mut self) {
         self.note_edits();
-        if self.shot.is_none() {
-            self.data.save();
+        self.save();
+    }
+
+    /// Writes the data and settings, with the task panel as the person
+    /// left it: open or folded to the rail (not as a narrow window forced
+    /// it), and which of its lists are folded.
+    pub fn save(&mut self) {
+        if self.shot.is_some() {
+            return;
         }
+        let mut folded: Vec<String> = self.collapsed.iter().filter(|k| !k.starts_with("fly")).cloned().collect();
+        folded.sort();
+        self.data.prefs.folded = folded;
+        let now = self.data.prefs.sidebar_open;
+        if let Some((open, _)) = self.compact {
+            self.data.prefs.sidebar_open = open;
+        }
+        self.data.save();
+        self.data.prefs.sidebar_open = now;
     }
 
     pub fn say(&mut self, ctx: &egui::Context, text: impl Into<String>, undo: bool) {
@@ -574,7 +591,10 @@ impl App {
 
     pub fn do_undo(&mut self, ctx: &egui::Context) {
         if let Some(d) = self.undo.pop() {
+            // undo puts back the calendar and tasks, not the panel
+            let open = self.data.prefs.sidebar_open;
             self.data = d;
+            self.data.prefs.sidebar_open = open;
             self.selected = None;
             self.commit();
             self.say(ctx, tr("Undone"), false);

@@ -600,6 +600,7 @@ impl App {
                     } else {
                         self.collapsed.extend(keys);
                     }
+                    self.save();
                 }
             });
         });
@@ -926,6 +927,9 @@ impl App {
             } else {
                 self.collapsed.insert(key.to_string());
             }
+            if !key.starts_with("fly") {
+                self.save();
+            }
         }
         // a list is renamed, recoloured or removed from its menu: the
         // three dots at the end of the row, or a right click
@@ -994,7 +998,7 @@ impl App {
     }
 
     /// The keys of every list the panel shows, to fold or unfold them all.
-    fn section_keys(&self, today: NaiveDate) -> Vec<String> {
+    pub(crate) fn section_keys(&self, today: NaiveDate) -> Vec<String> {
         let mut keys: Vec<String> = self.due_groups(today, self.filter_tag.as_deref()).iter().map(|g| g.0.to_string()).collect();
         keys.extend(std::iter::once(0).chain(self.data.lists.iter().map(|l| l.id)).map(|id| format!("list{id}")));
         if !self.done_ids().is_empty() {
