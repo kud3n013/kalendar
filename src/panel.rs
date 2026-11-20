@@ -1436,8 +1436,9 @@ impl App {
                 if scheduled {
                     chips.push(("scheduled".into(), muted));
                 }
-                if let Some(d) = t.due {
-                    let c = if d < today && !t.done { theme::DANGER } else { muted };
+                // a finished task has no deadline left to meet
+                if let Some(d) = t.due.filter(|_| !t.done) {
+                    let c = if d < today { theme::DANGER } else { muted };
                     let rep = if t.repeat != Repeat::None { format!("  {}", icons::REPEAT) } else { String::new() };
                     chips.push((format!("{} {}{rep}", icons::FLAG, due_label(d, today)), c));
                 }
