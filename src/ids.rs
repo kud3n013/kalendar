@@ -102,6 +102,8 @@ keyed! {
     task_row = "row";
     /// the small name field under a "+" beside a dropdown
     add_text = "add_text";
+    /// the month a date picker shows
+    date_pick = "date_pick";
     due_glow = "due";
     /// a block on one day of the grid, for its settling motion
     block = "block";

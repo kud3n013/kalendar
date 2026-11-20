@@ -52,6 +52,107 @@ fn time_drag(ui: &mut egui::Ui, m: &mut i64, lo: i64, hi: i64, hour12: bool, mut
     *m = (h * 60 + mm / 5 * 5).clamp(lo, hi);
 }
 
+/// How a date picker looks: the week's first day and a few colours.
+#[derive(Clone, Copy)]
+pub(crate) struct PickLook {
+    pub first_day: u8,
+    pub text: egui::Color32,
+    pub muted: egui::Color32,
+    pub side: egui::Color32,
+    pub accent: egui::Color32,
+}
+
+impl App {
+    pub(crate) fn pick_look(&self) -> PickLook {
+        PickLook { first_day: self.data.prefs.first_day, text: self.pal.text, muted: self.pal.muted, side: self.pal.side, accent: self.pal.accent }
+    }
+}
+
+/// A calendar button that drops down a month to click a day in, the way
+/// calendar apps pick dates. `cur` is the day shown picked (and the month
+/// it opens on, else today's). Gives back the day clicked.
+pub(crate) fn date_pick(ui: &mut egui::Ui, salt: &str, cur: Option<NaiveDate>, look: PickLook) -> Option<NaiveDate> {
+    use chrono::Datelike;
+    let b = ui.add(egui::Button::new(RichText::new(icons::CALENDAR).size(theme::size::BODY)).min_size(egui::vec2(24.0, 0.0))).on_hover_text(tr("Pick a date"));
+    let id = ids::date_pick(salt);
+    let today = Local::now().date_naive();
+    let open_on = cur.unwrap_or(today).with_day(1).unwrap_or(today);
+    // the month shown starts at the picked day's each time it opens
+    if b.clicked() {
+        ui.data_mut(|d| d.insert_temp(id, open_on));
+    }
+    let mut out = None;
+    egui::Popup::from_toggle_button_response(&b).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+        let first = ui.data(|d| d.get_temp::<NaiveDate>(id)).unwrap_or(open_on);
+        let back = (first.weekday().num_days_from_sunday() as i64 - look.first_day as i64).rem_euclid(7);
+        let start = first - Duration::days(back);
+        let mut step = 0;
+        ui.set_width(7.0 * 30.0);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(first.format("%B %Y").to_string()).font(theme::bold(theme::size::BODY)));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui.add(egui::Button::new(RichText::new(icons::CHEVRON_RIGHT).size(theme::size::BODY)).frame(false)).on_hover_text(tr("Next month")).clicked() {
+                    step = 1;
+                }
+                if ui.add(egui::Button::new(RichText::new(icons::CHEVRON_LEFT).size(theme::size::BODY)).frame(false)).on_hover_text(tr("Previous month")).clicked() {
+                    step = -1;
+                }
+            });
+        });
+        egui::Grid::new(id.with("grid")).spacing([0.0, 0.0]).min_col_width(30.0).show(ui, |ui| {
+            for i in 0..7 {
+                let d = start + Duration::days(i);
+                ui.vertical_centered(|ui| ui.label(RichText::new(&d.format("%a").to_string()[..2]).size(theme::size::MICRO).color(look.muted)));
+            }
+            ui.end_row();
+            for i in 0..42 {
+                let d = start + Duration::days(i);
+                let (r, resp) = ui.allocate_exact_size(egui::vec2(30.0, 26.0), egui::Sense::click());
+                let picked = Some(d) == cur;
+                if picked {
+                    ui.painter().circle_filled(r.center(), 11.0, look.accent);
+                } else if resp.hovered() {
+                    ui.painter().circle_filled(r.center(), 11.0, mix(look.side, look.text, 0.14));
+                }
+                if d == today && !picked {
+                    ui.painter().circle_stroke(r.center(), 11.0, Stroke::new(1.0, theme::DANGER));
+                }
+                let c = if picked { egui::Color32::WHITE } else if d.month() != first.month() { look.muted } else { look.text };
+                ui.painter().text(r.center(), Align2::CENTER_CENTER, d.day().to_string(), FontId::proportional(theme::size::SMALL), c);
+                if resp.clicked() {
+                    out = Some(d);
+                }
+                if i % 7 == 6 {
+                    ui.end_row();
+                }
+            }
+        });
+        ui.horizontal(|ui| {
+            if ui.small_button(tr("Today")).clicked() {
+                out = Some(today);
+            }
+        });
+        if step != 0 {
+            let m = chrono::Months::new(1);
+            let to = if step > 0 { first.checked_add_months(m) } else { first.checked_sub_months(m) }.unwrap_or(first);
+            ui.data_mut(|d| d.insert_temp(id, to));
+        }
+        if out.is_some() {
+            ui.close();
+        }
+    });
+    out
+}
+
+/// A YYYY-MM-DD box with the date picker beside it.
+pub(crate) fn date_field(ui: &mut egui::Ui, salt: &str, text: &mut String, width: f32, look: PickLook) {
+    ui.add(egui::TextEdit::singleline(text).hint_text("YYYY-MM-DD").desired_width(width));
+    let cur = NaiveDate::parse_from_str(text.trim(), "%Y-%m-%d").ok();
+    if let Some(d) = date_pick(ui, salt, cur, look) {
+        *text = d.to_string();
+    }
+}
+
 /// A "+" beside a dropdown: a small field pops up under it, and Enter
 /// gives back the name typed there.
 fn add_button(ui: &mut egui::Ui, salt: &str, hint: &str) -> Option<String> {
@@ -445,6 +546,7 @@ impl App {
         all_tags.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
         let muted = self.pal.muted;
         let p = self.data.prefs.clone();
+        let look = self.pick_look();
         let w = 380.0;
         let pos = place_beside(ctx, ids::create_popup(), c.anchor_rect, egui::vec2(w + 20.0, 400.0));
         let cal_color = self.data.calendar_color(c.ev.calendar);
@@ -533,7 +635,7 @@ impl App {
                                 ui.label(RichText::new("when completed").color(muted)).on_hover_text(tr("Ticking the task off leaves a fresh one, due the next time"));
                             } else {
                                 ui.label(RichText::new("until").color(muted));
-                                ui.add(egui::TextEdit::singleline(&mut c.until_text).hint_text("YYYY-MM-DD").desired_width(100.0));
+                                date_field(ui, "cuntil", &mut c.until_text, 100.0, look);
                             }
                         }
                     });
@@ -577,7 +679,7 @@ impl App {
 
                         label(ui, tr("Due"));
                         ui.horizontal(|ui| {
-                            ui.add(egui::TextEdit::singleline(&mut c.due_text).hint_text("YYYY-MM-DD").desired_width(100.0));
+                            date_field(ui, "cdue", &mut c.due_text, 100.0, look);
                             if ui.small_button(tr("Today")).clicked() {
                                 c.due_text = today.to_string();
                             }
@@ -839,6 +941,7 @@ impl App {
     /// The frame editor's fields; returns whether to save.
     fn frame_form(&mut self, ui: &mut egui::Ui, ed: &mut crate::FrameEdit, new_list: &mut Option<String>) -> bool {
         let muted = self.pal.muted;
+        let look = self.pick_look();
         let cal_color = self.data.calendar_color(ed.frame.calendar);
         // every tag in use, plus the ones the frame already asks for
         let mut all_tags: Vec<String> = self.data.tasks.iter().flat_map(|t| t.tags.iter().cloned()).collect();
@@ -908,7 +1011,7 @@ impl App {
 
                     label(ui, tr("Until"));
                     ui.horizontal(|ui| {
-                        ui.add(egui::TextEdit::singleline(&mut ed.until_text).hint_text("YYYY-MM-DD").desired_width(100.0));
+                        date_field(ui, "funtil", &mut ed.until_text, 100.0, look);
                         if !ed.until_text.is_empty() && ui.small_button(tr("Forever")).clicked() {
                             ed.until_text.clear();
                         }
@@ -1244,6 +1347,7 @@ impl App {
     fn event_form(&mut self, ui: &mut egui::Ui, ed: &mut EventEdit) -> bool {
         let is_task = ed.ev.task_id.is_some();
         let hour12 = self.data.prefs.hour12;
+        let look = self.pick_look();
         let muted = self.pal.muted;
         // a read-only event: only Skip and the side notes can change
         let locked = if ed.is_new { None } else { self.data.locked(&ed.ev) };
@@ -1282,6 +1386,12 @@ impl App {
                     if ui.small_button(icons::CHEVRON_RIGHT).clicked() {
                         ed.ev.start += Duration::days(1);
                         ed.ev.end += Duration::days(1);
+                    }
+                    // moves the whole event, keeping its times and length
+                    if let Some(d) = date_pick(ui, "edate", Some(ed.ev.start.date()), look) {
+                        let by = d - ed.ev.start.date();
+                        ed.ev.start += by;
+                        ed.ev.end += by;
                     }
                 });
                 ui.end_row();
@@ -1361,7 +1471,7 @@ impl App {
                         }
                         if ed.repeat != Repeat::None {
                             ui.label(RichText::new(tr("until")).color(muted));
-                            ui.add(egui::TextEdit::singleline(&mut ed.until_text).hint_text("YYYY-MM-DD").desired_width(100.0));
+                            date_field(ui, "euntil", &mut ed.until_text, 100.0, look);
                         }
                     })
                     .response
@@ -1529,13 +1639,14 @@ impl App {
     /// A task's own fields, below its name: in the task editor and in the
     /// editor of each of its blocks.
     fn task_fields(&mut self, ui: &mut egui::Ui, ed: &mut TaskEdit) {
+        let look = self.pick_look();
         let today = Local::now().date_naive();
         let muted = self.pal.muted;
         ui.checkbox(&mut ed.task.done, tr("Completed"));
         editor_grid(ui, "taskgrid", |ui| {
             editor_label(ui, tr("Due"), muted);
             ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut ed.due_text).hint_text("YYYY-MM-DD").desired_width(96.0));
+                date_field(ui, "tdue", &mut ed.due_text, 96.0, look);
                 if ui.small_button(tr("Today")).clicked() {
                     ed.due_text = today.to_string();
                 }
@@ -1568,7 +1679,7 @@ impl App {
             ui.end_row();
             custom_days_row(ui, &mut ed.task.repeat, muted, true);
             editor_label(ui, tr("Earliest start"), muted);
-            ui.add(egui::TextEdit::singleline(&mut ed.earliest_text).hint_text("YYYY-MM-DD").desired_width(96.0));
+            ui.horizontal(|ui| date_field(ui, "tearliest", &mut ed.earliest_text, 96.0, look));
             ui.end_row();
             editor_label(ui, tr("List"), muted);
             let items = self.list_items(false);
