@@ -156,7 +156,7 @@ fn row(ui: &mut egui::Ui, label: &str, tip: &str, add: impl FnOnce(&mut egui::Ui
         let name = ui.add(egui::Label::new(RichText::new(label).size(theme::size::TITLE)).truncate().sense(egui::Sense::hover()));
         if !tip.is_empty() {
             name.on_hover_text(tip);
-            ui.add(egui::Label::new(RichText::new("(i)").size(theme::size::SMALL).weak()).sense(egui::Sense::hover())).on_hover_cursor(egui::CursorIcon::Help).on_hover_text(tip);
+            ui.add(egui::Label::new(RichText::new(icons::INFO).size(theme::size::UI).weak()).sense(egui::Sense::hover())).on_hover_cursor(egui::CursorIcon::Help).on_hover_text(tip);
         }
     };
     let control = |ui: &mut egui::Ui| {
