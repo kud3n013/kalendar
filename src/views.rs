@@ -594,6 +594,33 @@ impl App {
                 );
                 frame_boxes.push(FrameBox { id: f.id, day: *day, rect: r, label, color, skipped });
             }
+            // buffers: the same kind of band, in the colour of their event,
+            // with its line on the side away from the event
+            let midnight = day.and_hms_opt(0, 0, 0).unwrap();
+            for o in self.data.buffers_on(*day) {
+                let Some(ev) = self.data.event(o.event) else { continue };
+                let s = ((o.start.max(midnight) - midnight).num_minutes().max(gs)).min(ge);
+                let e = ((o.end.min(midnight + Duration::days(1)) - midnight).num_minutes().min(ge)).max(gs);
+                if e <= s {
+                    continue;
+                }
+                let col_l = x0 + di as f32 * col_w;
+                let r = Rect::from_min_max(pos2(col_l + 2.0, y_of(s)), pos2(col_l + col_w - 2.0, y_of(e)));
+                let color = rgb(self.data.event_color(ev));
+                let wash = if self.pal.dark { mix(color, Color32::WHITE, 0.25).gamma_multiply(0.12) } else { color.gamma_multiply(0.08) };
+                fill_squircle(&painter, r, theme::RADIUS, wash);
+                if r.height() > 4.0 {
+                    let y = if o.before { r.top() + 1.0 } else { r.bottom() - 3.0 };
+                    painter.rect_filled(Rect::from_min_max(pos2(r.left() + 4.0, y), pos2(r.right() - 4.0, y + 2.0)), 1.0, color.gamma_multiply(0.7));
+                }
+                let at = if o.before { r.left_top() + vec2(6.0, 5.0) } else { r.left_top() + vec2(6.0, 2.0) };
+                // a frame's name already there keeps its place
+                let crowded = frame_boxes.iter().any(|b| b.day == *day && b.label.expand(2.0).intersects(Rect::from_min_size(at, vec2(r.width() - 12.0, 14.0))));
+                if r.height() >= 18.0 && !crowded {
+                    let mins = (o.end - o.start).num_minutes();
+                    painter.with_clip_rect(r.intersect(painter.clip_rect())).text(at, Align2::LEFT_TOP, trf("Buffer {} min", &[&mins]), FontId::proportional(theme::size::MICRO), self.pal.muted);
+                }
+            }
         }
 
         // has the grid itself changed size since the last frame?

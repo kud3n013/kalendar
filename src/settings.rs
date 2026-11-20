@@ -556,6 +556,54 @@ impl App {
         let yes_no = [(true, tr("Yes").to_string()), (false, tr("No").to_string())];
         row(ui, tr("Split long tasks"), tr("Tasks of two hours or more may be cut into several sessions."), |ui| combo(ui, "sp", &mut p.split_long_tasks, &yes_no));
         row(ui, tr("Schedule tasks with no due date"), "", |ui| combo(ui, "pn", &mut p.plan_without_due, &yes_no));
+        divider(ui, self.pal.border);
+        self.buffer_settings(ui);
+    }
+
+    /// Buffer time: minutes kept free before and after the events of chosen
+    /// calendars, and whether tasks may go there.
+    fn buffer_settings(&mut self, ui: &mut egui::Ui) {
+        let (muted, accent) = (self.pal.muted, self.pal.accent);
+        heading(ui, tr("Buffer time"));
+        if !finding(ui) {
+            ui.add(
+                egui::Label::new(
+                    RichText::new(tr("Keep time free before and after the events of a calendar, for travel, traffic or a breather. Buffers are shown beside their events and are not sent to any server.")).size(theme::size::UI).color(muted),
+                )
+                .wrap(),
+            );
+            ui.add_space(10.0);
+        }
+        let p = &mut self.data.prefs;
+        row(ui, tr("Tasks in buffers"), tr("Whether \"Plan my tasks\" may put tasks into buffer time."), |ui| {
+            combo(ui, "bk", &mut p.buffers_keep_out, &[(true, tr("Keep tasks out").into()), (false, tr("Allow tasks").into())]);
+        });
+        let cals: Vec<(u64, String)> = self.data.calendars.iter().map(|c| (c.id, c.name.clone())).collect();
+        const CHOICES: [i64; 11] = [0, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180];
+        let mins = |m: i64| if m == 0 { tr("None").to_string() } else if m % 60 == 0 { format!("{} h", m / 60) } else { format!("{m} min") };
+        for (cid, name) in cals {
+            let b = self.data.prefs.buffer_mut(cid);
+            row(ui, &name, "", |ui| {
+                let picker = |ui: &mut egui::Ui, salt: &str, value: &mut i64| {
+                    egui::ComboBox::from_id_salt((salt, cid)).width(86.0).selected_text(mins(*value)).show_ui(ui, |ui| {
+                        for m in CHOICES {
+                            ui.selectable_value(value, m, mins(m));
+                        }
+                    });
+                };
+                ui.spacing_mut().item_spacing.x = 8.0;
+                switch(ui, &mut b.enabled, accent);
+                if b.enabled {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(tr("before")).size(theme::size::UI).color(muted));
+                    picker(ui, "bb", &mut b.before_min);
+                    ui.label(RichText::new(tr("after")).size(theme::size::UI).color(muted));
+                    picker(ui, "ba", &mut b.after_min);
+                }
+            });
+        }
+        // settings never switched on need not be kept
+        self.data.prefs.buffers.retain(|b| b.enabled || b != &CalBuffer { calendar: b.calendar, enabled: false, before_min: 15, after_min: 15 });
     }
 
     /// Frames: how the planner uses them, then the frames themselves.

@@ -47,6 +47,8 @@ pub struct Aids {
     pub demo_account: bool,
     /// `KATLENDAR_GREY`: scheduled tasks are done and every frame skips tomorrow
     pub grey: bool,
+    /// `KATLENDAR_BUFFERS`: 30 minutes before and 15 after each Work event
+    pub buffers: bool,
     /// `KATLENDAR_SHOW_MENU=<name>`: a right-click menu, shown in a window
     pub show_menu: Option<String>,
     /// `KATLENDAR_SHOW_SETTINGS=<page>`: the settings fill the window
@@ -107,6 +109,7 @@ fn read(var: impl Fn(&str) -> Option<String>) -> Aids {
         nav_days: num("NAV_DAYS"),
         demo_account: on("DEMO_ACCOUNT"),
         grey: on("GREY"),
+        buffers: on("BUFFERS"),
         show_menu: set("SHOW_MENU"),
         show_settings: set("SHOW_SETTINGS"),
         settings_query: set("SETTINGS_QUERY"),

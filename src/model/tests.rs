@@ -714,3 +714,101 @@ fn tags_gather_rename_merge_remove() {
     assert!(d.prefs.frame_first_tags.is_empty());
     assert!(d.all_tags().is_empty());
 }
+
+/// A Work-calendar meeting on Monday 2026-11-16, 10:00 to 11:00.
+fn meeting(d: &mut Data, id: u64, cal: u64) {
+    d.events.push(Event {
+        id,
+        title: "Client visit".into(),
+        start: ymd(11, 16).and_hms_opt(10, 0, 0).unwrap(),
+        end: ymd(11, 16).and_hms_opt(11, 0, 0).unwrap(),
+        calendar: cal,
+        ..Default::default()
+    });
+}
+
+fn hm(h: u32, m: u32) -> NaiveDateTime {
+    ymd(11, 16).and_hms_opt(h, m, 0).unwrap()
+}
+
+#[test]
+fn buffers_come_from_chosen_calendars_only() {
+    let mut d = empty();
+    meeting(&mut d, 90, 2);
+    meeting(&mut d, 91, 1);
+    assert!(d.buffers_on(ymd(11, 16)).is_empty(), "no buffers until switched on");
+    *d.prefs.buffer_mut(2) = CalBuffer { calendar: 2, enabled: true, before_min: 30, after_min: 15 };
+    let b = d.buffers_on(ymd(11, 16));
+    assert_eq!(b, [
+        BufferOcc { event: 90, start: hm(9, 30), end: hm(10, 0), before: true },
+        BufferOcc { event: 90, start: hm(11, 0), end: hm(11, 15), before: false },
+    ]);
+    // switched off, a hidden calendar, an all-day event or a task session: none
+    d.prefs.buffer_mut(2).enabled = false;
+    assert!(d.buffers_on(ymd(11, 16)).is_empty());
+    d.prefs.buffer_mut(2).enabled = true;
+    d.calendar_mut(2).unwrap().visible = false;
+    assert!(d.buffers_on(ymd(11, 16)).is_empty());
+    d.calendar_mut(2).unwrap().visible = true;
+    d.event_mut(90).unwrap().all_day = true;
+    assert!(d.buffers_on(ymd(11, 16)).is_empty());
+    let e = d.event_mut(90).unwrap();
+    e.all_day = false;
+    e.task_id = Some(5);
+    assert!(d.buffers_on(ymd(11, 16)).is_empty());
+}
+
+#[test]
+fn buffer_running_past_midnight_shows_on_both_days() {
+    let mut d = empty();
+    d.events.push(Event { id: 90, title: "Late show".into(), start: hm(22, 0), end: hm(23, 30), calendar: 2, ..Default::default() });
+    *d.prefs.buffer_mut(2) = CalBuffer { calendar: 2, enabled: true, before_min: 0, after_min: 60 };
+    assert_eq!(d.buffers_on(ymd(11, 16)).len(), 1);
+    assert_eq!(d.buffers_on(ymd(11, 17)).len(), 1);
+    assert!(d.buffers_on(ymd(11, 18)).is_empty());
+}
+
+#[test]
+fn planner_keeps_tasks_out_of_buffers() {
+    let mut d = empty();
+    meeting(&mut d, 90, 2);
+    *d.prefs.buffer_mut(2) = CalBuffer { calendar: 2, enabled: true, before_min: 30, after_min: 15 };
+    assert_eq!(d.next_free_slot(hm(9, 0), 60, None), Some(hm(11, 15)));
+    add_task(&mut d, "Write", 60, &[]);
+    // 09:00 to 09:30 is too short; after the meeting the buffer runs to 11:15
+    assert_eq!(d.plan_tasks(hm(9, 0)), (1, 0));
+    assert_eq!(sessions(&d), ["Mon 11:15 12:15 Write c3"]);
+    assert!(d.buffer_keeping_out(hm(9, 45), hm(10, 0)).is_some());
+    assert!(d.buffer_keeping_out(hm(11, 15), hm(12, 0)).is_none());
+}
+
+#[test]
+fn tasks_may_be_let_into_buffers() {
+    let mut d = empty();
+    meeting(&mut d, 90, 2);
+    *d.prefs.buffer_mut(2) = CalBuffer { calendar: 2, enabled: true, before_min: 30, after_min: 15 };
+    d.prefs.buffers_keep_out = false;
+    add_task(&mut d, "Write", 60, &[]);
+    d.plan_tasks(hm(9, 0));
+    assert_eq!(sessions(&d), ["Mon 09:00 10:00 Write c3"]);
+    assert!(d.buffer_keeping_out(hm(9, 45), hm(10, 0)).is_none());
+}
+
+#[test]
+fn buffers_cut_into_frames() {
+    let mut d = empty();
+    d.frames.push(deep_frame(1, 1, 9, 11));
+    d.events.push(Event { id: 90, title: "Drive".into(), start: hm(11, 0), end: hm(12, 0), calendar: 2, ..Default::default() });
+    *d.prefs.buffer_mut(2) = CalBuffer { calendar: 2, enabled: true, before_min: 60, after_min: 0 };
+    add_task(&mut d, "Write", 90, &["deep"]);
+    // the frame keeps 09:00 to 10:00 once the hour before the drive is gone
+    d.plan_tasks(monday_8());
+    assert_eq!(sessions(&d), ["Tue 09:00 10:30 Write c1"]);
+}
+
+#[test]
+fn old_settings_keep_tasks_out_of_buffers() {
+    let p: Prefs = serde_json::from_str("{\"hour12\": true}").unwrap();
+    assert!(p.buffers.is_empty());
+    assert!(p.buffers_keep_out);
+}

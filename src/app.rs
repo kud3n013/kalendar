@@ -528,6 +528,11 @@ impl App {
                 f.skip.push(today + Duration::days(1));
             }
         }
+        if aid.buffers {
+            if let Some(c) = app.data.calendars.iter().find(|c| c.name == "Work").map(|c| c.id) {
+                *app.data.prefs.buffer_mut(c) = CalBuffer { calendar: c, enabled: true, before_min: 30, after_min: 15 };
+            }
+        }
         app.click_new_list = app.shot.is_some() && aid.new_list;
         if let Some(v) = &aid.list_edit {
             let id = app.data.lists.iter().find(|l| l.name.eq_ignore_ascii_case(v)).map_or(0, |l| l.id);

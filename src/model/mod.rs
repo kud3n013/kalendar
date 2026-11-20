@@ -1,5 +1,6 @@
 //! Data, preferences, saving and the simple task planner.
 
+mod buffer;
 mod calendar;
 mod data;
 mod frame;
@@ -12,6 +13,7 @@ mod task;
 #[cfg(test)]
 mod tests;
 
+pub use buffer::*;
 pub use calendar::*;
 pub use data::*;
 pub use frame::*;

@@ -63,7 +63,8 @@ impl Data {
                 continue;
             }
             // first what is closed to this task: frames that keep others out
-            let mut cuts = vec![];
+            // buffers around events are closed to every task
+            let mut cuts = self.buffer_cuts(day);
             let mut takes = vec![];
             if let Some(t) = t.filter(|_| frames) {
                 for o in self.frames_on(day) {

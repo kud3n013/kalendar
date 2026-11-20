@@ -137,6 +137,10 @@ pub struct Prefs {
     pub frame_first: FrameFirst,
     /// the tags that go first when `frame_first` is `Tags`
     pub frame_first_tags: Vec<String>,
+    /// buffer time before and after events, by calendar
+    pub buffers: Vec<CalBuffer>,
+    /// the planner puts no tasks into buffer time
+    pub buffers_keep_out: bool,
     pub show_due_today: bool,
     pub show_due_tomorrow: bool,
     pub show_due_soon: bool,
@@ -196,6 +200,8 @@ impl Default for Prefs {
             frame_full: FrameFull::NextFrame,
             frame_first: FrameFirst::Priority,
             frame_first_tags: vec![],
+            buffers: vec![],
+            buffers_keep_out: true,
             show_due_today: true,
             show_due_tomorrow: true,
             show_due_soon: true,
