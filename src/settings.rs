@@ -439,8 +439,15 @@ impl App {
             combo(ui, "fd", &mut p.first_day, &opts);
         });
         row(ui, tr("Initial calendar view"), "", |ui| {
-            let opts: Vec<(View, String)> = View::all().into_iter().map(|v| (v, v.label())).collect();
-            combo(ui, "iv", &mut p.initial_view, &opts);
+            // None stands for the view last used
+            let mut opts: Vec<(Option<View>, String)> = vec![(None, tr("Last used").into())];
+            opts.extend(View::all().into_iter().map(|v| (Some(v), v.label())));
+            let mut pick = (!p.start_last_view).then_some(p.initial_view);
+            combo(ui, "iv", &mut pick, &opts);
+            p.start_last_view = pick.is_none();
+            if let Some(v) = pick {
+                p.initial_view = v;
+            }
         });
         divider(ui, border);
         let snapshot = p.clone();

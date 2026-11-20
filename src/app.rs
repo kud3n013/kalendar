@@ -386,9 +386,15 @@ impl App {
             data.lists.push(TaskList { id: 910, name: tr("Shopping").into(), color: EVENT_COLORS[4].0, account: Some(900), remote_id: Some("https://cloud.example.org/dav/calendars/sam/shopping/".into()), ..Default::default() });
             data.lists.push(TaskList { id: 911, name: tr("Home").into(), color: EVENT_COLORS[6].0, account: Some(900), remote_id: Some("https://cloud.example.org/dav/calendars/sam/0/".into()), ..Default::default() });
         }
-        let view = data.prefs.initial_view;
+        // where the person left off, or the views they picked to start on
+        let p = &data.prefs;
+        let resume = p.start_last_view && shot.is_none();
+        let view = p.last_view.filter(|_| resume).unwrap_or(p.initial_view);
         let collapsed = data.prefs.folded.iter().cloned().collect();
-        let scroll = (opening_scroll_min(Self::now()) - data.prefs.grid_start_h * 60) as f32 / 60.0 * data.prefs.hour_height();
+        let scroll = match p.last_scroll_h.filter(|_| resume) {
+            Some(h) => h * p.hour_height(),
+            None => (opening_scroll_min(Self::now()) - p.grid_start_h * 60) as f32 / 60.0 * p.hour_height(),
+        };
         let mut app = App {
             data,
             view,
@@ -454,7 +460,7 @@ impl App {
             pr_human: None,
             pr_busy: false,
             side_scroll: 0.0,
-            grid_scroll: (0.0, 0.0),
+            grid_scroll: (scroll.max(0.0), 0.0),
             zoom_goal: None,
             compact: None,
             font_applied: None,
@@ -570,6 +576,9 @@ impl App {
         folded.sort();
         self.data.prefs.folded = folded;
         let now = self.data.prefs.sidebar_open;
+        // the view as the person left it, not as a narrow window forced it
+        self.data.prefs.last_view = Some(self.compact.map_or(self.view, |c| c.1));
+        self.data.prefs.last_scroll_h = Some(self.grid_scroll.0 / self.data.prefs.hour_height());
         if let Some((open, _)) = self.compact {
             self.data.prefs.sidebar_open = open;
         }

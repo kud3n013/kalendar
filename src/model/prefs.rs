@@ -90,6 +90,12 @@ pub struct Prefs {
     pub first_day: u8, // 0 = Sunday
     pub hour12: bool,
     pub initial_view: View,
+    /// open on the view last used instead of `initial_view`
+    pub start_last_view: bool,
+    /// the view in use and how far down the hours were scrolled, in
+    /// hours, when the app last saved
+    pub last_view: Option<View>,
+    pub last_scroll_h: Option<f32>,
     pub weekends_visible: bool,
     pub dim_past: bool,
     pub show_completed_tasks: bool,
@@ -153,6 +159,9 @@ impl Default for Prefs {
             first_day: 0,
             hour12: false,
             initial_view: View::Week,
+            start_last_view: true,
+            last_view: None,
+            last_scroll_h: None,
             weekends_visible: true,
             dim_past: false,
             show_completed_tasks: true,

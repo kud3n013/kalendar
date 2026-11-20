@@ -65,6 +65,11 @@ impl App {
 }
 
 impl eframe::App for App {
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // keeps the view, the scroll and the panel for next time
+        self.save();
+    }
+
     fn raw_input_hook(&mut self, _ctx: &egui::Context, raw_input: &mut egui::RawInput) {
         if let Some((_, pos)) = self.shot.as_ref().and(testaid::get().drag.as_ref()) {
             raw_input.events.push(egui::Event::PointerMoved(*pos));
