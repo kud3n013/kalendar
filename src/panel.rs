@@ -379,8 +379,16 @@ impl App {
             .show_collapsible(ui, &mut still_open, |ui| self.panel_body(ui, ctx, right, today, c));
         match shown {
             Some(s) => {
-                self.morph.width = s.response.rect.width();
+                let w = s.response.rect.width();
+                self.morph.width = w;
                 self.measure(s.response.rect, right, false);
+                // a width the person dragged to is kept for next time, once
+                // they let go of the edge
+                let held = ctx.input(|i| i.pointer.any_down());
+                if !held && (w - self.data.prefs.sidebar_w).abs() >= 1.0 {
+                    self.data.prefs.sidebar_w = w.round();
+                    self.save();
+                }
             }
             None => self.morph.seen.clear(),
         }
