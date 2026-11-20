@@ -1088,13 +1088,6 @@ impl App {
             .with_min_inner_size([380.0, 300.0])
             .with_window_level(egui::WindowLevel::AlwaysOnTop);
         let mut out = Pressed::default();
-        // passes since the window opened: a gap in the main window's frames
-        // means it was closed in between, so it opens anew
-        let fit_id = egui::ViewportId::from_hash_of(name).0.with("fit");
-        let nr = ctx.cumulative_frame_nr();
-        let (last, passes) = ctx.data(|d| d.get_temp::<(u64, u32)>(fit_id)).unwrap_or((0, 0));
-        let passes = if last + 1 == nr { passes + 1 } else { 0 };
-        ctx.data_mut(|d| d.insert_temp(fit_id, (nr, passes)));
         ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(name), builder, |ui, class| {
             if class == egui::ViewportClass::EmbeddedWindow {
                 self.own_windows = false;
@@ -1130,11 +1123,15 @@ impl App {
             // a window just opened grows to show all its fields, the notes
             // at the end too, within the screen; after that its size is the
             // person's
-            if passes < 4 {
+            // (egui forgets a closed window, so its passes count from 0 again;
+            // the system may not tell where a window is, as on Wayland, but
+            // its size is the size of what is drawn in it)
+            if ctx.cumulative_pass_nr() < 6 {
                 let want = egui::vec2(content.x + 28.0, content.y + 14.0 + foot.response.rect.height()).max(EDITOR_SIZE.into());
-                let (now, screen) = ctx.input(|i| (i.viewport().inner_rect.map(|r| r.size()), i.viewport().monitor_size));
+                let screen = ctx.input(|i| i.viewport().monitor_size);
                 let want = screen.map_or(want, |s| want.min(s - egui::vec2(40.0, 80.0)));
-                if now.is_some_and(|n| want.x > n.x + 0.5 || want.y > n.y + 0.5) {
+                let now = ctx.viewport_rect().size();
+                if want.x > now.x + 0.5 || want.y > now.y + 0.5 {
                     ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(want));
                     if let Some(s) = screen {
                         // kept on the screen, as far as the system lets it be moved
