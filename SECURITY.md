@@ -11,8 +11,9 @@ You can expect an acknowledgement within a week.
 ## Scope notes
 
 - Katlendar is a local-only application: it keeps all data in a single JSON
-  file on your machine and makes network requests only to calendar feed
-  URLs you subscribe to.
+  file on your machine and makes network requests only to the calendar
+  feeds and accounts you add, and to GitHub's public API to see whether a
+  newer release is out (this can be turned off in Settings → Info).
 - Subscription URLs are stored in plain text in the data file. For
   providers that embed access keys in the link (for example Proton
   Calendar), anyone who can read `data.json` can read that calendar.

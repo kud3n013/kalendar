@@ -48,6 +48,7 @@ lto = "thin"
 
 # `cargo deb` packaging for the Linux release
 [package.metadata.deb]
+maintainer = "kud3n013"
 section = "utils"
 assets = [
     ["target/release/katlendar", "usr/bin/", "755"],

@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Katlendar — calendar and task planner</title>
+<meta name="description" content="A fast, local-first desktop calendar and task planner for Linux, Windows and macOS. One binary, one data file, no account.">
+<meta property="og:title" content="Katlendar">
+<meta property="og:description" content="A fast, local-first desktop calendar and task planner.">
+<meta property="og:image" content="img/week-light.png">
+<link rel="icon" type="image/png" href="img/icon.png">
+<style>
+  :root {
+    --bg: #fbfbfd;
+    --surface: #ffffff;
+    --surface-2: #f2f2f7;
+    --text: #1c1c24;
+    --muted: #62626f;
+    --border: #e3e3ea;
+    --accent: #625efc;
+    --accent-soft: #ecebff;
+    --accent-text: #ffffff;
+    --shadow: 0 1px 2px rgba(20, 20, 40, .06), 0 12px 40px rgba(20, 20, 40, .10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141419;
+      --surface: #1c1c23;
+      --surface-2: #23232c;
+      --text: #ececf2;
+      --muted: #a0a0ae;
+      --border: #30303b;
+      --accent: #7f7cff;
+      --accent-soft: #26254a;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 12px 40px rgba(0, 0, 0, .45);
+    }
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", Ubuntu, sans-serif;
+  }
+  a { color: var(--accent); }
+  img { max-width: 100%; display: block; }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 16px; }
+
+  header.top { display: flex; align-items: center; justify-content: space-between; padding: 18px 0; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 18px; color: var(--text); text-decoration: none; }
+  .brand img { width: 32px; height: 32px; }
+  nav a { color: var(--muted); text-decoration: none; margin-left: 20px; font-size: 15px; }
+  nav a:hover { color: var(--text); }
+
+  .hero { text-align: center; padding: 48px 0 32px; }
+  .hero .logo { width: 112px; height: 112px; margin: 0 auto 16px; }
+  .badge {
+    display: inline-block; padding: 3px 10px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent);
+    font-size: 13px; font-weight: 600; letter-spacing: .02em; margin-bottom: 14px;
+  }
+  h1 { font-size: clamp(36px, 6vw, 56px); line-height: 1.1; margin: 0 0 14px; letter-spacing: -.02em; }
+  .lede { font-size: clamp(17px, 2.2vw, 20px); color: var(--muted); max-width: 640px; margin: 0 auto 28px; }
+  .buttons { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; padding: 11px 20px; border-radius: 10px;
+    font-weight: 600; font-size: 15px; text-decoration: none; border: 1px solid var(--border);
+    background: var(--surface); color: var(--text);
+  }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  .btn:hover { filter: brightness(1.06); }
+  .small { font-size: 14px; color: var(--muted); margin-top: 12px; }
+
+  .shot {
+    margin: 40px auto 0; border-radius: 14px; overflow: hidden;
+    border: 1px solid var(--border); box-shadow: var(--shadow); background: var(--surface);
+  }
+  .shot img { width: 100%; height: auto; }
+  .theme-dark { display: none; }
+  @media (prefers-color-scheme: dark) {
+    .theme-light { display: none; }
+    .theme-dark { display: block; }
+  }
+
+  section { padding: 64px 0 0; }
+  h2 { font-size: clamp(26px, 3.4vw, 34px); letter-spacing: -.01em; margin: 0 0 8px; text-align: center; }
+  .sub { text-align: center; color: var(--muted); margin: 0 auto 32px; max-width: 620px; }
+
+  .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px; }
+  .card h3 { margin: 0 0 6px; font-size: 17px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  .card code, .note code {
+    background: var(--surface-2); padding: 1px 6px; border-radius: 6px; font-size: 13.5px;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; overflow-wrap: anywhere;
+  }
+
+  .gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+  @media (max-width: 640px) { .gallery { grid-template-columns: 1fr; } }
+  figure { margin: 0; }
+  figure .shot { margin: 0; }
+  figcaption { color: var(--muted); font-size: 14px; margin-top: 10px; text-align: center; }
+
+  .downloads { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+  .dl h3 { display: flex; align-items: center; gap: 8px; }
+  .dl ul { list-style: none; margin: 10px 0 0; padding: 0; }
+  .dl li { margin: 6px 0; }
+  .dl li a { font-weight: 600; text-decoration: none; overflow-wrap: anywhere; }
+  .dl li a:hover { text-decoration: underline; }
+  .dl .hint { font-size: 13.5px; color: var(--muted); margin-top: 10px; }
+  .note {
+    margin-top: 20px; padding: 14px 18px; border-radius: 12px;
+    background: var(--accent-soft); color: var(--text); font-size: 15px;
+  }
+
+  footer { margin-top: 72px; padding: 28px 0 40px; border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 20px; justify-content: space-between; }
+
+  @media (max-width: 560px) {
+    nav a:not(:last-child) { display: none; }
+    .hero { padding-top: 24px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="./"><img src="img/icon.png" alt="">Katlendar</a>
+    <nav>
+      <a href="#features">Features</a>
+      <a href="#screenshots">Screenshots</a>
+      <a href="#download">Download</a>
+      <a href="https://github.com/kud3n013/katlendar">GitHub</a>
+    </nav>
+  </header>
+
+  <main>
+    <div class="hero">
+      <img class="logo" src="img/icon.png" alt="Katlendar icon: a blue cat holding a pocket watch">
+      <div class="badge" id="version-badge">Beta</div>
+      <h1>Your calendar and tasks,<br>in one fast window.</h1>
+      <p class="lede">Katlendar is a local-first desktop calendar and task planner. Plan your week, block time for tasks, and sync with the calendars you already use. One app, one data file, no account.</p>
+      <div class="buttons">
+        <a class="btn primary" id="primary-download" href="#download">Download</a>
+        <a class="btn" href="https://github.com/kud3n013/katlendar">View source</a>
+      </div>
+      <p class="small">Free and open source (GPL-2.0) · Linux, Windows and macOS</p>
+    </div>
+
+    <div class="shot">
+      <img class="theme-light" src="img/week-light.png" width="1440" height="848" alt="Katlendar's week view with tasks on the left and events on the calendar">
+      <img class="theme-dark" src="img/week-dark.png" width="1440" height="848" alt="Katlendar's week view in the dark theme">
+    </div>
+
+    <section id="features">
+      <h2>Built for planning your day</h2>
+      <p class="sub">Everything stays on your computer. Katlendar only goes online for the calendars you connect, and to see whether a newer version is out.</p>
+      <div class="features">
+        <div class="card"><h3>Every view you need</h3><p>1–9 days, week, two weeks, month and agenda, with week numbers, a live clock line and zoom.</p></div>
+        <div class="card"><h3>Direct editing</h3><p>Click or drag to create events, drag to move, drag an edge to resize. Overlaps sit side by side.</p></div>
+        <div class="card"><h3>Tasks with lists and tags</h3><p>An Inbox plus your own lists, tags, priorities, durations, due dates and repeats.</p></div>
+        <div class="card"><h3>Time blocking</h3><p>Drag a task onto the calendar to book time for it. Reschedule, follow up or split in one click.</p></div>
+        <div class="card"><h3>Frames and the planner</h3><p>Set aside time for kinds of work, like deep work in the morning, and let the planner fit your tasks into it.</p></div>
+        <div class="card"><h3>Quick entry</h3><p>Type <code>Write report #deep-work !high 90m .tomorrow</code> and the tags, priority, length and date are filled in.</p></div>
+        <div class="card"><h3>Sync with what you use</h3><p>Google, Microsoft 365 / Outlook.com, Nextcloud, CalDAV, Proton, and read-only <code>.ics</code> feeds.</p></div>
+        <div class="card"><h3>Keyboard first</h3><p>A command bar (<code>Ctrl+K</code>), search, undo, and a shortcut for everything, each one changeable.</p></div>
+      </div>
+    </section>
+
+    <section id="screenshots">
+      <h2>Screenshots</h2>
+      <p class="sub">Light and dark themes, a task panel on either side, and a layout that adapts down to a narrow window.</p>
+      <div class="gallery">
+        <figure><div class="shot"><img src="img/new-block.png" width="1440" height="848" loading="lazy" alt="Creating a task block on the calendar, with its calendar, colour, time, list and priority"></div><figcaption>Put a task, event or frame straight on the calendar</figcaption></figure>
+        <figure><div class="shot"><img src="img/three-days-dark.png" width="1440" height="848" loading="lazy" alt="A three-day view in the dark theme with the task panel on the right"></div><figcaption>A few days at a time, in the dark theme</figcaption></figure>
+        <figure><div class="shot"><img src="img/new-task.png" width="1440" height="848" loading="lazy" alt="Adding a new task with quick-entry syntax"></div><figcaption>Quick task entry</figcaption></figure>
+        <figure><div class="shot"><img src="img/settings.png" width="1440" height="848" loading="lazy" alt="The calendar accounts settings page"></div><figcaption>Connect Google, Microsoft, Nextcloud, CalDAV or Proton</figcaption></figure>
+      </div>
+    </section>
+
+    <section id="download">
+      <h2>Download</h2>
+      <p class="sub" id="release-line">Katlendar is in beta. Get the latest build from the <a href="https://github.com/kud3n013/katlendar/releases">releases page</a>.</p>
+      <div class="downloads">
+        <div class="card dl" data-os="linux">
+          <h3>Linux</h3>
+          <ul>
+            <li><a data-asset="_amd64.deb" href="https://github.com/kud3n013/katlendar/releases">.deb package</a> <span class="small">Debian, Ubuntu, Mint</span></li>
+            <li><a data-asset="-linux-x86_64.tar.gz" href="https://github.com/kud3n013/katlendar/releases">.tar.gz</a> <span class="small">any distribution</span></li>
+          </ul>
+          <p class="hint">x86_64. Passwords are kept in GNOME Keyring or KWallet.</p>
+        </div>
+        <div class="card dl" data-os="windows">
+          <h3>Windows</h3>
+          <ul>
+            <li><a data-asset="-windows-x86_64.zip" href="https://github.com/kud3n013/katlendar/releases">.zip</a> <span class="small">Windows 10 and 11</span></li>
+          </ul>
+          <p class="hint">Unzip and run <code>katlendar.exe</code>. SmartScreen may warn about an unknown publisher: choose “More info”, then “Run anyway”.</p>
+        </div>
+        <div class="card dl" data-os="mac">
+          <h3>macOS</h3>
+          <ul>
+            <li><a data-asset="-macos-universal.dmg" href="https://github.com/kud3n013/katlendar/releases">.dmg</a> <span class="small">Apple silicon and Intel</span></li>
+          </ul>
+          <p class="hint">The app is not notarised yet. After moving it to Applications, right-click it and choose Open the first time.</p>
+        </div>
+      </div>
+      <div class="note">
+        <strong>Beta software.</strong> Back up <code>data.json</code> now and then, and please <a href="https://github.com/kud3n013/katlendar/issues">report anything that goes wrong</a>. Katlendar tells you when a newer version is out (you can turn that off under Settings → Info).
+      </div>
+    </section>
+  </main>
+</div>
+
+<footer>
+  <div class="wrap">
+    <span>Katlendar · GPL-2.0 · Icons by <a href="https://lucide.dev">Lucide</a></span>
+    <span><a href="https://github.com/kud3n013/katlendar">Source</a> · <a href="https://github.com/kud3n013/katlendar/releases">Releases</a> · <a href="https://github.com/kud3n013/katlendar/issues">Issues</a></span>
+  </div>
+</footer>
+
+<script>
+// Point the download links at the files of the newest release, betas included.
+(function () {
+  var os = /Mac/i.test(navigator.platform) ? "mac" : /Win/i.test(navigator.platform) ? "windows" : /Linux|X11/i.test(navigator.userAgent) ? "linux" : null;
+  fetch("https://api.github.com/repos/kud3n013/katlendar/releases?per_page=10")
+    .then(function (r) { return r.ok ? r.json() : []; })
+    .then(function (list) {
+      var rel = (list || []).filter(function (r) { return !r.draft; })[0];
+      if (!rel) return;
+      var v = rel.tag_name.replace(/^v/, "");
+      document.getElementById("version-badge").textContent = (rel.prerelease ? "Beta · " : "") + "v" + v;
+      document.getElementById("release-line").innerHTML =
+        'Latest: <a href="' + rel.html_url + '">' + rel.name + "</a>" + (rel.prerelease ? " (pre-release)" : "") + ".";
+      var assets = rel.assets || [];
+      document.querySelectorAll("[data-asset]").forEach(function (a) {
+        var hit = assets.filter(function (x) { return x.name.endsWith(a.dataset.asset); })[0];
+        if (hit) { a.href = hit.browser_download_url; a.textContent = hit.name; }
+      });
+      if (os) {
+        var first = document.querySelector('.dl[data-os="' + os + '"] [data-asset]');
+        var label = { mac: "macOS", windows: "Windows", linux: "Linux" }[os];
+        var primary = document.getElementById("primary-download");
+        if (first && first.href.indexOf("/releases/download/") > 0) {
+          primary.href = first.href;
+          primary.textContent = "Download for " + label;
+        }
+      }
+    })
+    .catch(function () {});
+})();
+</script>
+</body>
+</html>

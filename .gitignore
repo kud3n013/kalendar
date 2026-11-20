@@ -2,3 +2,4 @@
 *.png
 data.json
 !assets/icon.png
+!site/**/*.png

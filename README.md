@@ -2,9 +2,28 @@
 
 # Katlendar
 
-A fast desktop calendar and task planner for Linux, written in Rust with
-[egui](https://github.com/emilk/egui). Everything is local: one binary, one
-JSON data file, no account.
+A fast desktop calendar and task planner for Linux, Windows and macOS,
+written in Rust with [egui](https://github.com/emilk/egui). Everything is
+local: one binary, one JSON data file, no account.
+
+**Katlendar is in beta.** Website: <https://kud3n013.github.io/katlendar/>
+
+## Download
+
+Builds for every release are on the
+[releases page](https://github.com/kud3n013/katlendar/releases):
+
+| System | File |
+| --- | --- |
+| Debian, Ubuntu, Mint | `katlendar_<version>_amd64.deb` |
+| Other Linux (x86_64) | `katlendar-<version>-linux-x86_64.tar.gz` |
+| Windows 10 and 11 | `katlendar-<version>-windows-x86_64.zip` |
+| macOS 11+ (Apple silicon and Intel) | `katlendar-<version>-macos-universal.dmg` |
+
+The Windows and macOS builds are not signed by a paid certificate yet:
+Windows SmartScreen may warn about an unknown publisher ("More info" →
+"Run anyway"), and on macOS right-click the app and choose Open the first
+time. `SHA256SUMS.txt` on each release lists the files' checksums.
 
 ## Features
 
@@ -49,21 +68,46 @@ cargo build --release
 ./target/release/katlendar
 ```
 
-`cargo test` runs the unit tests.
+`cargo test` runs the unit tests. `katlendar --version` prints the
+version and `katlendar --check-update` asks whether a newer one is out;
+`katlendar --help` lists the other options.
+
+### Making a release
+
+Set `version` in `Cargo.toml`, commit, then push a matching tag:
+
+```
+git tag -a v0.1.0-beta.1 -m "Katlendar 0.1.0-beta.1"
+git push origin v0.1.0-beta.1
+```
+
+The [Release workflow](.github/workflows/release.yml) builds the packages
+for all three systems and publishes them on a GitHub release. A tag with a
+pre-release part (`-beta.1`, `-rc.1`) is published as a pre-release.
 
 ## Data and privacy
 
-Katlendar follows the XDG base directories:
+Events, tasks and calendars are kept in `katlendar/data.json` and settings
+and shortcuts in `katlendar/config.json`, inside:
 
-| What | Where |
-| --- | --- |
-| Events, tasks, calendars | `$XDG_DATA_HOME/katlendar/data.json` (usually `~/.local/share/katlendar/data.json`) |
-| Settings and shortcuts | `$XDG_CONFIG_HOME/katlendar/config.json` (usually `~/.config/katlendar/config.json`) |
+| System | Data | Settings |
+| --- | --- | --- |
+| Linux | `$XDG_DATA_HOME` (usually `~/.local/share`) | `$XDG_CONFIG_HOME` (usually `~/.config`) |
+| Windows | `%APPDATA%` | `%APPDATA%` |
+| macOS | `~/Library/Application Support` | `~/Library/Application Support` |
+
+`XDG_DATA_HOME` and `XDG_CONFIG_HOME` are honoured on every system when set.
 
 Older versions kept settings inside `data.json`; they are read from there
 once and then saved to `config.json`. Nothing is sent anywhere except to the
 `.ics` feeds you subscribe to and the accounts you add; sign-ins are kept
-in your desktop's keyring.
+in your system's keyring (Secret Service on Linux, Credential Manager on
+Windows, the Keychain on macOS).
+
+Katlendar also asks GitHub for the list of its releases when it starts and
+twice a day after, so it can tell you when a newer version is out. Nothing
+about you or your data is sent. Turn it off in Settings → Info → Check for
+updates.
 
 Note that subscription links are stored in that file in plain text. Some
 providers (for example Proton Calendar) embed the access key in the link

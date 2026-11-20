@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Katlendar
+GenericName=Calendar and Task Planner
+Comment=A fast, local-first calendar and task planner
+Exec=katlendar
+Icon=katlendar
+Terminal=false
+Categories=Office;Calendar;ProjectManagement;
+Keywords=calendar;tasks;planner;todo;schedule;
+StartupWMClass=katlendar
