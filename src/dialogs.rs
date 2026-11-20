@@ -144,6 +144,68 @@ pub(crate) fn date_pick(ui: &mut egui::Ui, salt: &str, cur: Option<NaiveDate>, l
     out
 }
 
+/// Minutes after midnight as the clock shows them, e.g. 13:30 or 1:30 PM.
+fn clock(m: i64, hour12: bool) -> String {
+    let (h, mm) = (m.rem_euclid(24 * 60) / 60, m % 60);
+    if hour12 {
+        format!("{}:{:02} {}", if h % 12 == 0 { 12 } else { h % 12 }, mm, if h < 12 { "AM" } else { "PM" })
+    } else {
+        format!("{h:02}:{mm:02}")
+    }
+}
+
+/// A clock button that drops down a list of times every quarter hour,
+/// from `lo` to `hi` minutes after midnight (`hi` past a day wraps), the
+/// way calendar apps pick times. With `from` (an end time) each row also
+/// says how long that makes it. Gives back the minutes picked.
+pub(crate) fn time_pick(ui: &mut egui::Ui, salt: &str, cur: i64, lo: i64, hi: i64, from: Option<i64>, hour12: bool) -> Option<i64> {
+    let b = ui.add(egui::Button::new(RichText::new(icons::CLOCK).size(theme::size::BODY)).min_size(egui::vec2(24.0, 0.0))).on_hover_text(tr("Pick a time"));
+    let id = ids::time_pick(salt);
+    if b.clicked() {
+        ui.data_mut(|d| d.insert_temp(id, true));
+    }
+    // an end past midnight sits a day on in the list
+    let cur = if cur < lo { cur + 24 * 60 } else { cur };
+    let mut out = None;
+    egui::Popup::from_toggle_button_response(&b).close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside).show(|ui| {
+        let jump = ui.data_mut(|d| d.remove_temp::<bool>(id)).unwrap_or(false);
+        egui::ScrollArea::vertical().max_height(260.0).show(ui, |ui| {
+            ui.set_min_width(if from.is_some() { 150.0 } else { 100.0 });
+            // a start on the quarter hour, an end a quarter after its start
+            let first = if from.is_some() { lo } else { (lo + 14) / 15 * 15 };
+            let mut m = first;
+            while m <= hi {
+                let mut text = clock(m, hour12);
+                if let Some(f) = from {
+                    let len = m - f;
+                    let dur = if len < 60 {
+                        trf("{} min", &[&len])
+                    } else if len % 60 == 0 {
+                        trf("{} h", &[&(len / 60)])
+                    } else {
+                        trf("{} h {} min", &[&(len / 60), &(len % 60)])
+                    };
+                    text = format!("{text}  ({dur})");
+                }
+                let on = m == cur;
+                let r = ui.selectable_label(on, text);
+                // opens on the time picked, or the nearest quarter to it
+                if jump && (on || (m <= cur && cur < m + 15)) {
+                    r.scroll_to_me(Some(Align::Center));
+                }
+                if r.clicked() {
+                    out = Some(m);
+                }
+                m += 15;
+            }
+        });
+        if out.is_some() {
+            ui.close();
+        }
+    });
+    out
+}
+
 /// A YYYY-MM-DD box with the date picker beside it.
 pub(crate) fn date_field(ui: &mut egui::Ui, salt: &str, text: &mut String, width: f32, look: PickLook) {
     ui.add(egui::TextEdit::singleline(text).hint_text("YYYY-MM-DD").desired_width(width));
@@ -617,9 +679,17 @@ impl App {
                         let day = midnight(c.ev.start.date());
                         let mut s = (c.ev.start - day).num_minutes();
                         let mut e = (c.ev.end - day).num_minutes().min(24 * 60);
+                        let len = e - s;
                         time_drag(ui, &mut s, 0, 24 * 60 - 5, p.hour12, muted);
+                        if let Some(v) = time_pick(ui, "cstart", s, 0, 24 * 60 - 15, None, p.hour12) {
+                            // a new start keeps the block's length
+                            (s, e) = (v, (v + len).min(24 * 60));
+                        }
                         ui.label(RichText::new("to").color(muted));
                         time_drag(ui, &mut e, s + 5, 24 * 60, p.hour12, muted);
+                        if let Some(v) = time_pick(ui, "cend", e, s + 15, 24 * 60, Some(s), p.hour12) {
+                            e = v;
+                        }
                         c.ev.start = day + Duration::minutes(s);
                         c.ev.end = day + Duration::minutes(e.max(s + 5));
                     });
@@ -990,9 +1060,17 @@ impl App {
                     label(ui, tr("Time"));
                     ui.horizontal(|ui| {
                         time(ui, &mut ed.frame.start_min, 0, 24 * 60 - 15);
+                        if let Some(v) = time_pick(ui, "fstart", ed.frame.start_min, 0, 24 * 60 - 15, None, hour12) {
+                            let len = ed.frame.end_min - ed.frame.start_min;
+                            ed.frame.start_min = v;
+                            ed.frame.end_min = (v + len).min(24 * 60);
+                        }
                         ui.label(RichText::new("to").color(muted));
                         let lo = ed.frame.start_min + 15;
                         time(ui, &mut ed.frame.end_min, lo, 24 * 60);
+                        if let Some(v) = time_pick(ui, "fend", ed.frame.end_min, lo, 24 * 60, Some(ed.frame.start_min), hour12) {
+                            ed.frame.end_min = v;
+                        }
                     });
                     ui.end_row();
 
@@ -1405,14 +1483,23 @@ impl App {
                     let len = ed.ev.end - ed.ev.start;
                     let (mut sh, mut sm) = (ed.ev.start.hour(), ed.ev.start.minute());
                     let (mut eh, mut em) = (ed.ev.end.hour(), ed.ev.end.minute());
+                    let start_m = (sh * 60 + sm) as i64;
+                    // the end's list runs a day on from the start, as it may end tomorrow
                     let time = |ui: &mut egui::Ui, h: &mut u32, m: &mut u32, after: Option<String>| -> bool {
                         let mut ch = false;
                         ui.horizontal(|ui| {
+                            let end = after.is_some();
+                            let (salt, lo, hi, from) = if end { ("eend", start_m + 15, start_m + 24 * 60, Some(start_m)) } else { ("estart", 0, 24 * 60 - 15, None) };
                             ch |= ui.add(egui::DragValue::new(h).range(0..=23).speed(0.1)).changed();
                             ui.label(":");
                             ch |= ui
                                 .add(egui::DragValue::new(m).range(0..=59).speed(0.25).custom_formatter(|v, _| format!("{:02}", v as u32)))
                                 .changed();
+                            if let Some(v) = time_pick(ui, salt, (*h * 60 + *m) as i64, lo, hi, from, hour12) {
+                                let v = v.rem_euclid(24 * 60) as u32;
+                                (*h, *m) = (v / 60, v % 60);
+                                ch = true;
+                            }
                             if hour12 {
                                 let h12 = if *h % 12 == 0 { 12 } else { *h % 12 };
                                 let ap = if *h < 12 { "AM" } else { "PM" };

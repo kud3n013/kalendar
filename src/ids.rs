@@ -104,6 +104,8 @@ keyed! {
     add_text = "add_text";
     /// the month a date picker shows
     date_pick = "date_pick";
+    /// a time picker that should scroll to the time picked when it opens
+    time_pick = "time_pick";
     due_glow = "due";
     /// a block on one day of the grid, for its settling motion
     block = "block";
