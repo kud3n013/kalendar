@@ -1082,6 +1082,13 @@ impl App {
             .with_min_inner_size([380.0, 300.0])
             .with_window_level(egui::WindowLevel::AlwaysOnTop);
         let mut out = Pressed::default();
+        // passes since the window opened: a gap in the main window's frames
+        // means it was closed in between, so it opens anew
+        let fit_id = egui::ViewportId::from_hash_of(name).0.with("fit");
+        let nr = ctx.cumulative_frame_nr();
+        let (last, passes) = ctx.data(|d| d.get_temp::<(u64, u32)>(fit_id)).unwrap_or((0, 0));
+        let passes = if last + 1 == nr { passes + 1 } else { 0 };
+        ctx.data_mut(|d| d.insert_temp(fit_id, (nr, passes)));
         ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(name), builder, |ui, class| {
             if class == egui::ViewportClass::EmbeddedWindow {
                 self.own_windows = false;
@@ -1098,18 +1105,38 @@ impl App {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             }
             // the buttons sit at the foot of the window; the fields scroll above them
-            egui::Panel::bottom(ids::editor_buttons())
+            let foot = egui::Panel::bottom(ids::editor_buttons())
                 .show_separator_line(false)
                 .frame(egui::Frame::new().fill(self.pal.bg).inner_margin(egui::Margin { left: 14, right: 14, top: 8, bottom: 14 }))
                 .show(ui, |ui| out = editor_buttons(ui, offer));
             let mut save = false;
+            let mut content = egui::Vec2::ZERO;
             egui::CentralPanel::default().frame(egui::Frame::new().fill(self.pal.bg).inner_margin(egui::Margin { left: 14, right: 14, top: 14, bottom: 0 })).show(ui, |ui| {
-                egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    save = form(self, ui);
-                });
+                content = egui::ScrollArea::vertical()
+                    .auto_shrink([false; 2])
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        save = form(self, ui);
+                    })
+                    .content_size;
             });
             out.save |= save;
+            // a window just opened grows to show all its fields, the notes
+            // at the end too, within the screen; after that its size is the
+            // person's
+            if passes < 4 {
+                let want = egui::vec2(content.x + 28.0, content.y + 14.0 + foot.response.rect.height()).max(EDITOR_SIZE.into());
+                let (now, screen) = ctx.input(|i| (i.viewport().inner_rect.map(|r| r.size()), i.viewport().monitor_size));
+                let want = screen.map_or(want, |s| want.min(s - egui::vec2(40.0, 80.0)));
+                if now.is_some_and(|n| want.x > n.x + 0.5 || want.y > n.y + 0.5) {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(want));
+                    if let Some(s) = screen {
+                        // kept on the screen, as far as the system lets it be moved
+                        let at = egui::pos2(at.x.min(s.x - want.x - 20.0).max(0.0), at.y.min(s.y - want.y - 60.0).max(0.0));
+                        ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(at));
+                    }
+                }
+            }
             let (close, esc) = ctx.input(|i| (i.viewport().close_requested(), i.key_pressed(egui::Key::Escape)));
             if close || esc {
                 out.cancel = true;
