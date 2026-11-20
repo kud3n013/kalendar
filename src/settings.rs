@@ -151,9 +151,12 @@ fn row(ui: &mut egui::Ui, label: &str, tip: &str, add: impl FnOnce(&mut egui::Ui
     let cw = if stack { avail.min(CONTROL_W) } else { wide };
     ui.data_mut(|d| d.insert_temp(ids::control_w(), cw));
     let name = |ui: &mut egui::Ui| {
-        ui.add(egui::Label::new(RichText::new(label).size(theme::size::TITLE)).truncate());
+        // the name and the (i) after it both show the tip; a label alone
+        // takes no hover, so they ask for it
+        let name = ui.add(egui::Label::new(RichText::new(label).size(theme::size::TITLE)).truncate().sense(egui::Sense::hover()));
         if !tip.is_empty() {
-            ui.label(RichText::new("(i)").size(theme::size::SMALL).weak()).on_hover_text(tip);
+            name.on_hover_text(tip);
+            ui.add(egui::Label::new(RichText::new("(i)").size(theme::size::SMALL).weak()).sense(egui::Sense::hover())).on_hover_cursor(egui::CursorIcon::Help).on_hover_text(tip);
         }
     };
     let control = |ui: &mut egui::Ui| {
