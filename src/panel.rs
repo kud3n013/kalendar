@@ -345,6 +345,14 @@ impl App {
     }
 
     pub fn ui_sidebar(&mut self, ui: &mut egui::Ui) {
+        self.sidebar(ui);
+        // a list's editor opens from the panel, the strip's flyer or the
+        // compact window's, so it is drawn whichever of them is showing
+        let ctx = ui.ctx().clone();
+        self.ui_list_edit(&ctx);
+    }
+
+    fn sidebar(&mut self, ui: &mut egui::Ui) {
         let ctx = &ui.ctx().clone();
         let today = Local::now().date_naive();
         let side = self.pal.side;
@@ -680,7 +688,6 @@ impl App {
             self.morph.scroll = out.state.clamped_offset().y;
         }
         self.morph.view = Some(out.inner_rect.y_range());
-        self.ui_list_edit(ctx);
     }
 
     /// What a list's menu offers: plan its tasks, change how it looks, or
