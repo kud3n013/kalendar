@@ -43,6 +43,7 @@ pub const CLOCK: &str = "\u{e087}"; // clock
 pub const PALETTE: &str = "\u{e1dd}"; // palette
 pub const PEN: &str = "\u{e172}"; // square-pen
 pub const BAN: &str = "\u{e051}"; // ban
+pub const ALERT: &str = "\u{e193}"; // triangle-alert
 
 /// What a task list can show in place of its ring.
 pub const LIST_ICONS: [&str; 19] = [

@@ -229,6 +229,8 @@ pub struct Toast {
     pub until: f64,
     pub undo: bool,
     pub move_due: Option<(u64, NaiveDate)>,
+    /// something went wrong or was refused: drawn with a warning sign
+    pub warn: bool,
     /// when it appeared (set on first draw), for the fade
     pub born: f64,
 }
@@ -594,6 +596,19 @@ impl App {
             until: ctx.input(|i| i.time) + if undo { grace } else { 4.0 },
             undo,
             move_due: None,
+            warn: false,
+            born: -1.0,
+        });
+    }
+
+    /// A toast for something refused or wrong, that should catch the eye.
+    pub fn warn(&mut self, ctx: &egui::Context, text: impl Into<String>) {
+        self.toast = Some(Toast {
+            text: text.into(),
+            until: ctx.input(|i| i.time) + 5.0,
+            undo: false,
+            move_due: None,
+            warn: true,
             born: -1.0,
         });
     }
@@ -831,7 +846,7 @@ impl App {
     /// True (with a message) when the event belongs to a subscribed calendar.
     pub fn refuse_remote(&mut self, ctx: &egui::Context, id: u64) -> bool {
         if let Some(why) = self.data.event(id).and_then(|e| self.data.locked(e)) {
-            self.say(ctx, why, false);
+            self.warn(ctx, why);
             return true;
         }
         false
@@ -924,6 +939,7 @@ impl App {
                         until: ctx.input(|i| i.time) + 10.0,
                         undo: false,
                         move_due: Some((task_id, day)),
+                        warn: true,
                         born: -1.0,
                     });
                 }
@@ -989,7 +1005,7 @@ impl App {
             None => {
                 self.data.events.push(e);
                 self.undo.pop();
-                self.say(ctx, tr("No free working time found in the next days"), false);
+                self.warn(ctx, tr("No free working time found in the next days"));
             }
         }
     }
@@ -1014,14 +1030,14 @@ impl App {
                 self.commit();
                 self.say(ctx, trf("Follow-up on {}", &[&start.format("%a %b %-d, %H:%M")]), true);
             }
-            None => self.say(ctx, tr("No free working time found in the next days"), false),
+            None => self.warn(ctx, tr("No free working time found in the next days")),
         }
     }
 
     /// Ends a running session now and books the rest of its time later.
     pub fn split_session(&mut self, ctx: &egui::Context, id: u64) {
         let Some(at) = self.split_time(id) else {
-            self.say(ctx, tr("Only a session that is running now can be split"), false);
+            self.warn(ctx, tr("Only a session that is running now can be split"));
             return;
         };
         let Some(e) = self.data.event(id).cloned() else { return };

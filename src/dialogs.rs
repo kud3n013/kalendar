@@ -626,7 +626,7 @@ impl App {
                 Ok(d) => Some(d),
                 Err(_) => {
                     if save && c.kind == CreateKind::Task {
-                        self.say(ctx, tr("The due date should look like 2026-11-30"), false);
+                        self.warn(ctx, tr("The due date should look like 2026-11-30"));
                         save = false;
                     }
                     None
@@ -639,7 +639,7 @@ impl App {
             match NaiveDate::parse_from_str(c.until_text.trim(), "%Y-%m-%d") {
                 Ok(d) => until = Some(d),
                 Err(_) => {
-                    self.say(ctx, tr("The last day should look like 2026-11-30"), false);
+                    self.warn(ctx, tr("The last day should look like 2026-11-30"));
                     save = false;
                 }
             }
@@ -762,11 +762,11 @@ impl App {
             } else if let Ok(d) = NaiveDate::parse_from_str(text, "%Y-%m-%d") {
                 Some(d)
             } else {
-                self.say(ctx, tr("The end date should look like 2026-12-31"), false);
+                self.warn(ctx, tr("The end date should look like 2026-12-31"));
                 return self.frame_editor = Some(ed);
             };
             if ed.frame.days == 0 {
-                self.say(ctx, tr("Pick at least one day"), false);
+                self.warn(ctx, tr("Pick at least one day"));
                 return self.frame_editor = Some(ed);
             }
             let mut f = ed.frame;
@@ -1404,7 +1404,7 @@ impl App {
             return self.editor = Some(ed);
         }
         if save && ed.task.as_mut().is_some_and(|t| t.read_text().is_err()) {
-            self.say(ctx, tr("The due date should look like 2026-11-30"), false);
+            self.warn(ctx, tr("The due date should look like 2026-11-30"));
             return self.editor = Some(ed);
         }
         // a repeat is laid out as copies of the event up to a last day
@@ -1413,7 +1413,7 @@ impl App {
             match NaiveDate::parse_from_str(ed.until_text.trim(), "%Y-%m-%d") {
                 Ok(until) => copies = ed.repeat.days_after(ed.ev.start.date(), until),
                 Err(_) => {
-                    self.say(ctx, tr("The last day should look like 2026-11-30"), false);
+                    self.warn(ctx, tr("The last day should look like 2026-11-30"));
                     return self.editor = Some(ed);
                 }
             }
@@ -1597,7 +1597,7 @@ impl App {
         let key = ids::task_editor().with(ed.task.id);
         if save {
             if ed.read_text().is_err() {
-                self.say(ctx, tr("The due date should look like 2026-11-30"), false);
+                self.warn(ctx, tr("The due date should look like 2026-11-30"));
                 self.task_editor = Some(ed);
                 return;
             }
@@ -1717,7 +1717,7 @@ impl App {
             return;
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(300));
-        let (text, undo, move_due) = (t.text.clone(), t.undo, t.move_due);
+        let (text, undo, move_due, warn) = (t.text.clone(), t.undo, t.move_due, t.warn);
         let (born, until) = (if t.born < 0.0 { now } else { t.born }, t.until);
         if let Some(t) = &mut self.toast {
             t.born = born;
@@ -1731,7 +1731,8 @@ impl App {
         }
         let (mut do_undo, mut do_move, mut dismiss) = (false, false, false);
         let fill = mix(self.pal.side, self.pal.text, 0.12);
-        let border = self.pal.border;
+        // a warning wears a bright orange edge and sign, so it is not missed
+        let border = if warn { Stroke::new(2.0, theme::WARNING) } else { Stroke::new(1.0, self.pal.border) };
         egui::Area::new(ids::toast())
             .anchor(Align2::CENTER_BOTTOM, [0.0, -24.0 + (1.0 - a_in) * 16.0])
             .order(egui::Order::Foreground)
@@ -1739,11 +1740,14 @@ impl App {
                 ui.set_opacity(alpha);
                 egui::Frame::new()
                     .fill(fill)
-                    .stroke(Stroke::new(1.0, border))
+                    .stroke(border)
                     .corner_radius(theme::CARD_RADIUS)
                     .inner_margin(Margin::symmetric(14, 8))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
+                            if warn {
+                                ui.label(RichText::new(icons::ALERT).size(theme::size::LARGE).color(theme::WARNING));
+                            }
                             ui.label(text);
                             if undo && ui.button(tr("Undo")).clicked() {
                                 do_undo = true;

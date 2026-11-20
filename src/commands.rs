@@ -327,7 +327,7 @@ impl App {
             Cmd::Shortcuts => self.open_settings(settings::Page::Shortcuts),
             Cmd::Refresh => {
                 if self.sync_all(ctx) == 0 {
-                    self.say(ctx, tr("No subscribed calendars or accounts to refresh"), false);
+                    self.warn(ctx, tr("No subscribed calendars or accounts to refresh"));
                 } else {
                     self.say(ctx, tr("Refreshing calendars…"), false);
                 }
