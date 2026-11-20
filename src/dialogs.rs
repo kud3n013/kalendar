@@ -232,6 +232,45 @@ fn color_row(ui: &mut egui::Ui, cal_color: [u8; 3], color: &mut Option<[u8; 3]>)
     swatches(ui, cal_color, tr("Calendar colour"), color);
 }
 
+/// The repeat dropdown: the fixed patterns and Custom, which starts on
+/// the weekday of `day`; returns whether the pick changed.
+fn repeat_combo(ui: &mut egui::Ui, id: &str, r: &mut Repeat, day: NaiveDate) -> bool {
+    let was = *r;
+    let shown = if matches!(r, Repeat::Custom(_)) { tr("Custom").to_string() } else { r.label() };
+    egui::ComboBox::from_id_salt(id).selected_text(shown).show_ui(ui, |ui| {
+        for v in Repeat::ALL {
+            ui.selectable_value(r, v, v.label());
+        }
+        let custom = matches!(r, Repeat::Custom(_));
+        if ui.selectable_label(custom, tr("Custom")).clicked() && !custom {
+            *r = Repeat::custom_from(day);
+        }
+    });
+    *r != was
+}
+
+/// Mo to Su as toggles over a weekday mask: bit 0 Monday to bit 6 Sunday.
+pub(crate) fn weekday_chips(ui: &mut egui::Ui, days: &mut u8) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 3.0;
+        for (i, d) in [tr("Mo"), tr("Tu"), tr("We"), tr("Th"), tr("Fr"), tr("Sa"), tr("Su")].iter().enumerate() {
+            let bit = 1u8 << i;
+            if ui.selectable_label(*days & bit != 0, *d).clicked() {
+                *days ^= bit;
+            }
+        }
+    });
+}
+
+/// The weekday row under a Custom repeat, in a two-column grid.
+fn custom_days_row(ui: &mut egui::Ui, r: &mut Repeat, muted: egui::Color32) {
+    if let Repeat::Custom(days) = r {
+        ui.label(RichText::new(tr("On")).color(muted));
+        weekday_chips(ui, days);
+        ui.end_row();
+    }
+}
+
 /// A row of colour dots: the first, `base`, for None, then the palette.
 pub(crate) fn swatches(ui: &mut egui::Ui, base: [u8; 3], base_tip: &str, color: &mut Option<[u8; 3]>) {
     ui.horizontal_wrapped(|ui| {
@@ -454,13 +493,7 @@ impl App {
 
                     label(ui, tr("Repeat"));
                     ui.horizontal(|ui| {
-                        let was = c.repeat;
-                        egui::ComboBox::from_id_salt("crep").selected_text(c.repeat.label()).show_ui(ui, |ui| {
-                            for v in Repeat::ALL {
-                                ui.selectable_value(&mut c.repeat, v, v.label());
-                            }
-                        });
-                        if c.repeat != was && c.repeat != Repeat::None {
+                        if repeat_combo(ui, "crep", &mut c.repeat, c.ev.start.date()) && c.repeat != Repeat::None {
                             c.until_text = c.repeat.first_until(c.ev.start.date()).to_string();
                         }
                         if c.repeat != Repeat::None {
@@ -473,6 +506,7 @@ impl App {
                         }
                     });
                     ui.end_row();
+                    custom_days_row(ui, &mut c.repeat, muted);
 
                     if is_task {
                         label(ui, tr("List"));
@@ -816,15 +850,7 @@ impl App {
                     ui.end_row();
 
                     label(ui, tr("Days"));
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 3.0;
-                        for (i, d) in [tr("Mo"), tr("Tu"), tr("We"), tr("Th"), tr("Fr"), tr("Sa"), tr("Su")].iter().enumerate() {
-                            let bit = 1u8 << i;
-                            if ui.selectable_label(ed.frame.days & bit != 0, *d).clicked() {
-                                ed.frame.days ^= bit;
-                            }
-                        }
-                    });
+                    weekday_chips(ui, &mut ed.frame.days);
                     ui.end_row();
 
                     label(ui, tr("Repeat"));
@@ -1234,13 +1260,7 @@ impl App {
                     ui.end_row();
                     editor_label(ui, tr("Repeat"), muted);
                     ui.horizontal(|ui| {
-                        let was = ed.repeat;
-                        egui::ComboBox::from_id_salt("erep").selected_text(ed.repeat.label()).show_ui(ui, |ui| {
-                            for v in Repeat::ALL {
-                                ui.selectable_value(&mut ed.repeat, v, v.label());
-                            }
-                        });
-                        if ed.repeat != was && ed.repeat != Repeat::None {
+                        if repeat_combo(ui, "erep", &mut ed.repeat, ed.ev.start.date()) && ed.repeat != Repeat::None {
                             ed.until_text = ed.repeat.first_until(ed.ev.start.date()).to_string();
                         }
                         if ed.repeat != Repeat::None {
@@ -1251,6 +1271,7 @@ impl App {
                     .response
                     .on_hover_text(tr("Saving adds a copy of this event each time, up to the last day"));
                     ui.end_row();
+                    custom_days_row(ui, &mut ed.repeat, muted);
                 }
         });
         // a task's block shows the whole task, as its own editor does
@@ -1443,12 +1464,10 @@ impl App {
             });
             ui.end_row();
             editor_label(ui, tr("Repeat due"), muted);
-            egui::ComboBox::from_id_salt("rep").selected_text(ed.task.repeat.label()).show_ui(ui, |ui| {
-                for v in Repeat::ALL {
-                    ui.selectable_value(&mut ed.task.repeat, v, v.label());
-                }
-            });
+            let day = ed.task.due.unwrap_or_else(|| chrono::Local::now().date_naive());
+            repeat_combo(ui, "rep", &mut ed.task.repeat, day);
             ui.end_row();
+            custom_days_row(ui, &mut ed.task.repeat, muted);
             editor_label(ui, tr("Earliest start"), muted);
             ui.add(egui::TextEdit::singleline(&mut ed.earliest_text).hint_text("YYYY-MM-DD").desired_width(96.0));
             ui.end_row();

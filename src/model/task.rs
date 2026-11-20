@@ -1,6 +1,6 @@
 //! Tasks and the lists they are kept in.
 
-use crate::strings::tr;
+use crate::strings::{tr, trf};
 use super::*;
 use chrono::{Datelike, Duration, NaiveDate, Weekday};
 use serde::{Deserialize, Serialize};
@@ -53,18 +53,29 @@ pub enum Repeat {
     Weekdays,
     Weekly,
     Monthly,
+    /// on the picked weekdays: bit 0 Monday to bit 6 Sunday, as a frame's
+    Custom(u8),
 }
 
 impl Repeat {
     pub const ALL: [Repeat; 5] = [Repeat::None, Repeat::Daily, Repeat::Weekdays, Repeat::Weekly, Repeat::Monthly];
-    pub fn label(&self) -> &'static str {
+    pub fn label(&self) -> String {
         match self {
-            Repeat::None => tr("No repeat"),
-            Repeat::Daily => tr("Every day"),
-            Repeat::Weekdays => tr("Every weekday"),
-            Repeat::Weekly => tr("Every week"),
-            Repeat::Monthly => tr("Every month"),
+            Repeat::None => tr("No repeat").into(),
+            Repeat::Daily => tr("Every day").into(),
+            Repeat::Weekdays => tr("Every weekday").into(),
+            Repeat::Weekly => tr("Every week").into(),
+            Repeat::Monthly => tr("Every month").into(),
+            Repeat::Custom(days) => {
+                let names = [tr("Mo"), tr("Tu"), tr("We"), tr("Th"), tr("Fr"), tr("Sa"), tr("Su")];
+                let on: Vec<&str> = (0..7).filter(|i| days & (1 << i) != 0).map(|i| names[i]).collect();
+                if on.is_empty() { tr("Custom").into() } else { trf("Every {}", &[&on.join(", ")]) }
+            }
         }
+    }
+    /// A custom repeat on the weekday of `day` alone, to start picking from.
+    pub fn custom_from(day: NaiveDate) -> Repeat {
+        Repeat::Custom(1 << day.weekday().num_days_from_monday())
     }
     /// The next date after `d` in this pattern.
     pub fn next(&self, d: NaiveDate) -> NaiveDate {
@@ -79,6 +90,15 @@ impl Repeat {
                 n
             }
             Repeat::Weekly => d + Duration::days(7),
+            // with no day picked, the same weekday each week
+            Repeat::Custom(days) if days & 0x7f == 0 => d + Duration::days(7),
+            Repeat::Custom(days) => {
+                let mut n = d + Duration::days(1);
+                while days & (1 << n.weekday().num_days_from_monday()) == 0 {
+                    n += Duration::days(1);
+                }
+                n
+            }
             Repeat::Monthly => d.checked_add_months(chrono::Months::new(1)).unwrap_or(d + Duration::days(30)),
         }
     }
@@ -86,7 +106,7 @@ impl Repeat {
     /// weeks on, twelve weeks for a weekly one, a year for a monthly one.
     pub fn first_until(&self, day: NaiveDate) -> NaiveDate {
         match self {
-            Repeat::Weekly => day + Duration::weeks(12),
+            Repeat::Weekly | Repeat::Custom(_) => day + Duration::weeks(12),
             Repeat::Monthly => day.checked_add_months(chrono::Months::new(12)).unwrap_or(day),
             _ => day + Duration::weeks(4),
         }

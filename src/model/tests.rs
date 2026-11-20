@@ -670,3 +670,16 @@ fn a_block_takes_its_list_colour_else_its_calendars() {
     d.prefs.main_color = Some([7, 7, 7]);
     assert_eq!(d.event_color(&Event { calendar: 999, ..block(2) }), [7, 7, 7]);
 }
+
+#[test]
+fn a_custom_repeat_comes_on_the_picked_weekdays() {
+    let d = |m, day| NaiveDate::from_ymd_opt(2026, m, day).unwrap();
+    // Monday and Wednesday, from Monday 2 November
+    let mo_we = Repeat::Custom(0b101);
+    assert_eq!(mo_we.days_after(d(11, 2), d(11, 11)), vec![d(11, 4), d(11, 9), d(11, 11)]);
+    assert_eq!(mo_we.next(d(11, 4)), d(11, 9));
+    assert_eq!(mo_we.label(), "Every Mo, We");
+    assert_eq!(Repeat::custom_from(d(11, 4)), Repeat::Custom(0b100));
+    // none picked: once a week
+    assert_eq!(Repeat::Custom(0).next(d(11, 4)), d(11, 11));
+}
