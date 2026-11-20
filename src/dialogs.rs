@@ -263,9 +263,15 @@ pub(crate) fn weekday_chips(ui: &mut egui::Ui, days: &mut u8) {
 }
 
 /// The weekday row under a Custom repeat, in a two-column grid.
-fn custom_days_row(ui: &mut egui::Ui, r: &mut Repeat, muted: egui::Color32) {
+/// `editor` lays the label out as an editor window's labels, else as the
+/// flyout's.
+fn custom_days_row(ui: &mut egui::Ui, r: &mut Repeat, muted: egui::Color32, editor: bool) {
     if let Repeat::Custom(days) = r {
-        ui.label(RichText::new(tr("On")).color(muted));
+        if editor {
+            editor_label(ui, tr("On"), muted);
+        } else {
+            ui.label(RichText::new(tr("On")).color(muted));
+        }
         weekday_chips(ui, days);
         ui.end_row();
     }
@@ -506,7 +512,7 @@ impl App {
                         }
                     });
                     ui.end_row();
-                    custom_days_row(ui, &mut c.repeat, muted);
+                    custom_days_row(ui, &mut c.repeat, muted, false);
 
                     if is_task {
                         label(ui, tr("List"));
@@ -1298,7 +1304,7 @@ impl App {
                     .response
                     .on_hover_text(tr("Saving adds a copy of this event each time, up to the last day"));
                     ui.end_row();
-                    custom_days_row(ui, &mut ed.repeat, muted);
+                    custom_days_row(ui, &mut ed.repeat, muted, true);
                 }
         });
         // a task's block shows the whole task, as its own editor does
@@ -1494,7 +1500,7 @@ impl App {
             let day = ed.task.due.unwrap_or_else(|| chrono::Local::now().date_naive());
             repeat_combo(ui, "rep", &mut ed.task.repeat, day);
             ui.end_row();
-            custom_days_row(ui, &mut ed.task.repeat, muted);
+            custom_days_row(ui, &mut ed.task.repeat, muted, true);
             editor_label(ui, tr("Earliest start"), muted);
             ui.add(egui::TextEdit::singleline(&mut ed.earliest_text).hint_text("YYYY-MM-DD").desired_width(96.0));
             ui.end_row();
