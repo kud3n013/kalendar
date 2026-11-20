@@ -22,11 +22,17 @@ pub fn feed_key(id: u64) -> String {
 
 const NO_KEYRING: &str = later("No keyring is running, so this cannot be kept safely. Start one (KWallet or GNOME Keyring), or allow a password file under Settings > Integrations.");
 
-/// Connects to the Secret Service once.
+/// Connects to the system's keyring once: the Secret Service on Linux,
+/// Credential Manager on Windows, the Keychain on macOS.
 fn keyring() -> Result<(), String> {
     static READY: OnceLock<Result<(), String>> = OnceLock::new();
     READY
         .get_or_init(|| {
+            #[cfg(windows)]
+            let store = windows_native_keyring_store::Store::new().map_err(|e| e.to_string())?;
+            #[cfg(target_os = "macos")]
+            let store = apple_native_keyring_store::keychain::Store::new().map_err(|e| e.to_string())?;
+            #[cfg(not(any(windows, target_os = "macos")))]
             let store = zbus_secret_service_keyring_store::Store::new().map_err(|e| e.to_string())?;
             keyring_core::set_default_store(store);
             Ok(())
@@ -51,7 +57,6 @@ fn read_file(path: &Path) -> BTreeMap<String, String> {
 /// Writes the file so that only its owner can read it.
 fn write_file(path: &Path, all: &BTreeMap<String, String>) -> Result<(), String> {
     use std::io::Write;
-    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     if all.is_empty() {
         let _ = std::fs::remove_file(path);
         return Ok(());
@@ -60,9 +65,18 @@ fn write_file(path: &Path, all: &BTreeMap<String, String>) -> Result<(), String>
         let _ = std::fs::create_dir_all(dir);
     }
     let text = serde_json::to_string_pretty(all).map_err(|e| e.to_string())?;
-    let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(path).map_err(|e| e.to_string())?;
-    // a file that was already there keeps its old mode unless told
-    f.set_permissions(std::fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut opts, 0o600);
+    let mut f = opts.open(path).map_err(|e| e.to_string())?;
+    // a file that was already there keeps its old mode unless told; on
+    // Windows the file sits in the user's own profile folder
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        f.set_permissions(std::fs::Permissions::from_mode(0o600)).map_err(|e| e.to_string())?;
+    }
     f.write_all(text.as_bytes()).map_err(|e| e.to_string())
 }
 
@@ -149,6 +163,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn password_file_is_private_and_goes_when_empty() {
         use std::os::unix::fs::PermissionsExt;
         let dir = std::env::temp_dir().join(format!("katlendar-secrets-{}", std::process::id()));

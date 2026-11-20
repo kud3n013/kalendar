@@ -1,5 +1,8 @@
 //! Katlendar: a calendar and task planner.
 
+// a release build on Windows opens no console window beside the app
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod ics;
 mod icons;
 mod ids;
@@ -9,12 +12,14 @@ mod theme;
 pub use theme::{mix, rgb, Palette};
 mod motion;
 mod panel;
+mod platform;
 mod secrets;
 mod settings;
 mod strings;
 pub use strings::{later, tr, trf};
 mod sync;
 mod tz;
+mod update;
 mod dialogs;
 mod fonts;
 mod views;
@@ -105,8 +110,24 @@ fn main() {
                 }
                 return;
             }
+            // test aid: ask GitHub whether a newer release is out
+            "--check-update" => {
+                match update::newest(update::current()) {
+                    Ok(Some(r)) => println!("{} is out (this is {}): {}", r.version, update::current(), r.url),
+                    Ok(None) => println!("{} is the newest", update::current()),
+                    Err(e) => {
+                        eprintln!("{e}");
+                        std::process::exit(1);
+                    }
+                }
+                return;
+            }
+            "--version" | "-V" => {
+                println!("katlendar {}", update::current());
+                return;
+            }
             "--help" | "-h" => {
-                println!("katlendar [--screenshot <file.png>]");
+                println!("katlendar [--screenshot <file.png>] [--version] [--check-update]");
                 return;
             }
             other => {

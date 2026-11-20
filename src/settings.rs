@@ -1696,13 +1696,19 @@ impl App {
 
     fn page_info(&mut self, ui: &mut egui::Ui) {
         if finding(ui) {
-            let words = ["about", "katlendar", "version", env!("CARGO_PKG_VERSION"), "data", "file", "folder", "path", "location", "config", "json", "privacy"];
-            page_result(ui, Page::Info, tr("Version and data files"), tr("Where your calendars, tasks and settings are kept"), &words);
+            let words = ["about", "katlendar", "version", env!("CARGO_PKG_VERSION"), "update", "updates", "upgrade", "release", "beta", "data", "file", "folder", "path", "location", "config", "json", "privacy"];
+            page_result(ui, Page::Info, tr("Version, updates and data files"), tr("Where your calendars, tasks and settings are kept"), &words);
             return;
         }
         let muted = self.pal.muted;
+        let accent = self.pal.accent;
         heading(ui, tr("Katlendar"));
         ui.label(RichText::new(trf("Version {}", &[&env!("CARGO_PKG_VERSION")])).size(theme::size::LARGE));
+        ui.add_space(4.0);
+        row(ui, tr("Check for updates"), tr("Ask GitHub on start and twice a day whether a newer version is out. Only the list of releases is fetched; nothing about you or your calendars is sent."), |ui| {
+            switch(ui, &mut self.data.prefs.check_updates, accent);
+        });
+        self.update_status(ui);
         ui.add_space(8.0);
         ui.label(RichText::new(tr("Your calendars and tasks are kept on this computer, in:")).size(theme::size::UI).color(muted));
         ui.label(RichText::new(data_path().display().to_string()).size(theme::size::UI).monospace());

@@ -121,6 +121,7 @@ impl eframe::App for App {
         });
 
         self.poll_sync(ctx);
+        self.auto_update_check(ctx);
         if let Some(page) = &testaid::get().show_settings {
             // the settings fill the main window, so a picture can be taken
             use settings::Page;

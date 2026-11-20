@@ -39,14 +39,13 @@ fn portable_home() -> Option<PathBuf> {
 }
 
 /// Where the calendar and task data is kept:
-/// $XDG_DATA_HOME/katlendar/data.json, usually ~/.local/share/katlendar/.
+/// $XDG_DATA_HOME/katlendar/data.json, usually ~/.local/share/katlendar/
+/// (%APPDATA%\katlendar on Windows, ~/Library/Application Support/katlendar
+/// on macOS).
 pub fn data_path() -> PathBuf {
-    let base = portable_home().map(|h| h.join(".local/share")).unwrap_or_else(|| {
-        std::env::var_os("XDG_DATA_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
-            .unwrap_or_else(|| PathBuf::from("."))
-    });
+    let base = portable_home()
+        .map(|h| h.join(".local/share"))
+        .unwrap_or_else(|| crate::platform::data_base().unwrap_or_else(|| PathBuf::from(".")));
     own_dir(&base).join("data.json")
 }
 
@@ -62,14 +61,12 @@ fn own_dir(base: &Path) -> PathBuf {
 }
 
 /// Where the settings are kept:
-/// $XDG_CONFIG_HOME/katlendar/config.json, usually ~/.config/katlendar/.
+/// $XDG_CONFIG_HOME/katlendar/config.json, usually ~/.config/katlendar/
+/// (beside the data on Windows and macOS).
 pub fn config_path() -> PathBuf {
-    let base = portable_home().map(|h| h.join(".config")).unwrap_or_else(|| {
-        std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
-            .unwrap_or_else(|| PathBuf::from("."))
-    });
+    let base = portable_home()
+        .map(|h| h.join(".config"))
+        .unwrap_or_else(|| crate::platform::config_base().unwrap_or_else(|| PathBuf::from(".")));
     own_dir(&base).join("config.json")
 }
 

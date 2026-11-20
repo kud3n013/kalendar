@@ -149,6 +149,8 @@ pub struct Prefs {
     pub keybinds: std::collections::HashMap<String, String>,
     /// how the quick task field reads what is typed
     pub quick: QuickSyntax,
+    /// ask GitHub now and then whether a newer version is out
+    pub check_updates: bool,
 }
 
 impl Default for Prefs {
@@ -202,6 +204,7 @@ impl Default for Prefs {
             plaintext_secrets: false,
             keybinds: Default::default(),
             quick: QuickSyntax::default(),
+            check_updates: true,
         }
     }
 }

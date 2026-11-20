@@ -50,6 +50,8 @@ fixed! {
     /// test aid: a right-click menu shown in a window
     demo_menu = "menu";
     toast = "toast";
+    /// the notice that a newer version is out
+    update_notice = "update_notice";
     quick_nav_area = "quicknav_area";
     panel_bottom = "panel_bottom";
     /// the Save, Cancel and Delete row of an editor window

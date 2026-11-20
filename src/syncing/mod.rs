@@ -37,6 +37,8 @@ pub enum SyncDone {
     GoogleDone { res: Result<GoogleGrant, sync::SyncError> },
     /// a sign-in to Proton went through, wants a check first, or failed
     ProtonDone { username: String, res: Result<sync::proton::SignIn, sync::SyncError> },
+    /// GitHub was asked for a newer release
+    Update { res: Result<Option<crate::update::Release>, String> },
 }
 
 pub struct GoogleGrant {

@@ -10,6 +10,7 @@ impl App {
         let stamp = || Some(Local::now().format("%b %-d, %H:%M").to_string());
         while let Ok(done) = self.sync_rx.try_recv() {
             match done {
+                SyncDone::Update { res } => self.take_update(res),
                 SyncDone::Pulled { cal, res } => {
                     self.syncing.remove(&cal);
                     let Some(c) = self.data.calendar(cal) else { continue };
@@ -170,7 +171,7 @@ impl App {
                         }
                         Ok(sync::proton::SignIn::Human { token, url }) => {
                             self.pr_human = Some(token);
-                            let _ = std::process::Command::new("xdg-open").arg(&url).spawn();
+                            crate::platform::open_url(&url);
                             self.acct_error = Some(tr("Proton asks for a check that you are human. Finish it on the page that opened in your browser, then press the sign-in button again.").into());
                         }
                         Err(e) => {

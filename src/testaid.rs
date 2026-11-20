@@ -77,6 +77,8 @@ pub struct Aids {
     pub drag: Option<(String, egui::Pos2)>,
     /// `KATLENDAR_MORPH=<0..1>`: the task panel held that far between the rail and open *(picture)*
     pub morph: Option<f32>,
+    /// `KATLENDAR_UPDATE=<version>`: the notice that that version is out *(picture)*
+    pub update: Option<String>,
 }
 
 /// The aids, read once.
@@ -118,6 +120,7 @@ fn read(var: impl Fn(&str) -> Option<String>) -> Aids {
         show_newtask: set("SHOW_NEWTASK"),
         list_edit: set("LIST_EDIT"),
         new_list: on("NEW_LIST"),
+        update: set("UPDATE"),
         morph: set("MORPH").and_then(|v| v.trim().parse::<f32>().ok()).map(|t| t.clamp(0.0, 1.0)),
         drag: set("DRAG").and_then(|v| {
             let (title, at) = v.rsplit_once('@')?;

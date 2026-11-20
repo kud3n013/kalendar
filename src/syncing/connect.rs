@@ -125,7 +125,7 @@ impl App {
         self.in_background(ctx, move |send| {
             use std::sync::atomic::Ordering;
             let res = sync::nextcloud::start(&server).and_then(|pending| {
-                let _ = std::process::Command::new("xdg-open").arg(&pending.login).spawn();
+                crate::platform::open_url(&pending.login);
                 send(SyncDone::NextcloudOpened { login: pending.login.clone() });
                 let began = std::time::Instant::now();
                 loop {
@@ -162,7 +162,7 @@ impl App {
         self.in_background(ctx, move |send| {
             let app = sync::google::app(&client_id, &secret, &email);
             let opened = |url: &str| {
-                let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+                crate::platform::open_url(url);
                 send(SyncDone::NextcloudOpened { login: url.to_string() });
             };
             let res = sync::oauth::authorize(&app, &opened, &stop, NEXTCLOUD_WAIT_S).and_then(|t| match t.refresh {
@@ -190,7 +190,7 @@ impl App {
         self.in_background(ctx, move |send| {
             let app = sync::graph::app(&client_id, &email);
             let opened = |url: &str| {
-                let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+                crate::platform::open_url(url);
                 send(SyncDone::NextcloudOpened { login: url.to_string() });
             };
             let res = sync::oauth::authorize(&app, &opened, &stop, NEXTCLOUD_WAIT_S).and_then(|t| match t.refresh {

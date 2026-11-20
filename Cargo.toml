@@ -1,7 +1,11 @@
 [package]
 name = "katlendar"
-version = "0.1.0"
+version = "0.1.0-beta.1"
 edition = "2021"
+description = "A fast, local-first desktop calendar and task planner"
+license = "GPL-2.0-only"
+repository = "https://github.com/kud3n013/katlendar"
+homepage = "https://kud3n013.github.io/katlendar/"
 
 [dependencies]
 eframe = { version = "=0.37.0", default-features = false, features = ["default_fonts", "system_fonts", "glow", "x11", "wayland", "clipboard"] }
@@ -13,7 +17,7 @@ chrono-tz = "0.10"
 image = { version = "0.25", default-features = false, features = ["png"] }
 roxmltree = "0.21.2"
 keyring-core = "1.0.1"
-zbus-secret-service-keyring-store = { version = "1.0.1", features = ["crypto-rust"] }
+semver = "1"
 sha2 = "0.11"
 pgp = "0.21.1"
 bcrypt = "0.19.3"
@@ -24,6 +28,30 @@ rand = "0.8"
 epaint = { version = "=0.37.0", features = ["color_fonts"] }
 fontique = "0.11"
 
+# Each desktop's own keyring: Secret Service (KWallet, GNOME Keyring) on
+# Linux, Credential Manager on Windows, the Keychain on macOS.
+[target.'cfg(not(any(windows, target_os = "macos")))'.dependencies]
+zbus-secret-service-keyring-store = { version = "1.0.1", features = ["crypto-rust"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-native-keyring-store = "1.1.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+apple-native-keyring-store = { version = "1.0.2", features = ["keychain"] }
+
 [profile.dev]
 opt-level = 1
+
+[profile.release]
+strip = true
+lto = "thin"
+
+# `cargo deb` packaging for the Linux release
+[package.metadata.deb]
+section = "utils"
+assets = [
+    ["target/release/katlendar", "usr/bin/", "755"],
+    ["packaging/linux/katlendar.desktop", "usr/share/applications/", "644"],
+    ["assets/icon.png", "usr/share/icons/hicolor/512x512/apps/katlendar.png", "644"],
+]
 

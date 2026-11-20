@@ -285,6 +285,11 @@ pub struct App {
     pub sync_rx: std::sync::mpsc::Receiver<SyncDone>,
     pub synced_on_start: bool,
     pub last_auto_sync: f64,
+    /// the last check for a newer version, and when it was started
+    pub update: crate::update::Check,
+    pub update_at: Option<f64>,
+    /// the notice of a newer version was closed for this session
+    pub update_hidden: bool,
     /// after failures: how many in a row, and when to try again
     pub backoff: std::collections::HashMap<u64, (u32, f64)>,
     pub was_focused: bool,
@@ -441,6 +446,9 @@ impl App {
             sync_tx,
             sync_rx,
             synced_on_start: false,
+            update: Default::default(),
+            update_at: None,
+            update_hidden: false,
             last_auto_sync: 0.0,
             backoff: Default::default(),
             was_focused: true,
@@ -543,6 +551,9 @@ impl App {
         }
         if let Some((title, _)) = app.shot.as_ref().and(aid.drag.as_ref()) {
             app.drag_task = app.data.tasks.iter().find(|t| t.title.contains(title.as_str())).map(|t| t.id);
+        }
+        if let Some(v) = app.shot.as_ref().and(aid.update.as_ref()) {
+            app.update = crate::update::Check::Found(crate::update::Release { version: v.clone(), url: crate::update::RELEASES_PAGE.into() });
         }
         if app.shot.is_some() && aid.show_frame {
             if let Some(id) = app.data.frames.first().map(|f| f.id) {

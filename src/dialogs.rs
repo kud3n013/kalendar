@@ -593,6 +593,7 @@ impl App {
         self.ui_settings_window(ctx);
         self.dlg_command(ctx);
         self.dlg_new_task(ctx);
+        self.update_notice(ctx);
         self.dlg_toast(ctx);
     }
 
@@ -1932,8 +1933,8 @@ impl App {
             return;
         }
         let warn = t.warn;
-        // a warning's countdown line runs smoothly, so it repaints often
-        ctx.request_repaint_after(std::time::Duration::from_millis(if warn { 33 } else { 300 }));
+        // the countdown line runs smoothly, so it repaints often
+        ctx.request_repaint_after(std::time::Duration::from_millis(33));
         let (text, undo, move_due) = (t.text.clone(), t.undo, t.move_due);
         let (born, until) = (if t.born < 0.0 { now } else { t.born }, t.until);
         if let Some(t) = &mut self.toast {
@@ -1981,8 +1982,8 @@ impl App {
                             }
                         });
                     });
-                // a warning shows the time left as a theme-coloured line that runs out
-                if warn {
+                // the time left shows as a theme-coloured line that runs out
+                {
                     let r = frame.response.rect;
                     let inset = theme::CARD_RADIUS;
                     let y = r.bottom() - 4.0;
